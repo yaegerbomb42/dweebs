@@ -1,0 +1,19 @@
+{
+  "name": "DWEEBS — Knockout Brawl",
+  "short_name": "DWEEBS",
+  "description": "DWEEBS: emotionally unstable. Collectibly adorable. A physics knockout brawler in your browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#1f2342",
+  "theme_color": "#1f2342",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

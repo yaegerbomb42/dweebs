@@ -1,0 +1,31 @@
+// characterList.js — Master roster of 26 Dweebs with labels, traits and blurbs
+export const CHARACTER_ROSTER = [
+  { id: 'cube', name: 'Cube', blurb: 'All-rounder. Balanced, dependable, classic.', mass: 3.0, move: 1.0, jump: 1.0, armor: 1.0 },
+  { id: 'blob', name: 'Blob', blurb: 'Heavy and grounded with a bobbling antennae.', mass: 3.6, move: 0.88, jump: 0.92, armor: 0.85 },
+  { id: 'spiky', name: 'Spiky', blurb: 'Wobbly urchin with whipping tentacles.', mass: 2.6, move: 1.12, jump: 1.08, armor: 1.15 },
+  { id: 'stalky', name: 'Stalky', blurb: 'Goofy teal blob with twin periscope eye stalks.', mass: 2.9, move: 1.02, jump: 1.05, armor: 0.95 },
+  { id: 'peep', name: 'Peep', blurb: 'Giant horned eyeball on four scurrying peg feet.', mass: 3.1, move: 0.98, jump: 1.02, armor: 1.05 },
+  { id: 'tri_cloud', name: 'Tri-Cloud', blurb: 'Lavender tri-lobed floaty cloud with 3 tracking eyes.', mass: 2.5, move: 1.08, jump: 1.15, armor: 1.1 },
+  { id: 'bunny', name: 'Bunny', blurb: 'Lime bean with springy drooping floppy ears.', mass: 2.7, move: 1.15, jump: 1.12, armor: 1.05 },
+  { id: 'puddle', name: 'Puddle', blurb: 'Melting liquid slime pancake that slides under threats.', mass: 3.8, move: 0.85, jump: 0.82, armor: 0.78 },
+  { id: 'blockhead', name: 'Blockhead', blurb: 'Orange cube mounted with a top-deck periscope eye.', mass: 3.2, move: 0.95, jump: 0.98, armor: 0.9 },
+  { id: 'gumball', name: 'Gumball', blurb: 'Transparent candy globe filled with rattling bouncy marbles.', mass: 3.4, move: 0.94, jump: 0.95, armor: 0.92 },
+  { id: 'bumpy', name: 'Bumpy', blurb: 'Purple sphere covered in soft knobby sensory bumps.', mass: 3.3, move: 0.96, jump: 1.0, armor: 0.95 },
+  { id: 'cyclops', name: 'Cyclops', blurb: 'Round cyan puff with one massive expressive pupil.', mass: 2.8, move: 1.05, jump: 1.04, armor: 1.0 },
+  { id: 'starry', name: 'Starry', blurb: 'Pink 5-pointed star with wobbly dancing arms.', mass: 2.6, move: 1.1, jump: 1.14, armor: 1.1 },
+  { id: 'blink', name: 'Blink', blurb: 'Pill capsule with eyes mounted on opposite sides.', mass: 2.9, move: 1.02, jump: 1.06, armor: 1.0 },
+  { id: 'bean', name: 'Bean', blurb: 'Purple tilted legume with asymmetrical sideways eyes.', mass: 3.1, move: 0.97, jump: 1.02, armor: 1.0 },
+  { id: 'tadpole', name: 'Tadpole', blurb: 'Aquatic polliwog with a swishing spring tail.', mass: 2.7, move: 1.08, jump: 1.08, armor: 1.05 },
+  { id: 'floppy', name: 'Floppy', blurb: 'Drooping red bunny with giant heavy ear lobes.', mass: 3.0, move: 1.0, jump: 1.05, armor: 1.0 },
+  { id: 'chonk', name: 'Chonk', blurb: 'Heavy cyan block supported on 4 stubby shock legs.', mass: 4.0, move: 0.82, jump: 0.85, armor: 0.75 },
+  { id: 'ghosty', name: 'Ghosty', blurb: 'Floating sheet specter with ruffled hem skirt.', mass: 2.4, move: 1.14, jump: 1.2, armor: 1.18 },
+  { id: 'triclops', name: 'Tri-Clops', blurb: 'Green triangle head with three mismatched sized eyes.', mass: 3.1, move: 0.98, jump: 1.02, armor: 1.0 },
+  { id: 'rolling_eye', name: 'Roll-Eye', blurb: 'Violet ball with a wide smiley grin and wander eye.', mass: 2.9, move: 1.04, jump: 1.02, armor: 1.0 },
+  { id: 'sherbet', name: 'Sherbet', blurb: 'Pastel rainbow swirl ball with impish horns.', mass: 2.8, move: 1.06, jump: 1.06, armor: 1.02 },
+  { id: 'antenna', name: 'Antenna', blurb: 'Golden teardrop with a swinging radio transmitter top.', mass: 2.7, move: 1.07, jump: 1.08, armor: 1.04 },
+  { id: 'boing', name: 'Boing', blurb: 'Angry ball balancing on massive steel coil spring legs.', mass: 3.0, move: 1.1, jump: 1.35, armor: 1.0 },
+  { id: 'boxer', name: 'Boxer', blurb: 'Red brawler wearing two huge oversized boxing gloves.', mass: 3.5, move: 0.95, jump: 0.92, armor: 0.88 },
+  { id: 'plunger', name: 'Plunger', blurb: 'Tofu block with accordion suction-cup plunger arms.', mass: 3.1, move: 1.0, jump: 1.0, armor: 0.98 },
+];
+
+export const VALID_TYPES = CHARACTER_ROSTER.map(c => c.id);

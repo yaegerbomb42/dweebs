@@ -1,0 +1,1059 @@
+// main.js — boots the renderer, builds the stadium and wires every system together.
+//
+// Frame order: input/AI → Dweeb.preStep → physics (sub-stepped) → Dweeb.postStep →
+//              impacts (sound/breakage) → combat → arena → match rules → fx/hud → render.
+// Hit-stop scales simulation time (not rendering), so big hits freeze for a beat.
+
+import * as THREE from 'three';
+import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
+import '@fontsource/lilita-one';
+import '@fontsource/nunito/700.css';
+import '@fontsource/nunito/900.css';
+
+import { PhysicsWorld } from './physics/PhysicsWorld.js';
+import { Arena, WATER_LEVEL, CORE_RADIUS, STAGE_RADIUS } from './world/Arena.js';
+import { Dweeb } from './player/Dweeb.js';
+import { Controller } from './player/Controller.js';
+import { CameraController } from './camera/CameraController.js';
+import { CombatSystem, DEFAULT_LOFT } from './combat/CombatSystem.js';
+import { Bot } from './ai/Bot.js';
+import { AudioManager } from './audio/AudioManager.js';
+import { Match, Phase } from './game/Match.js';
+import { DeathCinema } from './game/DeathCinema.js';
+import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
+import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
+import { Fx } from './game/Fx.js';
+import { Haptics } from './game/Haptics.js';
+import { Hud } from './ui/Hud.js';
+import { Sky, Water } from './render/Sky.js';
+import { Particles } from './render/Particles.js';
+import { Trails, Bursts, Decals } from './render/Juice.js';
+import { AimGuide } from './render/AimGuide.js';
+import { warmModels } from './world/ObjectModels.js';
+import { OBJECT_DEFS } from './world/ObjectRegistry.js';
+import { PALETTE } from './render/Toon.js';
+import { statsFor, BALANCE } from './game/Balance.js';
+import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
+
+const $ = id => document.getElementById(id);
+const hex = c => '#' + c.toString(16).padStart(6, '0');
+
+const ROSTER = [
+  { name: 'Blorp', type: 'blob', color: PALETTE.pink },
+  { name: 'Squish', type: 'spiky', color: PALETTE.blue },
+  { name: 'Nugget', type: 'cube', color: PALETTE.green },
+  { name: 'Wobbles', type: 'blob', color: PALETTE.purple },
+  { name: 'Toast', type: 'cube', color: PALETTE.orange },
+  { name: 'Pickle', type: 'spiky', color: PALETTE.teal },
+  { name: 'Gumbo', type: 'blob', color: PALETTE.red },
+];
+
+// ─── Settings (persisted) ───
+const DEFAULTS = { bots: '3', difficulty: 'normal', stocks: '3', music: 'on', sound: 'on', rumble: 'on', shake: 'full', type: 'cube', color: 'yellow', mode: 'derby', arena: DEFAULT_ARENA };
+const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('dweebs-settings') || '{}') };
+if (!ARENAS.some(a => a.id === settings.arena)) settings.arena = DEFAULT_ARENA;
+const saveSettings = () => localStorage.setItem('dweebs-settings', JSON.stringify(settings));
+
+// ─── Globals ───
+let renderer, effect, scene, camera, clock;
+let haptics;
+let physics, arena, sky, water, particles, audio, cam, combat, match, fx, hud, deathCinema = null;
+let trails, bursts, decals, aimGuide;
+let dweebs = [], bots = [], player = null, controller = null;
+let paused = false;
+let impactBudget = 0;
+let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
+let spectateTarget = null;
+let rematch = null;
+// Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
+const nearMiss = { flying: false, min: Infinity, last: -99 };
+
+// Sudden-death item bias for the final 10 s: the sky rains explosives
+const FINALE_BIAS = { toyRocket: 5, explosiveBarrel: 5, giantHammer: 0.5, anvil: 0.5 };
+
+// Loading screen: real progress per boot stage, with a little personality
+const BOOT_T0 = performance.now();
+async function loadStep(pct, text) {
+  $('load-fill').style.width = pct + '%';
+  $('load-status').textContent = text;
+  await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); // let it paint before the next heavy step
+}
+async function hideLoading() {
+  await loadStep(100, 'Emotions: unstable. Ready!');
+  const wait = 1100 - (performance.now() - BOOT_T0); // long enough to read the logo, never a fake stall after that
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  const el = $('loading-screen');
+  el.classList.add('fade-out');
+  setTimeout(() => el.classList.add('hidden'), 450);
+}
+
+async function init() {
+  await loadStep(8, 'Inflating Dweebs…');
+  const canvas = $('game-canvas');
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  effect = new OutlineEffect(renderer, { defaultThickness: 0.004, defaultColor: [0.08, 0.05, 0.12] });
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0xbfe6ff, 70, 190);
+  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 400);
+  clock = new THREE.Timer();
+
+  // Lighting: warm sun + sky bounce
+  scene.add(new THREE.HemisphereLight(0xdff3ff, 0x8a6a9a, 1.3));
+  const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
+  sun.position.set(18, 30, 12);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 80 });
+  sun.shadow.bias = -0.0005;
+  sun.shadow.normalBias = 0.03;
+  scene.add(sun);
+
+  sky = new Sky(scene);
+  water = new Water(scene, WATER_LEVEL);
+  particles = new Particles(scene);
+
+  await loadStep(25, 'Teaching cubes to feel…');
+  physics = new PhysicsWorld();
+  await physics.init();
+  await loadStep(50, 'Untangling tentacles…');
+
+  // Sticker textures are drawn with the game font, so wait for it before building any props
+  try { await document.fonts.load('40px "Lilita One"'); } catch { /* fall back to Arial Black */ }
+  await loadStep(62, 'Calibrating googly eyes…');
+  warmModels(OBJECT_DEFS);
+  await loadStep(80, 'Filling the lagoon…');
+  arena = new Arena(scene, physics);
+  arena.build();
+  trails = new Trails(scene, camera);
+  bursts = new Bursts(scene);
+  decals = new Decals(scene, physics, arena);
+  aimGuide = new AimGuide(scene, WATER_LEVEL);
+
+  audio = new AudioManager();
+  haptics = new Haptics();
+  cam = new CameraController(camera, canvas);
+  hud = new Hud($('hud'));
+  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  aimGuide.onLock = () => fx.aimLock();
+  combat = new CombatSystem(physics, arena, fx);
+  match = new Match();
+  deathCinema = new DeathCinema(camera, scene);
+  match.events = matchEvents;
+
+  arena.isOccupied = tileOccupied;
+  arena.dweebs = dweebs;
+  arena.onSegmentWarn = () => { if (match.running) audio.playWarning(); };
+  arena.onSegmentFall = seg => audio.playCrumble(fx._pan(seg.mesh.position));
+  arena.onContraptionHit = (c, victim, cause) => {
+    audio.playHammer?.();
+    fx.hit(victim, null, 18, 'hazard');
+    cam.shake(0.3);
+    if (deathCinema) {
+      deathCinema.captureDeath(victim, cause, null);
+    }
+  };
+  arena.onPortalPowered = () => {
+    hud.announce('ESCAPE PORTAL ACTIVATED! YOU WIN!', 'success', 3.0);
+    audio.playTech(1);
+    fx.cheer();
+    match._endRound();
+  };
+  arena.onBump = (b, obj) => fx.bumper(obj.getPosition(), b.color, false);
+  arena.onBounce = (t) => fx.bounce({ x: t.x, y: 0.25, z: t.z }, t.color);
+  arena.onLavaHit = (d, launch) => fx.lavaHit(d, launch);
+  arena.onCrustWarn = () => hud.feed('<b>VOLCANO</b> · the rim is cracking!', 'sd');
+  arena.onGustWarn = dir => {
+    hud.feed(`<b>SKY TURBINE</b> · gust inbound ${dir > 0 ? '→' : '←'}`, 'sd');
+    audio.playWarning();
+  };
+  arena.onGust = () => {
+    hud.feed('<b>GUST!</b> lean into it', 'style');
+    audio.playWhoosh(0, 1);
+    cam.shake(0.16);
+  };
+  arena.onObjectSplash = (obj, pos) => {
+    if (obj.def) fx.splash(pos, false);
+    else fx.splash(pos, true); // falling stage tile
+  };
+
+  cam.snapTo(0, 1, 0);
+  setupMenu();
+  window.addEventListener('resize', onResize);
+  document.addEventListener('pointerlockchange', onPointerLockChange);
+  canvas.addEventListener('click', () => {
+    if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) cam.lock();
+  });
+
+  await hideLoading();
+  if (import.meta.env.DEV && location.hash === '#lineup') return showLineup();
+  if (import.meta.env.DEV && location.hash.startsWith('#dweebs')) return showDweebLineup();
+  // If app shell is present, don't show legacy main-menu automatically to avoid double-title overlay
+  if (!document.getElementById('app-shell')) {
+    $('main-menu').classList.remove('hidden');
+  }
+  renderer.setAnimationLoop(loop);
+}
+
+/** Dev only (#lineup): every prop model on a slow turntable, for art review screenshots. */
+async function showLineup() {
+  const { createModel } = await import('./world/ObjectModels.js');
+  const stage = new THREE.Scene();
+  stage.background = new THREE.Color(0xe8eef5);
+  stage.add(new THREE.HemisphereLight(0xdff3ff, 0x8a6a9a, 1.3));
+  const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
+  sun.position.set(5, 10, 8);
+  stage.add(sun);
+  const keys = Object.keys(OBJECT_DEFS);
+  const cols = 9, gap = 2;
+  const spinners = keys.map((k, i) => {
+    const g = new THREE.Group();
+    const m = createModel(k, OBJECT_DEFS[k]);
+    const s = 1.3 / Math.max(...OBJECT_DEFS[k].visualScale);
+    g.scale.setScalar(Math.min(2.2, s));
+    g.add(m);
+    g.position.set((i % cols - (cols - 1) / 2) * gap, -Math.floor(i / cols) * gap * 0.9 + 3.6, 0);
+    stage.add(g);
+    return g;
+  });
+  const cam = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
+  cam.position.set(0, 0.9, 20);
+  cam.lookAt(0, 0, 0);
+  renderer.setAnimationLoop(() => {
+    const t = performance.now() / 1000;
+    spinners.forEach((g, i) => { g.rotation.y = t * 0.6 + i; g.rotation.x = 0.25; });
+    effect.render(stage, cam);
+  });
+}
+
+// Dev: every type × expression (idle moods, gritting, screaming, knocked silly)
+function showDweebLineup() {
+  const stage = new THREE.Scene();
+  stage.background = new THREE.Color(0xe8eef5);
+  stage.add(new THREE.HemisphereLight(0xdff3ff, 0x8a6a9a, 1.3));
+  const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
+  sun.position.set(5, 10, 8);
+  stage.add(sun);
+  const types = ['cube', 'spiky', 'blob'];
+  const colors = [PALETTE.yellow, 0xe0603a, PALETTE.blue];
+  const states = ['grumpy', 'calm', 'smug', 'worried', 'grit', 'scream', 'ko'];
+  const all = [];
+  types.forEach((type, row) => states.forEach((st, col) => {
+    const d = new Dweeb(stage, physics, { type, color: colors[row], index: col, position: { x: 0, y: -50, z: 0 } });
+    d.grounded = true;
+    d._pos = { x: (col - 3) * 1.5, y: (1 - row) * 1.6, z: 0 };
+    d._state = st;
+    all.push(d);
+  }));
+  const cam = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
+  cam.position.set(0, 0.6, 13);
+  cam.lookAt(0, 0.3, 0);
+  let last = performance.now();
+  renderer.setAnimationLoop(() => {
+    const now = performance.now(), t = now / 1000, dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    for (const d of all) {
+      const st = d._state;
+      d.moodTimer = 99; d.gloatTimer = 0;
+      if (MOODS_DEV.includes(st)) d.idleMood = st;
+      d.charging = st === 'grit' ? 0.8 : 0;
+      d.hitstun = st === 'scream' ? 0.5 : 0;
+      d.ragdolling = st === 'ko';
+      d.body.setTranslation({ x: 0, y: -50, z: 0 }, false);
+      d._animate(dt, t, d._pos);
+      d.mesh.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.sin(t * 0.8 + d.index) * 0.35 + (location.hash === '#dweebs-side' ? 0.9 : 0));
+      d.shadow.visible = false;
+    }
+    effect.render(stage, cam);
+  });
+}
+const MOODS_DEV = ['grumpy', 'calm', 'smug', 'worried'];
+
+// ─── Menu ───
+
+function setupMenu() {
+  const unlockAudio = () => { audio.init(); audio.resume(); applyAudioSettings(); };
+  document.addEventListener('pointerdown', unlockAudio, { once: false });
+
+  for (const seg of document.querySelectorAll('.seg')) {
+    const key = seg.dataset.setting;
+    const sync = () => seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === settings[key]));
+    seg.addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      settings[key] = b.dataset.v;
+      saveSettings();
+      sync();
+      applyAudioSettings();
+      syncBlurb();
+      syncArena();
+      audio.playUIClick();
+    });
+    sync();
+  }
+  const syncBlurb = () => {
+    const st = statsFor(settings.type);
+    $('type-blurb').textContent = `${st.label}: ${st.blurb}`;
+  };
+  syncBlurb();
+  const syncArena = () => {
+    const a = arenaById(settings.arena);
+    $('arena-blurb').textContent = `${a.name} — ${a.blurb}`;
+  };
+  syncArena();
+  for (const b of document.querySelectorAll('.btn')) b.addEventListener('mouseenter', () => audio.playUIHover());
+
+  $('btn-play').onclick = () => { audio.playUIClick(); startMatch(); };
+  $('btn-how').onclick = () => { audio.playUIClick(); $('how-to-play').classList.remove('hidden'); };
+  $('btn-close-help').onclick = () => { audio.playUIClick(); $('how-to-play').classList.add('hidden'); };
+  $('btn-resume').onclick = () => { audio.playUIClick(); setPaused(false); cam.lock(); };
+  $('btn-quit').onclick = () => { audio.playUIClick(); setPaused(false); toMenu(); };
+  $('btn-play-again').onclick = () => { audio.playUIClick(); if (rematch && !rematch.done) voteRematch(); else startMatch(); };
+  $('btn-main-menu').onclick = () => { audio.playUIClick(); toMenu(); };
+
+  // Spectator cam: while you're out, left/right cycles the remaining brawlers.
+  window.addEventListener('keydown', e => {
+    if (match.phase !== Phase.PLAYING || !player || player.active) return;
+    if (e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') return;
+    const alive = dweebs.filter(d => d.active && !d.eliminated);
+    if (!alive.length) return;
+    const i = alive.indexOf(spectateTarget);
+    spectateTarget = alive[(i + (e.code === 'ArrowRight' ? 1 : alive.length - 1)) % alive.length];
+    e.preventDefault();
+  });
+}
+
+function applyAudioSettings() {
+  audio.setEnabled(settings.sound === 'on');
+  audio.setMusicEnabled(settings.music === 'on');
+  haptics?.setEnabled(settings.rumble !== 'off');
+  cam?.setShakeScale(settings.shake === 'off' ? 0 : settings.shake === 'low' ? 0.42 : 1);
+}
+
+function toMenu() {
+  match.phase = Phase.MENU;
+  clearRematch();
+  spectateTarget = null;
+  arena.hazardsActive = false;
+  controller && (controller.enabled = false);
+  resetSuddenDeathFx();
+  cam.unlock();
+  audio.stopMusic();
+  audio.setCharge(0);
+  hud.setSpectator('');
+  for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen']) $(id).classList.add('hidden');
+  $('main-menu').classList.remove('hidden');
+}
+
+// ─── Match flow ───
+
+function clearDweebs() {
+  controller?.destroy();
+  controller = null;
+  for (const d of dweebs) d.destroy();
+  dweebs = [];
+  bots = [];
+  player = null;
+}
+
+function startMatch() {
+  clearRematch();
+  clearDweebs();
+  arena.setArena(settings.arena);
+  arena.reset();
+  arena.hazardsActive = false;
+  spectateTarget = null;
+
+  // An online lobby hands over its own bot rule for this one match (see legacy.js).
+  const override = window.__dweebsMatchOverride;
+  window.__dweebsMatchOverride = null;
+  const botCount = Math.min(ROSTER.length, override ? override.bots : +settings.bots);
+  const total = botCount + 1;
+  const myColor = PALETTE[settings.color] ?? PALETTE.yellow;
+  player = new Dweeb(scene, physics, { isPlayer: true, name: 'You', type: settings.type, color: myColor, index: 0, position: arena.getSpawnPoint(0, total) });
+  dweebs.push(player);
+  for (let i = 0; i < botCount; i++) {
+    // A bot wearing the player's colour swaps into the yellow the player gave up
+    const r = ROSTER[i].color === myColor ? { ...ROSTER[i], color: PALETTE.yellow } : ROSTER[i];
+    const d = new Dweeb(scene, physics, { ...r, index: i + 1, position: arena.getSpawnPoint(i + 1, total) });
+    dweebs.push(d);
+    bots.push(new Bot(d, arena, combat, settings.difficulty));
+  }
+  for (const d of dweebs) wireDweeb(d);
+
+  controller = new Controller(player, cam, combat);
+  combat.setDweebs(dweebs);
+  // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
+  // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
+  arena.dweebs = dweebs;
+  if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  fx.player = player;
+  hud.setup(dweebs);
+
+  match.settings.stocks = +settings.stocks;
+  currentMode = settings.mode || 'derby';
+  match.settings.mode = currentMode;
+  match.startMatch(dweebs);
+
+  for (const id of ['main-menu', 'results-screen', 'how-to-play']) $(id).classList.add('hidden');
+  $('hud').classList.remove('hidden');
+  audio.init();
+  audio.resume();
+  applyAudioSettings();
+  audio.startAmbience();
+  audio.startMusic(false);
+  startRound();
+  cam.lock();
+}
+
+function startRound() {
+  const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
+  if (arena.dropWall) {
+    if (modeDef.hasWallDrop) {
+      arena.dropWall.dropped = false;
+      arena.dropWall.curY = 7.0;
+      arena.dropWall.group.position.y = 7.0;
+      arena.dropWall.group.visible = true;
+    } else {
+      arena.dropWall.group.visible = false;
+      arena.dropWall.body.setNextKinematicTranslation({ x: 0, y: -20, z: 0 });
+    }
+  }
+
+  arena.hazardsActive = false;
+  arena.reset();
+  resetSuddenDeathFx();
+  hud.clearTransient();
+  trails.clear();
+  bursts.clear();
+  decals.clear();
+  $('round-screen').classList.add('hidden');
+
+  // Spawn batteries if in escape mode
+  // Spawn arcing cannons and bouncy melons in Wall Drop mode
+  if (modeDef.hasWallDrop) {
+    // Team West (Pink side)
+    arena.spawnItem('melonCannon', { x: -7, y: 2, z: -3 });
+    arena.spawnItem('explodingMelon', { x: -6, y: 2, z: 2 });
+    arena.spawnItem('spikyBall', { x: -8, y: 2, z: 0 });
+    // Team East (Cyan side)
+    arena.spawnItem('melonCannon', { x: 7, y: 2, z: 3 });
+    arena.spawnItem('explodingMelon', { x: 6, y: 2, z: -2 });
+    arena.spawnItem('spikyBall', { x: 8, y: 2, z: 0 });
+  }
+
+  if (modeDef.hasEscapePuzzles) {
+    arena.spawnItem('powerBattery', { x: 8, y: 3, z: -4 });
+    arena.spawnItem('powerBattery', { x: 8, y: 3, z: 4 });
+  }
+
+  const total = dweebs.length;
+  dweebs.forEach((d, i) => {
+    const p = arena.getSpawnPoint(i, total, currentMode);
+    d.eliminated = false;
+    // Stage physics belongs to the arena: the Moonbase is lighter, the Iceberg slicker.
+    d.gravityScale = arena.gravity;
+    d.jumpScale = arena.gravity < 1 ? 0.72 + arena.gravity * 0.28 : 1;
+    d.respawn(p, 0);
+    d.held = null;
+    d.yaw = Math.atan2(-p.x, -p.z);
+    // Arena floor feel: the Iceberg's traction lives on the stage, not the Dweeb.
+    d.traction = arena.traction;
+    d.slide = arena.slide;
+    if (modeDef.hasWallDrop) {
+      // Set team indicator color: even index = Team Pink, odd index = Team Cyan
+      d.team = i % 2 === 0 ? 'pink' : 'cyan';
+      d.teamColor = i % 2 === 0 ? 0xff4d5e : 0x3fa9ff;
+    }
+  });
+  match.beginRound();
+  hud.setRound(match.round, winsHtml());
+  controller.enabled = false;
+  cam.targetDistance = 9;
+  cam.pitch = -0.42;
+  const pp = player.getPosition();
+  cam.yaw = Math.atan2(-pp.x, -pp.z) + Math.PI;
+  cam.snapTo(pp.x, pp.y, pp.z);
+  audio.startMusic(false);
+}
+
+function winsHtml() {
+  const w = match.roundWins.get(player) || 0;
+  return w ? '★'.repeat(w) : '';
+}
+
+const nameOf = d => (d.isPlayer ? 'YOU' : d.name);
+
+const matchEvents = {
+  onCountdown(n) {
+    hud.announce(String(n), '', 0.9);
+    audio.playCountdown(false);
+  },
+  onGo() {
+    const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
+    arena.hazardsActive = true;
+    if (modeDef.hasWallDrop && arena) {
+      arena.dropTheWall();
+      hud.announce('WALL DROPPED! FIGHT!', 'danger', 1.8);
+      audio.playWarning();
+    }
+    hud.announce('BRAWL!', 'go', 0.8);
+    audio.playCountdown(true);
+    audio.playCheer(0.8);
+    arena.excite(0.8);
+    controller.enabled = true;
+  },
+  onSuddenDeath() {
+    arena.startSuddenDeath(match.settings.suddenDeathAt);
+    sdPhase = -1;
+    potatoTimer = 6;
+    sky.setTint(0.6);
+    audio.setHeartbeat(1);
+    hud.announce('SUDDEN DEATH!', 'danger', 1.6);
+    audio.playWarning();
+    audio.startMusic(true);
+    audio.musicIntense = true;
+  },
+  onKO(d, credited, kind, pos) {
+    const sd = match.suddenDeath;
+    fx.ko(d, credited, kind, pos, sd);
+    if (deathCinema) {
+      let cause = 'VAPORIZED IN THE VOID';
+      if (kind === 'splash') cause = 'DROWNED IN THE LAGOON';
+      else if (pos.y < 3 && Math.hypot(pos.x, pos.z) < 8) cause = 'BLENDED BY INDUSTRIAL SHREDDER';
+      else if (pos.y > 6) cause = 'SMASHED BY HYDRAULIC TENDERIZER';
+      deathCinema.captureDeath(d, cause, credited);
+    }
+    hud.cardKO(d);
+    // Pick a punchline for the context (revenge > trickshot > sudden death > style > how they left)
+    const t = match.time;
+    const ctx = {
+      kind, sd,
+      self: !credited,
+      revenge: !!credited && credited.koedBy === d && t - credited.koedAt < 8,
+      trick: !!credited && d.trickHitBy === credited && t - d.trickHitTime < 3,
+      styleTier: credited?.styleTier ?? 0,
+    };
+    d.koedBy = credited;
+    d.koedAt = t;
+    const { line, context } = koLine(ctx, credited ? Hud.nameTag(credited) : '', Hud.nameTag(d));
+    if (credited && !credited.eliminated) combat.addStyle(credited, 25, kind === 'star' ? 'STAR KO' : 'K.O.');
+    hud.feed(line, `ko ${context}`);
+    const tag = { revenge: 'REVENGE', trick: 'TRICKSHOT KO', sd: 'SUDDEN DEATH', style: 'STYLE KO', self: 'SELF-KO' }[context];
+    if (d.isPlayer) hud.announce(d.eliminated ? 'ELIMINATED!' : playerKOWord(kind, false) + (tag ? `<small>${tag}</small>` : ''), 'ko', 1.2);
+    else if (credited?.isPlayer) hud.announce((d.eliminated ? 'K.O.!' : playerKOWord(kind, true)) + (tag ? `<small>${tag}</small>` : ''), 'ko small', 1.1);
+    if (d.eliminated && !d.isPlayer) hud.popup('OUT!', pos, 'big', d.color);
+    // Kill-cam lite: lean toward where they went when the player was part of it
+    if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
+  },
+  onFlail(d, pos) {
+    fx.flail(d, pos);
+  },
+  onRespawn(d) {
+    d.respawn(arena.getRespawnPoint());
+    fx.respawn(d);
+    if (d.isPlayer) { const p = d.getPosition(); cam.snapTo(p.x, p.y, p.z); }
+  },
+  onRoundEnd(winner, ranked) {
+    if (deathCinema && deathCinema.savedClips.length > 0) {
+      deathCinema.playCinema(deathCinema.savedClips, () => {
+        // Continue to standings after replay cinema
+      });
+    }
+    controller.enabled = false;
+    arena.hazardsActive = false;
+    audio.setHeartbeat(0);
+    audio.setCharge(0);
+    const you = winner.isPlayer;
+    const banners = winBanners({ winner, match, isMatch: false });
+    hud.announce(you ? 'YOU WIN THE ROUND!' : `${winner.name.toUpperCase()} WINS!`, you ? 'go small' : 'small', 2.5);
+    if (you) audio.playVictory(); else audio.playCheer(1);
+    arena.excite(1.5);
+    setTimeout(() => {
+      if (match.phase !== Phase.ROUND_END) return;
+      hud.announcerEl.className = 'hide';
+      $('round-title').textContent = match.matchWinner ? 'MATCH POINT!' : `ROUND ${match.round} DONE!`;
+      $('round-banners').innerHTML = bannersHtml(banners);
+      if (banners.length) { audio.playBanner(you); hud.confetti(40); }
+      $('round-podium').innerHTML = podium(ranked.slice(0, 3), d => `${plural(d.eliminated ? 0 : d.stocks, 'stock')} · ${Math.floor(d.percent)}%`);
+      $('round-screen').classList.remove('hidden');
+    }, 1300);
+  },
+  onNextRound() {
+    startRound();
+  },
+  onMatchEnd(winner, standings) {
+    $('round-screen').classList.add('hidden');
+    $('hud').classList.add('hidden');
+    resetSuddenDeathFx();
+    cam.unlock();
+    audio.stopMusic();
+    audio.setCharge(0);
+    arena.hazardsActive = false;
+    spectateTarget = null;
+    hud.setSpectator('');
+    const you = winner.isPlayer;
+    $('result-title').textContent = you ? 'YOU WIN!' : `${winner.name.toUpperCase()} WINS!`;
+    $('results-podium').innerHTML = podium(standings.slice(0, 3), d => `${plural(match.roundWins.get(d), 'round')} · ${plural(d.totalKos || 0, 'KO')}`,
+      d => `${statsFor(d.type).label} · style peak ${Math.round(d.stylePeak)} · ${d.trickshots || 0} trickshots`);
+    $('result-banners').innerHTML = bannersHtml(winBanners({ winner, match, isMatch: true }));
+    $('result-reel').innerHTML = highlightReel();
+    const a = arenaById(arena.arenaId);
+    $('result-arena').textContent = `${a.icon} ${a.name}`;
+    $('results-screen').classList.remove('hidden');
+    hud.confetti();
+    audio.playBanner(you);
+    if (you) audio.playVictory(); else audio.playDefeat();
+    startRematchVote();
+  },
+};
+
+function bannersHtml(list) {
+  return list.map(b => `<div class="banner">${b.title}<small>${b.sub}</small></div>`).join('');
+}
+
+// ─── Rematch vote ───
+// Bots trickle in their votes; the player's click is the only one that waits.
+// When every Dweeb has voted, the next match starts automatically.
+
+function startRematchVote() {
+  clearRematch();
+  rematch = { votes: 0, total: dweebs.length, playerVoted: false, done: false, timers: [] };
+  updateRematchVote();
+  dweebs.filter(d => !d.isPlayer).forEach((d, i) => {
+    const delay = 700 + i * 380 + Math.random() * 500;
+    rematch.timers.push(setTimeout(() => {
+      if (!rematch || rematch.done) return;
+      rematch.votes++;
+      updateRematchVote();
+      if (rematch.playerVoted && rematch.votes >= rematch.total) finishRematchVote();
+    }, delay));
+  });
+}
+
+function voteRematch() {
+  if (!rematch || rematch.done || rematch.playerVoted) return;
+  rematch.playerVoted = true;
+  rematch.votes++;
+  updateRematchVote();
+  if (rematch.votes >= rematch.total) finishRematchVote();
+}
+
+function updateRematchVote() {
+  if (!rematch) return;
+  const el = $('rematch-vote');
+  if (el) el.textContent = `${rematch.votes}/${rematch.total} DWEEBS VOTED REMATCH`;
+  const btn = $('btn-play-again');
+  if (btn) btn.textContent = rematch.playerVoted ? `VOTED · ${rematch.votes}/${rematch.total}` : 'REMATCH!';
+}
+
+function finishRematchVote() {
+  if (!rematch || rematch.done) return;
+  rematch.done = true;
+  rematch.timers.forEach(clearTimeout);
+  const el = $('rematch-vote');
+  if (el) el.textContent = 'UNANIMOUS! STARTING REMATCH…';
+  $('btn-play-again').textContent = 'REMATCH!';
+  audio.playCheer(0.8);
+  rematch.timers.push(setTimeout(() => { if (match.phase === Phase.RESULTS) startMatch(); }, 800));
+}
+
+function clearRematch() {
+  if (!rematch) return;
+  rematch.timers.forEach(clearTimeout);
+  rematch = null;
+  const el = $('rematch-vote');
+  if (el) el.textContent = '';
+  const btn = $('btn-play-again');
+  if (btn) btn.textContent = 'REMATCH!';
+}
+
+/** Last-match highlight reel: biggest launch, longest air time, trickshots. */
+function highlightReel() {
+  const h = match.highlights;
+  const out = [];
+  if (h?.launchOn) {
+    const who = h.launchBy ? `${nameOf(h.launchBy)} → ${nameOf(h.launchOn)}` : `${nameOf(h.launchOn)} (stage toy)`;
+    out.push(`<div><b>BIGGEST YEET</b>${who} · ${Math.round(h.launch)} m/s</div>`);
+  }
+  const air = dweebs.reduce((a, d) => (d.maxAir > (a?.maxAir ?? 0) ? d : a), null);
+  if (air) out.push(`<div><b>LONGEST AIR</b>${nameOf(air)} · ${air.maxAir.toFixed(1)}s</div>`);
+  const total = dweebs.reduce((n, d) => n + (d.trickshots || 0), 0);
+  const ace = dweebs.reduce((a, d) => ((d.trickshots || 0) > (a?.trickshots || 0) ? d : a), null);
+  out.push(`<div><b>TRICKSHOTS</b>${total}${ace ? ` · most: ${nameOf(ace)} (${ace.trickshots})` : ''}</div>`);
+  return out.join('');
+}
+
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+function podium(list, stat, extra = null) {
+  const heights = [150, 110, 80];
+  const order = list.length >= 3 ? [1, 0, 2] : list.map((_, i) => i);
+  return order.filter(i => list[i]).map(i => {
+    const d = list[i];
+    return `<div class="pod" style="--c:${hex(d.color)}">
+      <div class="portrait"><span class="shape ${d.type}${i === 2 ? ' worried' : ''}"><i class="brow"></i><i class="mouth"></i></span></div>
+      <div class="nm">${nameOf(d)}</div><div class="st">${stat(d)}</div>${extra ? `<div class="st extra">${extra(d)}</div>` : ''}
+      <div class="block" style="height:${heights[i]}px">${i + 1}</div></div>`;
+  }).join('');
+}
+
+function wireDweeb(d) {
+  d.onJump = (dw, double) => fx.jump(dw, double);
+  d.onLand = (dw, speed) => fx.land(dw, speed);
+  d.onSkid = (dw, speed) => fx.skid(dw, speed);
+  d.onStep = (dw, speed) => fx.step(dw, speed);
+  d.onDropThrough = dw => arena.dropThroughUnder(dw);
+  d.onFastFall = dw => fx.fastFall?.(dw);
+  d.onRoll = dw => {
+    fx.roll?.(dw);
+    combat.addStyle(dw, BALANCE.roll.style, 'ROLL');
+  };
+  d.onShieldBreak = dw => {
+    fx.bubblePop(dw);
+    hud.popup('SHIELD!', dw.getPosition(), 'small', 0xffd23f);
+  };
+  d.onBubblePop = dw => fx.bubblePop(dw);
+  d.onTech = dw => fx.tech(dw);
+  d.onHit = (dw, launch) => match.noteLaunch(dw, launch);
+  d.onFlailJump = dw => fx.flailJump(dw);
+  d.onParryStart = dw => fx.parryStart(dw);
+  d.onParry = (dw, attacker) => {
+    fx.parry(dw, attacker);
+    combat.addStyle(dw, BALANCE.parry.style, 'PARRY');
+  };
+}
+
+// ─── Pause ───
+
+function onPointerLockChange() {
+  const locked = document.pointerLockElement === renderer.domElement;
+  if (!locked && (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN)) setPaused(true);
+}
+
+function setPaused(on) {
+  paused = on;
+  $('pause-screen').classList.toggle('hidden', !on);
+  if (on) {
+    audio.setCharge(0);
+    haptics?.charge(0);
+    haptics?.heartbeat(0);
+  }
+}
+
+// ─── Main loop ───
+
+function loop() {
+  clock.update();
+  const rawDt = Math.min(clock.getDelta(), 0.1);
+  const inGame = match.phase !== Phase.MENU && match.phase !== Phase.RESULTS;
+
+  if (paused) {
+    effect.render(scene, camera);
+    return;
+  }
+
+  // Hit-stop: slow simulation time to a crawl for a split second
+  fx.update(rawDt);
+  const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
+
+  if (inGame && dweebs.length) {
+    controller.update(dt);
+    if (match.running) for (const b of bots) b.update(dt, dweebs);
+    else for (const d of dweebs) d.moveInput.set(0, 0);
+    for (const d of dweebs) d.preStep(dt);
+  }
+
+  physics.step(dt);
+
+  if (inGame && dweebs.length) {
+    for (const d of dweebs) d.postStep(dt, match.time);
+    handleImpacts();
+    combat.update(dt, match.time);
+    updateDrops(dt);
+    match.update(dt);
+  if (deathCinema && !deathCinema.isPlaying) {
+    for (const d of dweebs) deathCinema.recordFrame(d, match.time);
+  }
+  if (deathCinema && deathCinema.isPlaying) {
+    deathCinema.update(dt, cam);
+    return;
+  }
+    hud.update(rawDt, match, camera, player);
+    const charging = player.active && controller.live ? player.charging : 0;
+    audio.setCharge(player.charging > 0 ? charging : 0);
+    haptics?.charge(charging);
+    haptics?.heartbeat(match.running && player.active ? player.percent : 0, match.suddenDeath);
+    updateAim(rawDt);
+    updateFocus(rawDt);
+    updateNearMiss();
+    followCamera();
+  } else {
+    // Menu: slow orbit around the stage
+    aimGuide.hide();
+    aimGuide.hideFocus();
+    aimGuide.hideAttack();
+    hud.setAim(null);
+    hud.setFocus(null);
+    cam.lookAhead.set(0, 0, 0);
+    cam.yaw += rawDt * 0.1;
+    cam.pitch = -0.38;
+    cam.targetDistance = 27;
+    cam.setTarget(0, -1, 0);
+  }
+  arena.update(dt);
+  particles.update(dt);
+  trails.update(dt, arena.objects);
+  bursts.update(rawDt);
+  decals.update(dt);
+  sky.update(rawDt);
+  water.update(rawDt);
+  cam.update(rawDt);
+  audio.updateLoops(rawDt, physics.rollSpeed, arena.cheer);
+  effect.render(scene, camera);
+}
+
+/** Turn physics impacts into sound, dust and breakage. */
+function handleImpacts() {
+  impactBudget = 6;
+  const list = physics.getImpacts().sort((a, b) => b.speed - a.speed);
+  for (const imp of list) {
+    for (const side of [imp.a, imp.b]) {
+      const obj = side.kind === 'object' ? side.ref : null;
+      // The same frame can splash an object out of the world before its impact is read.
+      if (obj && (!obj.mesh || !obj.body || obj.broken)) continue;
+      const other = side === imp.a ? imp.b : imp.a;
+      // Freshly thrown things don't blow up in their thrower's face
+      if (obj?.thrownBy && other.ref === obj.thrownBy && obj.hitList.has(other.ref)) continue;
+      // Trickshot bookkeeping: caroms off props/hazards (ricochet) and hard skips off the floor
+      if (obj?.thrownBy && obj.thrownTime > 0 && other.kind !== 'dweeb' && imp.speed > 3) {
+        if (other.kind === 'stage') { if (imp.speed > 8) obj.skips = (obj.skips || 0) + 1; }
+        else obj.bounces = (obj.bounces || 0) + 1;
+        // Spiky balls and bowling balls re-arm after a bounce, so one throw can bowl over several rivals
+        if (obj.def.multiHit && (other.kind !== 'stage' || imp.speed > 8)) {
+          obj.hitList.clear();
+          obj.hitList.add(obj.thrownBy);
+        }
+      }
+      obj?.onImpact?.(imp.speed);
+      // Breakables take damage from hard impacts (energy ∝ speed² × mass)
+      if (obj && !obj.broken && obj.def.breakable && imp.speed > 4 && (obj.thrownBy || imp.speed > 7)) {
+        if (obj.def.explosive && imp.speed > 9) combat.explode(obj.getPosition(), obj.thrownBy, obj);
+        else if (obj.applyDamage(imp.speed * imp.speed * side.mass * 12)) combat.breakObject(obj);
+      }
+    }
+    if (impactBudget-- > 0) fx.impact(imp);
+  }
+}
+
+function updateDrops(dt) {
+  if (!match.running) return;
+  const finale = match.suddenDeath && match.timer <= 10;
+  if (match.suddenDeath) updateSuddenDeath(dt);
+  arena.itemTimer -= dt;
+  if (arena.itemTimer <= 0) {
+    arena.itemTimer = finale ? 2.2 : match.suddenDeath ? 4 : 7 + Math.random() * 4;
+    arena.dropRandomItem(match.time, finale ? FINALE_BIAS : null);
+  }
+  arena.powerupTimer -= dt;
+  if (arena.powerupTimer <= 0) {
+    arena.powerupTimer = 14 + Math.random() * 8;
+    // Rubber-band a little: a bubble when you're on a high %, mega when you're behind on stocks
+    let kind = null;
+    if (player.active && !player.eliminated) {
+      const bestRival = Math.max(...dweebs.filter(d => d !== player && !d.eliminated).map(d => d.stocks), 0);
+      if (player.percent > 90 && Math.random() < 0.6) kind = 'bubble';
+      else if (player.stocks < bestRival && Math.random() < 0.5) kind = 'mega';
+    }
+    arena.spawnPowerUp(kind);
+  }
+}
+
+/** Sudden-death escalation: 0–15 s crumble fast, 15–30 s wrecking cubes swing wider, last 10 s rain explosives. */
+function updateSuddenDeath(dt) {
+  const t = match.settings.suddenDeathAt - match.timer;
+  const phase = match.timer <= 10 ? 2 : t >= 15 ? 1 : 0;
+  if (phase !== sdPhase) {
+    sdPhase = phase;
+    if (phase === 0) {
+      arena.sdPace = 0.75; arena.sdWarnScale = 0.75;
+      hud.setSuddenDeath('RING CRUMBLING');
+    } else if (phase === 1) {
+      arena.sdPace = 1; arena.sdWarnScale = 1; arena.sdPendulumAmp = 1.2;
+      hud.setSuddenDeath('WRECKING CUBES UNLEASHED');
+      hud.feed('<b>SUDDEN DEATH</b> · the cubes swing wider!', 'style');
+    } else {
+      arena.sdPendulumAmp = 1.25;
+      hud.setSuddenDeath('FINAL 10 · IT\'S RAINING BOOMS');
+      hud.announce('FINAL 10!', 'danger', 1.2);
+      audio.setHeartbeat(2);
+      sky.setTint(1);
+      audio.playWarning();
+    }
+  }
+  // Hot potato: a lit barrel drops every ~12 s; whoever held it last gets the credit
+  potatoTimer -= dt;
+  if (potatoTimer <= 0) {
+    potatoTimer = 12;
+    const p = arena.randomGroundPoint(6);
+    const obj = arena.spawnItem('explosiveBarrel', { x: p.x, y: 12, z: p.z });
+    obj.hotPotato = true;
+    combat.lightFuse(obj, null, 7);
+    hud.feed('<b>HOT POTATO!</b> · pass the barrel', 'style');
+  }
+}
+
+/** Is anyone standing on this outer-ring tile? (sudden-death crumble fairness) */
+function tileOccupied(seg) {
+  for (const d of dweebs) {
+    if (!d.active || d.out) continue;
+    const p = d.getPosition();
+    const r = Math.hypot(p.x, p.z);
+    if (r > CORE_RADIUS - 0.5 && r < STAGE_RADIUS + 0.5 && p.y > -1.5 && p.y < 3 && arena.segmentAt(p.x, p.z) === seg) return true;
+  }
+  return false;
+}
+
+function resetSuddenDeathFx() {
+  sdPhase = -1;
+  hud.setSuddenDeath('');
+  sky.setTint(0);
+  audio.setHeartbeat(0);
+}
+
+/** Throw preview while holding something: arc + landing reticle (full strength while charging). */
+function updateAim(dt) {
+  const held = player.active && controller.live && player.held?.kind === 'object' ? player.held.ref : null;
+  const showing = held && (!held.isWeapon || controller.throwCharging);
+  if (!showing) {
+    aimGuide.hide();
+    hud.setAim(null);
+    cam.lookAhead.set(0, 0, 0);
+    return;
+  }
+  const raw = controller.throwCharging ? controller.throwCharge : player.isCharging ? player.charging : 0;
+  const charge = raw >= 0.2 ? raw : 0;
+  const f = cam.getForward();
+  const a = combat.assistAim(player, held, charge, Math.atan2(f.x, f.z), player.aimLoft ?? DEFAULT_LOFT);
+  const pred = combat.predictThrow(player, held, charge, a.yaw, a.loft, aimGuide.points);
+  aimGuide.update(dt, pred, { charge: raw, color: player.color, target: a.target, blast: held.def.explosive ? held.def.explosionRadius ?? 5 : 0 });
+  // Pull the view toward where it'll land so long throws stay on screen
+  const p = player.getPosition();
+  const dx = pred.end.x - p.x, dz = pred.end.z - p.z, dist = Math.hypot(dx, dz) || 1;
+  if (a.target) {
+    const tp = a.target.getPosition();
+    hud.setAim(Math.hypot(tp.x - p.x, tp.z - p.z), true);
+  } else hud.setAim(pred.land ? dist : null, false);
+  const k = Math.min(3, dist * 0.2) / dist;
+  cam.lookAhead.set(dx * k, 0, dz * k);
+}
+
+/** Aim focus: ring the thing E will grab or LMB will hit, and preview the charged swing arc. */
+function updateFocus(dt) {
+  if (!player || !player.active || !controller.live || !player.canAct || !match.running) {
+    hud.setFocus(null);
+    aimGuide.hideFocus();
+    aimGuide.hideAttack();
+    return;
+  }
+
+  const held = player.held?.kind === 'object' ? player.held.ref : null;
+  if (player.held && !held?.isWeapon) {
+    // Holding a throwable/gadget: the throw arc and hold hint own the screen.
+    hud.setFocus(null);
+    aimGuide.hideFocus();
+    aimGuide.hideAttack();
+    return;
+  }
+
+  // Only empty hands or a melee weapon can focus a grab/punch target.
+  const focus = held ? null : combat.focusTarget(player);
+  if (focus) {
+    const name = focus.kind === 'object' ? (focus.ref.def?.name ?? 'ITEM') : focus.ref.name;
+    const prompt = focus.kind === 'object' ? `E · PICK UP · ${name}` : `E · GRAB · LMB · PUNCH · ${name}`;
+    hud.setFocus(prompt.toUpperCase(), focus.kind);
+    aimGuide.setFocus(focus.ref, focus.kind, dt);
+  } else {
+    const target = combat.attackTarget(player);
+    if (target) {
+      const profile = combat.attackProfile(player);
+      const verb = profile.weapon ? 'SWING' : 'PUNCH';
+      const prefix = player.isCharging ? 'RELEASE' : 'LMB';
+      hud.setFocus(`${prefix} · ${verb} · ${target.name}`.toUpperCase(), 'dweeb');
+      aimGuide.setFocus(target, 'dweeb', dt);
+    } else {
+      hud.setFocus(null);
+      aimGuide.hideFocus();
+    }
+  }
+
+  if (player.isCharging) {
+    const profile = combat.attackProfile(player);
+    const pos = player.getPosition();
+    const groundY = player.groundY > -50 ? player.groundY : pos.y - 0.5;
+    aimGuide.setAttack(profile, { x: pos.x, y: groundY, z: pos.z }, player.lookYaw ?? player.yaw, player.charging);
+  } else {
+    aimGuide.hideAttack();
+  }
+}
+
+/** "CLOSE!" when the player's launch ends within 1.5 m of a blast line or the lagoon (once per 3 s). */
+function updateNearMiss() {
+  const d = player;
+  if (!d.active || d.out) { nearMiss.flying = false; nearMiss.min = Infinity; return; }
+  const p = d.getPosition();
+  const launched = d.hitstun > 0 || d.ragdolling || d.swimFlail > 0;
+  if (launched) nearMiss.flying = true;
+  if (!nearMiss.flying) return;
+  const margin = Math.min(match.blastSide - Math.hypot(p.x, p.z), BALANCE.match.blastTop - p.y,
+    arena.isOverGround(p.x, p.z) ? Infinity : p.y - (WATER_LEVEL + 0.6));
+  if (margin < nearMiss.min) nearMiss.min = margin;
+  // The flight is over once you're back on your feet (or holding the ledge)
+  if (!launched && (d.grounded || d.ledge)) {
+    if (nearMiss.min < 1.5 && match.time - nearMiss.last > 3) {
+      nearMiss.last = match.time;
+      hud.popup('CLOSE!', p, 'big', 0xbff4ff);
+      audio.playTech(0);
+    }
+    nearMiss.flying = false;
+    nearMiss.min = Infinity;
+  }
+}
+
+function followCamera() {
+  let focus = player.active ? player : null;
+  if (focus) {
+    if (spectateTarget) { spectateTarget = null; hud.setSpectator(''); }
+  } else {
+    // Spectate a remaining brawler (leader first, ←/→ cycles the rest)
+    const alive = dweebs.filter(d => d.active && !d.eliminated);
+    if (!alive.includes(spectateTarget)) {
+      const ranked = match.roundStandings().filter(d => alive.includes(d));
+      spectateTarget = ranked[0] || alive[0] || null;
+    }
+    focus = spectateTarget;
+    hud.setSpectator(focus ? (focus.isPlayer ? 'YOU' : focus.name) : '');
+  }
+  if (focus) {
+    const p = focus.getPosition();
+    cam.setTarget(p.x, p.y, p.z);
+  }
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+init().catch(err => {
+  console.error(err);
+  $('load-status').textContent = 'Something broke. Refresh to try again (details in the console).';
+});

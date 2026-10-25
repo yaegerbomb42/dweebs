@@ -1,0 +1,44 @@
+{
+  "name": "dweebs",
+  "version": "1.0.0",
+  "description": "DWEEB - Tiny blobs. Huge problems.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:prod": "VITE_SERVER_URL= vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "soak": "node tools/soak-real.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "perf:smoke": "node tools/perf-smoke.mjs",
+    "net": "node server/index.js",
+    "net:smoke": "node tools/netSmoke.mjs",
+    "soak:real": "node tools/soak-real.mjs",
+    "perf:sim": "node tools/perf-sim.mjs",
+    "net:sim": "DWEEBS_SIM=real node tools/netSmoke.mjs",
+    "client:sim": "node tools/clientSim.mjs",
+    "net:browsers": "node tools/app/smoke-net-browser.mjs"
+  },
+  "keywords": [
+    "game",
+    "physics",
+    "multiplayer"
+  ],
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "@fontsource/lilita-one": "^5.3.0",
+    "@fontsource/nunito": "^5.3.0",
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "globals": "^17.12.0",
+    "vite": "^8.3.1",
+    "vitest": "^3.2.7"
+  }
+}
