@@ -10,6 +10,7 @@
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
+import { TextDecoder } from 'node:util';
 import {
   PROTOCOL_VERSION, SIM_HZ, SNAPSHOT_HZ, MAX_PLAYERS, RECONNECT_HOLD_MS, NET,
   makeRoomCode, isRoomCode, makeCodec, deltaEntities, FULL_SNAPSHOT_EVERY, ERR, Op,
@@ -18,6 +19,7 @@ import { InputBuffer } from '../src/net/inputBuffer.js';
 import { MockSim } from '../src/net/mockSim.js';
 import { SimAdapter } from '../src/sim/simAdapter.js';
 import { addNetSimulation, parseNetFlags } from '../src/net/lagSim.js';
+import { WarfareLobby, TURN_MS as WARFARE_TURN_MS } from './warfare.js';
 
 const TICK_MS = 1000 / SIM_HZ;
 const SNAP_EVERY = SIM_HZ / NET.snapshotHz;   // sim ticks per snapshot
@@ -489,7 +491,7 @@ const httpServer = createServer((req, res) => {
       ok: true, service: 'dweebs', protocol: PROTOCOL_VERSION,
       uptimeS: Math.floor((Date.now() - STARTED_AT) / 1000),
       ...online,
-      sim: USE_REAL_SIM ? 'real' : 'mock', codec: CODEC,
+      sim: USE_REAL_SIM ? 'real' : 'mock', codec: CODEC, warfare: warfare.stats,
       perf: perfState(), rssMb: Math.round(process.memoryUsage().rss / 1048576),
     });
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -499,6 +501,10 @@ const httpServer = createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 });
+
+// Dweeb Warfare rides the same socket server: JSON frames tagged `wf`, lockstep turns (server/warfare.js).
+const warfare = new WarfareLobby();
+setInterval(() => { try { warfare.tick(); } catch (err) { console.error('[warfare] tick failed:', err?.stack || err); } }, WARFARE_TURN_MS);
 
 wss.on('connection', (sock) => {
   sock.binaryType = 'arraybuffer';
@@ -512,7 +518,10 @@ wss.on('connection', (sock) => {
   const fail = (code, message) => send({ t: 'error', code, message });
 
   sock.on('message', data => handle(data));
+  // Warfare's view of this socket: JSON text frames only.
+  const wfClient = { send: m => { if (sock.readyState === 1) sock.send(JSON.stringify(m)); } };
   sock.on('close', () => {
+    warfare.drop(wfClient);
     clients.delete(sock);
     if (state.room && state.player) {
       state.room.dropClient(state.player, Date.now());
@@ -548,6 +557,13 @@ wss.on('connection', (sock) => {
         : new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength ?? data.length);
     const isInput = typeof bytes !== 'string' && bytes.length > 0 && bytes[0] === Op.INPUT;
     if (!rateOk(isInput)) return fail(ERR.RATE_LIMIT, 'slow down');
+    // Warfare frames are JSON text starting with '{' (0x7b); brawler opcodes are all < 0x7b.
+    const first = typeof bytes === 'string' ? bytes.charCodeAt(0) : bytes[0];
+    if (first === 0x7b) {
+      let wm;
+      try { wm = JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)); } catch { wm = null; }
+      if (wm && typeof wm.wf === 'string') return warfare.handle(wfClient, wm);
+    }
     let m;
     try { m = state.codec.decode(bytes); } catch { return fail(ERR.MALFORMED, 'bad frame'); }
     if (!m || !m.t) return fail(ERR.MALFORMED, 'no type');
@@ -694,4 +710,4 @@ httpServer.listen(PORT, () => {
     (NET_FLAGS.lag || NET_FLAGS.loss ? `  netSim lag=${NET_FLAGS.lag}ms loss=${NET_FLAGS.loss}% jitter=${NET_FLAGS.jitter}ms` : ''));
 });
 
-export { Room, wss, rooms, httpServer, onlineState, findQuickRoom, MAX_ROOMS };
+export { Room, wss, rooms, httpServer, onlineState, findQuickRoom, MAX_ROOMS, warfare };

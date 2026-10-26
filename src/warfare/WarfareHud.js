@@ -137,6 +137,18 @@ export class WarfareHud {
         <div class="wf-feed" data-f="feed"></div>
         <div class="wf-banner" data-f="banner"></div>
       </div>
+      <div class="wf-screen wf-hidden" data-s="online">
+        <div class="wf-panel">
+          <h1 class="wf-title" data-f="onTitle">ONLINE</h1>
+          <p class="wf-sub" data-f="onStatus">Connecting…</p>
+          <p class="wf-sub" data-f="onCode"></p>
+          <div class="wf-modes" style="margin-bottom:10px">
+            <input data-f="codeIn" maxlength="4" placeholder="CODE" style="pointer-events:auto;width:110px;text-transform:uppercase;font-family:'Lilita One',sans-serif;font-size:20px;text-align:center;border-radius:12px;border:3px solid #fff8ee;background:#1b1030;color:#fff8ee;padding:6px">
+            <button class="blue" data-a="joinCode">JOIN FRIEND</button>
+          </div>
+          <div class="wf-modes"><button class="alt" data-a="cancelOnline">CANCEL</button></div>
+        </div>
+      </div>
       <div class="wf-screen wf-hidden" data-s="pause">
         <div class="wf-panel">
           <h1 class="wf-title">PAUSED</h1>
@@ -169,7 +181,7 @@ export class WarfareHud {
   }
 
   screen(name) {
-    for (const s of ['title', 'game', 'pause', 'end']) this.q(`[data-s="${s}"]`).classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
+    for (const s of ['title', 'game', 'pause', 'end', 'online']) this.q(`[data-s="${s}"]`).classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
   }
 
   refreshBest() {
@@ -184,6 +196,14 @@ export class WarfareHud {
     el.classList.toggle('wf-hidden', !text);
     el.textContent = text || '';
   }
+
+  onlineStatus({ title, status, code }) {
+    if (title !== undefined) this.f('onTitle').textContent = title;
+    if (status !== undefined) this.f('onStatus').textContent = status;
+    if (code !== undefined) this.f('onCode').innerHTML = code ? `Invite a friend with code <b style="color:#ffd23f;font-size:22px">${code}</b>` : '';
+  }
+
+  get codeInput() { return this.f('codeIn').value.trim().toUpperCase(); }
 
   setModeButtons({ online }) {
     for (const a of ['online-coop', 'online-versus']) {

@@ -1,15 +1,17 @@
 # Dweebs overnight log — Dweeb Warfare deepening
 
+> Note (01:25 CT): batch headings 0–5 were corrected to the real git commit times (CDT); earlier drafts carried guessed times.
+
 Focus: make **Dweeb Warfare** one solid, fully working game. Other games untouched (build only).
 Every batch: `npx vitest run` + `npm run build` on the Mac, then a local commit (no push, no deploy).
 
-## 2026-10-26 00:47 CT — Batch 0: baseline snapshot
+## 2026-10-26 00:38 CT — Batch 0: baseline snapshot
 - The whole Dweeb Mall (hub, warfare/escape/mimic/adventure, main.js wiring) was uncommitted since Oct 25.
   Committed it as-is under apps/dweebs only (gamewithfam deletions and root WHY.md left unstaged) so the
   warfare work below has a clean base.
 - Tests: 97/97 pass. Build: OK.
 
-## 2026-10-26 00:48 CT — Batch 1: deterministic Warfare sim + tests
+## 2026-10-26 00:46 CT — Batch 1: deterministic Warfare sim + tests
 What changed (all pure, under `src/sim/`, so the existing purity gate covers them: no three, no DOM, no Math.random, no trig):
 - `warfareUnits.js` — roster (shield, rocket, stealer, kami + enemy-only sneak, brute, boss "Brass Bully"),
   stats, costs, counter multipliers, `COUNTER_OF` hints.
@@ -31,7 +33,7 @@ Full suite 125/125 pass. Build OK.
 Next: split the view (units/HUD/fx/audio modules) on top of this sim, full game loop UI (start screen + hints, wave banners,
 win/lose stats + restart), then juice + SFX.
 
-## 2026-10-26 01:00 CT — Batch 2: Warfare split into modules + full game loop
+## 2026-10-26 00:58 CT — Batch 2: Warfare split into modules + full game loop
 What changed:
 - `src/warfare/DweebWarfare.js` rewritten as a thin controller over the pure sim: fixed 30 Hz stepping with
   interpolation, local command queue, RTS camera (WASD/arrows pan, wheel zoom, shake), input (click board = rally,
@@ -59,7 +61,7 @@ touched, outside Warfare.)
 
 Next: boss HP bar, AI polish/tells (batch 3), WebAudio SFX + mute (batch 4).
 
-## 2026-10-26 01:35 CT — Batch 3: enemy AI behaviours + difficulty tuning
+## 2026-10-26 01:04 CT — Batch 3: enemy AI behaviours + difficulty tuning
 What changed (sim, deterministic):
 - Boss "Brass Bully" enrages once below 50% HP: faster, quicker and wider slams, calls in 2 kamis.
 - Brutes charge targets 4–10 m away (2.4× dash, charged slams hit 1.5×).
@@ -81,7 +83,7 @@ enrage banner, defeat screen with stats, Back to the Mall returns to `#/`, Escap
 
 Next: WebAudio SFX + mute toggle (batch 4), sw.js offline (batch 5), online (batch 6).
 
-## 2026-10-26 01:55 CT — Batch 4: juice + WebAudio SFX + mute
+## 2026-10-26 01:06 CT — Batch 4: juice + WebAudio SFX + mute
 What changed:
 - `src/warfare/WarfareAudio.js`: fully procedural WebAudio (no sample files, so it works offline on first load):
   hit ticks, death pops, explosion booms with sub thump, rocket thoomps, ground slams, grab/convert chimes, recruit plop,
@@ -98,7 +100,7 @@ mute silences and persists). Build OK. Headless Chrome versus run: AudioContext 
 
 Next: offline service worker (batch 5), online co-op/versus (batch 6).
 
-## 2026-10-26 02:10 CT — Batch 5: offline (service worker)
+## 2026-10-26 01:08 CT — Batch 5: offline (service worker)
 What changed:
 - `public/sw.js`: cache bumped `dweebs-mall-v1` → `dweebs-mall-v2-<buildId>`; install now precaches the whole build
   (`PRECACHE`, injected at build time) instead of only caching assets when they happen to be re-fetched under the
@@ -114,3 +116,19 @@ gets 13 precache entries. Real check in headless Chrome: first visit → 17 entr
 down + browser offline → reload → Mall → Dweeb Warfare → Defend the Fort played with zero network hits.
 
 Next: online co-op / versus over the dweebs-server WebSocket (batch 6).
+
+## 2026-10-26 01:25 CT — Batch 6: online co-op + versus over the dweebs-server
+
+**What changed**
+- `server/warfare.js` (new): `WarfareLobby` — quick-match queue per mode (co-op / versus) or join a friend by 4-letter code; on match both players get the same seed and a slot/team (versus: blue vs red; co-op: both blue). Lockstep relay: every 100 ms the server broadcasts a numbered turn with every command received since the last one; both clients apply turn *n* at sim tick 3n, so the deterministic sim stays bit-identical. `sanitizeCmd` whitelists rally/recruit/startWave and **forces the sender's team** (a client can't command the other army). Clients report `battleHash` every 30 turns; a mismatch sends `desync` to both. `over` (battle ended normally) vs `leave`/socket close (forfeit): versus ends with `peerLeft` → forfeit win, co-op keeps relaying so the survivor holds solo. Room-code generation can't spin on a bad RNG.
+- `server/index.js`: same process, port 8787 and rate limiter as the brawler. Frames starting with `{` that parse to `{wf:…}` route to the lobby (brawler opcodes are binary, all < 0x7b); a turn-tick interval; `drop` on close; `/status` reports `warfare: {waiting, matches, players}`.
+- `src/warfare/WarfareNet.js` (new): browser client using the brawler's server URL resolution (`?server=` / saved setting / same-origin `/ws` / `localhost:8787`), ignores binary brawler frames, buffers turns.
+- `DweebWarfare.js`: ONLINE CO-OP / ONLINE VERSUS buttons now live; waiting panel with invite code, JOIN FRIEND code box and CANCEL; lockstep stepping (stalls when the next turn hasn't arrived, catches up to 12 ticks/frame when behind); local commands go to the server instead of straight into the sim; net chip shows partner / "waiting for partner…"; desync toast; Esc opens the menu without pausing a shared battle; red slot gets the red camera side and correct end-screen text; PLAY AGAIN re-queues online; goofy per-browser commander names (e.g. "Major Sprocket"). If the server can't be reached the panel says so and the solo modes keep working offline.
+- `WarfareHud.js`: online screen + `onlineStatus()`.
+
+**Tested**
+- `test/warfare-online.test.js` (5 new): sanitize/forced team, lobby pairing by mode + by code, finished player ≠ peerLeft, codes never spin; **real server on a random port**: versus matchmaking, same seed, blue/red, a lying client's commands rewritten to its own team, turns identical on both sockets, two sims fed the relayed turns end with equal `battleHash`, desync detection, peerLeft + match teardown; co-op by code (both blue), survives a partner leaving.
+- Two headless Chrome pages against a real server on the box: versus quick match (A blue, B red; both recruited; unit lists/positions/HP identical between pages a tick apart), B quits → A gets forfeit victory. Co-op by code: both blue, shared coins, B leaves → A continues "solo".
+- `npx vitest run` 145/145 · `npm run build` OK.
+
+**Next**: polish pass on Warfare (balance/readability), and the hosted VPS server needs a redeploy before online Warfare works there (not done — no deploys tonight).

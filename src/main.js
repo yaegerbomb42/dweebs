@@ -40,6 +40,8 @@ import { BuildingManager } from './adventure/building.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
+import { serverUrl } from './app/settings.js';
+import { defaultUrl } from './net/NetClient.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
@@ -398,7 +400,7 @@ function startWarfare() {
   if (currentWarfare) currentWarfare.dispose();
   cam.unlock();
   currentMode = 'warfare';
-  currentWarfare = new DweebWarfare({ scene, camera, canvas: renderer.domElement, onExit: exitWarfare, soundOn: settings.sound !== 'off' });
+  currentWarfare = new DweebWarfare({ scene, camera, canvas: renderer.domElement, onExit: exitWarfare, soundOn: settings.sound !== 'off', serverUrl: serverUrl() || defaultUrl(location.search) });
   for (const id of ['main-menu', 'results-screen', 'how-to-play', 'round-screen', 'pause-screen', 'civ-hud']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden'); // tells the app shell a game is live
   audio.init();
