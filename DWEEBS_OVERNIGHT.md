@@ -97,3 +97,20 @@ Tested: 135/135 vitest (new `test/warfare-audio.test.js`: safe without WebAudio,
 mute silences and persists). Build OK. Headless Chrome versus run: AudioContext running, M toggles mute + storage, no errors.
 
 Next: offline service worker (batch 5), online co-op/versus (batch 6).
+
+## 2026-10-26 02:10 CT — Batch 5: offline (service worker)
+What changed:
+- `public/sw.js`: cache bumped `dweebs-mall-v1` → `dweebs-mall-v2-<buildId>`; install now precaches the whole build
+  (`PRECACHE`, injected at build time) instead of only caching assets when they happen to be re-fetched under the
+  worker — before, a first visit was not offline-ready. Asset matching uses `includes('/assets/')` so it also works
+  under the GitHub Pages sub-path. Old `dweebs-*` caches are still dropped on activate.
+- `vite.config.js` + `tools/precache.mjs`: build plugin writes the hashed asset list (JS bundle with Warfare + Rapier,
+  CSS, woff2 fonts; no maps/woff/html) and a per-build id into `dist/sw.js`. Fails loudly if placeholders disappear.
+- Warfare needs nothing else: audio is procedural, models are code, fonts are bundled.
+
+Tested: 140/140 vitest (new `test/warfare-offline.test.js`: placeholders + version, precache filter, install caches every
+asset under the per-build cache, injection guard, solo Warfare code has no fetch/http/WebSocket). Build OK; dist/sw.js
+gets 13 precache entries. Real check in headless Chrome: first visit → 17 entries cached and SW controlling → server shut
+down + browser offline → reload → Mall → Dweeb Warfare → Defend the Fort played with zero network hits.
+
+Next: online co-op / versus over the dweebs-server WebSocket (batch 6).
