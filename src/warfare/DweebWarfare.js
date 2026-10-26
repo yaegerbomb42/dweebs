@@ -11,6 +11,7 @@ import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
 import { FINAL_WAVE } from '../sim/warfareWaves.js';
 import { WarfareView } from './WarfareView.js';
 import { WarfareHud } from './WarfareHud.js';
+import { WarfareAudio } from './WarfareAudio.js';
 
 export { RECRUITABLE as UNIT_ROLES };
 
@@ -31,7 +32,7 @@ export class DweebWarfare {
    * @param {HTMLCanvasElement} o.canvas
    * @param {() => void} [o.onExit] leave Warfare (back to the mall)
    */
-  constructor({ scene, camera, canvas, onExit } = {}) {
+  constructor({ scene, camera, canvas, onExit, soundOn = true } = {}) {
     this.scene = scene;
     this.camera = camera;
     this.canvas = canvas;
@@ -49,7 +50,8 @@ export class DweebWarfare {
     this.keys = new Set();
     this.raycaster = new THREE.Raycaster();
     this._ndc = new THREE.Vector2();
-    this.audio = null;           // WarfareAudio, attached later
+    this.audio = new WarfareAudio({ enabled: soundOn });
+    this.hud.setMute(this.audio.muted);
     this._wire();
     document.body.classList.add('warfare-active');
     this._startAttract();
@@ -90,7 +92,6 @@ export class DweebWarfare {
     this.hud.screen('game');
     this.cam.tx = -16; this.cam.tz = 3; this.cam.tdist = 40;
     this.audio?.unlock();
-    this.audio?.waveStart(false);
     if (mode === 'defense') {
       this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5`, '', 2.6);
       this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
@@ -122,6 +123,7 @@ export class DweebWarfare {
 
   toggleMute() {
     if (!this.audio) return;
+    this.audio.unlock();
     this.audio.setMuted(!this.audio.muted);
     this.hud.setMute(this.audio.muted);
   }
@@ -178,7 +180,7 @@ export class DweebWarfare {
     stepBattle(st, cmds);
     this.view.afterStep(st);
     if (!this.attract) this._react(st.events);
-    this.audio?.events(st.events, this.team);
+    if (!this.attract && this.audio) { this.audio.listenerX = this.cam.x; this.audio.events(st.events, this.team); }
   }
 
   _react(events) {
@@ -276,9 +278,11 @@ export class DweebWarfare {
     const k = Math.min(1, dt * 5);
     c.x += (c.tx - c.x) * k; c.z += (c.tz - c.z) * k; c.dist += (c.tdist - c.dist) * k;
     const pitch = 0.98;
+    const kick = this.view.fx.kick || 0;
     const sh = this.view.fx.shake;
     const jx = (Math.random() - 0.5) * sh, jy = (Math.random() - 0.5) * sh, jz = (Math.random() - 0.5) * sh;
-    this.camera.position.set(c.x + jx, Math.sin(pitch) * c.dist + jy, c.z + Math.cos(pitch) * c.dist + jz);
+    const dist = c.dist - kick * 3;
+    this.camera.position.set(c.x + jx, Math.sin(pitch) * dist + jy, c.z + Math.cos(pitch) * dist + jz);
     this.camera.lookAt(c.x + jx * 0.5, 0, c.z + jz * 0.5);
   }
 

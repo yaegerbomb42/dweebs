@@ -80,3 +80,20 @@ fort alarm, no self-targeting over a full run). Duel matrix unchanged. Build OK.
 enrage banner, defeat screen with stats, Back to the Mall returns to `#/`, Escape card now launches its own mode.
 
 Next: WebAudio SFX + mute toggle (batch 4), sw.js offline (batch 5), online (batch 6).
+
+## 2026-10-26 01:55 CT — Batch 4: juice + WebAudio SFX + mute
+What changed:
+- `src/warfare/WarfareAudio.js`: fully procedural WebAudio (no sample files, so it works offline on first load):
+  hit ticks, death pops, explosion booms with sub thump, rocket thoomps, ground slams, grab/convert chimes, recruit plop,
+  fort thunk, wave horn, boss drone, wave-clear jingle, enrage roar, win fanfare, lose trombone, UI click/deny.
+  Stereo-panned by distance from the camera, rate-limited per 250 ms so 100-unit brawls don't clip, compressor on master.
+- Mute: 🔊 button in the HUD corner + M key, persisted in localStorage (`dweebs-warfare-muted`); also respects the
+  game's global Sound: Off setting. Attract battle behind the title is silent.
+- Juice additions: rocket muzzle flash, camera "kick" (quick zoom punch) on big blasts, on top of batch-2 hit flash
+  (white body flash + squash), knockback lean, screen shake, floating damage numbers (gold = counter hit, grey = resisted),
+  tumbling death ragdoll that pops into team-coloured confetti, shockwaves, smoke puffs, spawn squash.
+
+Tested: 135/135 vitest (new `test/warfare-audio.test.js`: safe without WebAudio, sim events make sound, spam is capped,
+mute silences and persists). Build OK. Headless Chrome versus run: AudioContext running, M toggles mute + storage, no errors.
+
+Next: offline service worker (batch 5), online co-op/versus (batch 6).

@@ -398,7 +398,7 @@ function startWarfare() {
   if (currentWarfare) currentWarfare.dispose();
   cam.unlock();
   currentMode = 'warfare';
-  currentWarfare = new DweebWarfare({ scene, camera, canvas: renderer.domElement, onExit: exitWarfare });
+  currentWarfare = new DweebWarfare({ scene, camera, canvas: renderer.domElement, onExit: exitWarfare, soundOn: settings.sound !== 'off' });
   for (const id of ['main-menu', 'results-screen', 'how-to-play', 'round-screen', 'pause-screen', 'civ-hud']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden'); // tells the app shell a game is live
   audio.init();

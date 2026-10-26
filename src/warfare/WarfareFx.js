@@ -16,6 +16,7 @@ export class WarfareFx {
     this.camera = camera;
     this.items = [];       // {obj, life, max, update(it, dt)}
     this.shake = 0;
+    this.kick = 0;
     this.shardMats = {
       blue: new THREE.MeshBasicMaterial({ color: TEAM_COLORS.blue }),
       red: new THREE.MeshBasicMaterial({ color: TEAM_COLORS.red }),
@@ -37,7 +38,14 @@ export class WarfareFx {
     this._v = new THREE.Vector3();
   }
 
-  addShake(a) { this.shake = Math.min(1.4, this.shake + a); }
+  addShake(a) { this.shake = Math.min(1.4, this.shake + a); if (a >= 0.5) this.kick = Math.min(1, this.kick + a * 0.6); }
+
+  /** Tiny yellow flash at a rocket's tube when it fires. */
+  muzzle(x, z) {
+    const m = new THREE.Mesh(flashGeo, this.shardMats.spark || (this.shardMats.spark = new THREE.MeshBasicMaterial({ color: 0xfff3a0 })));
+    m.position.set(x, 1.6, z);
+    this._add(m, 0.08, (it) => m.scale.setScalar(0.25 + (1 - it.life / it.max) * 0.4));
+  }
 
   _add(obj, max, update) {
     noOutline(obj);
@@ -147,6 +155,7 @@ export class WarfareFx {
       it.update(it, dt);
     }
     this.shake = Math.max(0, this.shake - dt * 2.2);
+    this.kick = Math.max(0, this.kick - dt * 3);
     const w = window.innerWidth, h = window.innerHeight;
     for (const n of this.nums) {
       if (n.life <= 0) continue;

@@ -127,7 +127,7 @@ export class WarfareView {
         }
         case 'explode': fx.explosion(ev.x, ev.z, ev.r, !!ev.big); break;
         case 'slam': fx.shockwave(ev.x, ev.z, ev.r * 1.3, 0xd4a73a); fx.addShake(ev.unit === 'boss' ? 0.7 : 0.25); fx.puff(ev.x, ev.z); break;
-        case 'fire': if (e) { fx.puff(ev.x, ev.z); e.leanX -= (ev.tx - ev.x) * 0.01; e.leanZ -= (ev.tz - ev.z) * 0.01; } break;
+        case 'fire': if (e) { fx.puff(ev.x, ev.z); fx.muzzle(ev.x, ev.z); e.leanX -= (ev.tx - ev.x) * 0.01; e.leanZ -= (ev.tz - ev.z) * 0.01; } break;
         case 'grab': fx.number(ev.x, 2.6, ev.z, 'GRAB!', 'word'); break;
         case 'convert': fx.number(ev.x, 2.8, ev.z, ev.flip ? 'FUSE FLIP!' : 'CONVERTED!', 'word'); fx.shockwave(ev.x, ev.z, 3, TEAM_COLORS[ev.team]); break;
         case 'retreat': fx.number(ev.x, 2.4, ev.z, 'RETREAT!', 'weak'); break;
