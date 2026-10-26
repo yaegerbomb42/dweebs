@@ -199,6 +199,14 @@ export class DweebWarfare {
       } else if (ev.type === 'fortHit' && ev.team === this.team && st.forts[this.team].hp < st.forts[this.team].maxHp * 0.35 && !this.seen.has('lowFort')) {
         this.seen.add('lowFort');
         hud.toast('Your fort is <b>cracking</b>! Pull the rally flag back home.', 6);
+      } else if (ev.type === 'enrage' && ev.team !== this.team) {
+        hud.banner('ENRAGED!', 'The Brass Bully calls in kamis', 'boss', 1.8);
+      } else if (ev.type === 'charge' && ev.team !== this.team && !this.seen.has('charge')) {
+        this.seen.add('charge');
+        hud.toast('Brutes <b>charge</b> from mid range. Spread out or bait them with a shield.', 6);
+      } else if (ev.type === 'backstab' && ev.team !== this.team && !this.seen.has('backstab')) {
+        this.seen.add('backstab');
+        hud.toast('<b>Backstab!</b> Sneaks hit units that are busy fighting. Guard your flanks.', 6);
       } else if (ev.type === 'win' || ev.type === 'lose') {
         this.endTimer = 1.6;
       }

@@ -22,6 +22,13 @@ export const FORT_RADIUS = 3.2;
 export const PREP_FIRST = 25 * WF_HZ;
 export const PREP_BETWEEN = 14 * WF_HZ;
 export const ARMY_CAP = 60;
+export const DEFENSE_FORT_HP = 2000;
+/** Units chip forts for this fraction of their unit damage (forts are sturdy toys). */
+export const FORT_DMG_MULT = 0.6;
+/** Defenders drop what they're doing for enemies this close to their fort. */
+export const FORT_ALARM = 16;
+/** Stealers convert captives anywhere inside this ring around their fort (the pen). */
+export const PEN_REACH = 4;
 export const SPAWN_GAP = 8;
 export const VERSUS_INCOME = 4;          // coins per second per side in versus
 /** Dowel-bundle barricades in no-man's land: circles units slide around. */
@@ -30,6 +37,15 @@ export const BARRICADES = Object.freeze([
 ]);
 
 const ACCEL = 0.25;
+/** Brute charge: dash at a target 4–10 m away. */
+export const CHARGE = Object.freeze({ min: 4, max: 10, ticks: 18, cooldown: 150, speedMul: 2.4 });
+/** Boss enrage below this HP fraction: faster, quicker slams, calls in kamis. */
+export const ENRAGE_AT = 0.5;
+export const ENRAGE_KAMIS = 2;
+/** Sneak backstab multiplier vs a target busy fighting someone else. */
+export const BACKSTAB = 1.6;
+/** Rockets stay this far behind their side's most advanced shield. */
+export const ROCKET_BEHIND_SHIELD = 3;
 const KNOCK_DECAY = 0.86;
 
 function teamStats() {
@@ -48,7 +64,7 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins } 
     mode, seed, tick: 0, rng: new Rng(seed), nextId: 1,
     units: [], shells: [], events: [],
     forts: {
-      blue: { x: -FORT_X, z: 0, hp: 1200, maxHp: 1200, r: FORT_RADIUS, invulnerable: false },
+      blue: { x: -FORT_X, z: 0, hp: versus ? 1200 : DEFENSE_FORT_HP, maxHp: versus ? 1200 : DEFENSE_FORT_HP, r: FORT_RADIUS, invulnerable: false },
       red: { x: FORT_X, z: 0, hp: 1200, maxHp: 1200, r: FORT_RADIUS, invulnerable: !versus },
     },
     rally: { blue: { x: -22, z: 0 }, red: { x: 22, z: 0 } },
@@ -78,6 +94,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     cd: st.rng.int(Math.max(1, s.cooldown || 1)),
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
+    dash: 0, dashCd: 60, enraged: false, speedMul: 1, cdMul: 1,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -186,6 +203,7 @@ function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, bas
 function hurtFort(st, team, dmg, attType) {
   const f = st.forts[team];
   if (f.invulnerable || f.hp <= 0) return;
+  dmg *= FORT_DMG_MULT;
   f.hp = Math.max(0, f.hp - dmg);
   st.events.push({ type: 'fortHit', team, dmg, src: attType, x: f.x, z: f.z });
 }
@@ -226,6 +244,22 @@ function updateShells(st) {
   }
 }
 
+/** Nearest enemy inside FORT_ALARM of u's own fort: defenders always answer a raid on home. */
+function fortAlarm(st, u, enemies) {
+  const f = st.forts[u.team];
+  if (f.invulnerable) return null;
+  let best = null, bd = Infinity;
+  for (const e of enemies) {
+    if (!e.alive || e.carriedBy || e.team === u.team) continue;
+    const fx = e.x - f.x, fz = e.z - f.z;
+    if (fx * fx + fz * fz > FORT_ALARM * FORT_ALARM) continue;
+    const dx = e.x - u.x, dz = e.z - u.z;
+    const d = dx * dx + dz * dz;
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+
 function formationSlot(u) {
   const dir = dirOf(u.team);
   const row = u.type === 'rocket' ? -4 : u.type === 'shield' ? 2 : u.type === 'kami' ? 0 : -1.5;
@@ -259,6 +293,18 @@ function updateUnit(st, u, enemies) {
     u.carriedBy = 0;
   }
   if (u.cd > 0) u.cd--;
+  if (u.dashCd > 0) u.dashCd--;
+  if (u.dash > 0) u.dash--;
+  if (u.type === 'boss' && !u.enraged && u.hp < u.maxHp * ENRAGE_AT) {
+    u.enraged = true;
+    u.speedMul = 1.35;
+    u.cdMul = 0.8;
+    st.events.push({ type: 'enrage', id: u.id, team: u.team, x: u.x, z: u.z });
+    for (let i = 0; i < ENRAGE_KAMIS; i++) {
+      spawnUnit(st, u.team, 'kami', { x: u.x + dirOf(u.team) * -1.5, z: u.z + (i - 1) * 2.2, hpMul: st.scaling.hpMul, dmgMul: st.scaling.dmgMul });
+    }
+  }
+  const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
   const home = st.forts[u.team];
   const enemyTeam = otherTeam(u.team);
   const efort = st.forts[enemyTeam];
@@ -270,7 +316,7 @@ function updateUnit(st, u, enemies) {
     else {
       seek(u, home.x, home.z, s.carrySpeed);
       const dx = home.x - u.x, dz = home.z - u.z;
-      if (dx * dx + dz * dz <= (home.r + 1.6) * (home.r + 1.6)) {
+      if (dx * dx + dz * dz <= (home.r + PEN_REACH) * (home.r + PEN_REACH)) {
         const from = v.team;
         v.team = u.team;
         v.carriedBy = 0;
@@ -301,7 +347,7 @@ function updateUnit(st, u, enemies) {
       u.hp = Math.min(u.maxHp, u.hp + (u.maxHp * 0.08) / WF_HZ);
       if (u.hp >= u.maxHp * REJOIN_AT) u.state = 'fight';
     } else {
-      seek(u, home.x + dirOf(u.team) * 2, home.z, s.speed * 1.1);
+      seek(u, home.x + dirOf(u.team) * 2, home.z, speed * 1.1);
     }
     return;
   }
@@ -309,7 +355,7 @@ function updateUnit(st, u, enemies) {
   // Target selection (staggered so 120 units don't all think on the same tick)
   let t = u.targetId ? st.byId.get(u.targetId) : null;
   if (!t || !t.alive || t.carriedBy || t.team === u.team || (st.tick + u.id) % 6 === 0) {
-    t = pickTarget(u, enemies);
+    t = pickTarget(u, enemies) || fortAlarm(st, u, enemies);
     u.targetId = t ? t.id : 0;
   }
 
@@ -318,11 +364,17 @@ function updateUnit(st, u, enemies) {
     const d = Math.sqrt(dx * dx + dz * dz);
     const reach = s.range + u.radius + t.radius;
     if (s.attack === 'rocket') {
-      if (d < s.minRange) seek(u, u.x - dx, u.z - dz, s.speed);
+      if (d < s.minRange) seek(u, u.x - dx, u.z - dz, speed);
       else if (d <= s.range) {
         halt(u);
-        if (u.cd <= 0) { u.cd = s.cooldown; fireShell(st, u, t.x, t.z, t.vx, t.vz); }
-      } else seek(u, t.x, t.z, s.speed);
+        if (u.cd <= 0) { u.cd = Math.round(s.cooldown * u.cdMul); fireShell(st, u, t.x, t.z, t.vx, t.vz); }
+      } else {
+        // hold formation behind our own shield wall instead of walking out in front of it
+        const front = st.front && st.front[u.team];
+        const dir = dirOf(u.team);
+        if (front !== null && front !== undefined && (u.x - front) * dir > -ROCKET_BEHIND_SHIELD && dx * dir > 0) seek(u, front - dir * (ROCKET_BEHIND_SHIELD + 0.5), u.z, speed, 1.5);
+        else seek(u, t.x, t.z, speed);
+      }
       return;
     }
     if (d <= reach) {
@@ -333,7 +385,7 @@ function updateUnit(st, u, enemies) {
         kill(st, u, null, 0, 0);
         return;
       }
-      if (s.attack === 'grab' && t.type === 'kami') {
+      if (s.attack === 'grab' && t.type === 'kami' && t !== u) {
         // Fuse flip: a stealer re-lights a kami and spins it back at its own side.
         const from = t.team;
         t.team = u.team;
@@ -353,18 +405,29 @@ function updateUnit(st, u, enemies) {
         return;
       }
       if (u.cd <= 0) {
-        u.cd = s.cooldown;
+        u.cd = Math.round(s.cooldown * u.cdMul);
         if (s.attack === 'slam') {
-          st.events.push({ type: 'slam', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, r: s.splash });
-          splash(st, t.x, t.z, s.splash, u.team, u.type, u.dmgMul);
+          const charging = u.dash > 0;
+          const r = s.splash * (u.enraged ? 1.25 : 1);
+          st.events.push({ type: 'slam', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, r, charge: charging });
+          splash(st, t.x, t.z, r, u.team, u.type, u.dmgMul * (charging ? 1.5 : 1));
+          u.dash = 0;
         } else {
-          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul }), u.team, u.type, u.x, u.z);
+          const backstab = u.type === 'sneak' && t.targetId && t.targetId !== u.id;
+          const base = s.dmg * (backstab ? BACKSTAB : 1);
+          if (backstab) st.events.push({ type: 'backstab', id: u.id, team: u.team, x: t.x, z: t.z });
+          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul, base }), u.team, u.type, u.x, u.z);
         }
       }
       return;
     }
+    if (u.type === 'brute' && u.dashCd <= 0 && d >= CHARGE.min && d <= CHARGE.max) {
+      u.dash = CHARGE.ticks;
+      u.dashCd = CHARGE.cooldown;
+      st.events.push({ type: 'charge', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
     const g = s.flanker ? flankGoal(u, t.x, t.z) : t;
-    seek(u, g.x, g.z, s.speed);
+    seek(u, g.x, g.z, speed);
     return;
   }
 
@@ -380,7 +443,7 @@ function updateUnit(st, u, enemies) {
         hurtFort(st, enemyTeam, s.dmg * u.dmgMul * 2.5, u.type);
         kill(st, u, null, 0, 0);
       } else if (u.cd <= 0) {
-        u.cd = s.cooldown || 30;
+        u.cd = Math.round((s.cooldown || 30) * u.cdMul);
         if (s.attack === 'rocket') fireShell(st, u, efort.x, efort.z, 0, 0);
         else hurtFort(st, enemyTeam, s.dmg * u.dmgMul, u.type);
       }
@@ -388,10 +451,20 @@ function updateUnit(st, u, enemies) {
     }
   }
   const attacking = st.mode === 'defense' && u.team === 'red';
-  if (attacking) { seek(u, efort.x, efort.z, s.speed); return; }
+  if (attacking) { seek(u, efort.x, efort.z, speed); return; }
   const r = st.rally[u.team];
   const slot = formationSlot(u);
-  seek(u, r.x + slot.x, r.z + slot.z, s.speed, 2.5);
+  seek(u, r.x + slot.x, r.z + slot.z, speed, 2.5);
+}
+
+/** x of a side's most advanced fighting shield (toward the enemy), or null. */
+function frontShield(army, dir) {
+  let best = null;
+  for (const u of army) {
+    if (u.type !== 'shield' || u.state !== 'fight' || u.carriedBy) continue;
+    if (best === null || u.x * dir > best * dir) best = u.x;
+  }
+  return best;
 }
 
 function integrate(st) {
@@ -505,6 +578,7 @@ export function stepBattle(st, commands = []) {
 
   const blue = [], red = [];
   for (const u of st.units) if (u.alive) (u.team === 'blue' ? blue : red).push(u);
+  st.front = { blue: frontShield(blue, 1), red: frontShield(red, -1) };
   for (const u of st.units) {
     if (!u.alive) continue;
     updateUnit(st, u, u.team === 'blue' ? red : blue);

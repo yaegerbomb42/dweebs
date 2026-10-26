@@ -66,7 +66,7 @@ export const UNIT_TYPES = Object.freeze({
   },
   boss: {
     name: 'Brass Bully', blurb: 'Clockwork boss with a gear crown. Ground slams shake the board.',
-    hp: 2600, speed: 2.1, radius: 1.6, mass: 30,
+    hp: 1200, speed: 2.1, radius: 1.6, mass: 30,
     attack: 'slam', range: 1.6, dmg: 55, splash: 4.2, cooldown: 54,
     cost: 400, retreatAt: 0, flanker: false, grabbable: false, aggro: 16,
   },
@@ -77,7 +77,7 @@ export const COUNTERS = Object.freeze({
   shield: { rocket: 1.6, kami: 0.7 },
   rocket: { shield: 0.4, stealer: 1.6, sneak: 1.5, kami: 1.3, brute: 0.8 },
   stealer: { kami: 2.5, rocket: 1.1, shield: 0.6 },
-  kami: { shield: 2.0, brute: 1.6, boss: 1.3, stealer: 0.7 },
+  kami: { shield: 2.0, brute: 1.6, boss: 1.8, stealer: 0.7 },
   sneak: { rocket: 1.8, shield: 0.5 },
   brute: { shield: 1.3 },
   boss: {},
@@ -89,7 +89,8 @@ export function counterMult(att, def) {
 }
 
 /** Bounty in coins for destroying a unit of this type. */
-export const bounty = type => Math.round(UNIT_TYPES[type].cost * 0.4);
+export const bounty = type => Math.round(UNIT_TYPES[type].cost * BOUNTY_RATE);
+export const BOUNTY_RATE = 0.6;
 
 /** Which recruitable unit beats `type` (for HUD hints and the AI commander). */
 export const COUNTER_OF = Object.freeze({

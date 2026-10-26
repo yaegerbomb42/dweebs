@@ -58,3 +58,25 @@ from Warfare. (Seen a pre-existing classic-brawler console error `fx.step is not
 touched, outside Warfare.)
 
 Next: boss HP bar, AI polish/tells (batch 3), WebAudio SFX + mute (batch 4).
+
+## 2026-10-26 01:35 CT — Batch 3: enemy AI behaviours + difficulty tuning
+What changed (sim, deterministic):
+- Boss "Brass Bully" enrages once below 50% HP: faster, quicker and wider slams, calls in 2 kamis.
+- Brutes charge targets 4–10 m away (2.4× dash, charged slams hit 1.5×).
+- Sneaks backstab (1.6×) units that are busy fighting someone else; they still flank wide.
+- Rockets hold formation 3 m behind their own side's front shield instead of walking out in front.
+- Fort alarm: defenders drop everything for enemies within 16 m of their fort, even outside normal aggro.
+- Fixed two real bugs found by headless runs: a unit converted mid-tick could target/grab itself (froze waves), and
+  stealers could get stuck just outside the pen in a crowd (pen reach is now fort radius + 4).
+- Tuning: defense fort 2000 HP, forts take 0.6× unit damage, bounty 60% of cost, wave reward 80 + 20n,
+  boss 1200 base HP, kami ×1.8 vs boss, boss-wave escorts 45% budget (55% on the final wave).
+  Headless results: idle commander loses on wave 2–3; a balanced "keep buying a mix" bot reaches wave 7–10 and wins
+  some seeds; a counter-only bot that rushes waves dies around the wave-5 boss. Winnable with real play, not free.
+- View/HUD tells: boss HP bar (pulses when enraged), ENRAGED banner + shockwave, CHARGE!/BACKSTAB! words,
+  one-time hint toasts for charges and backstabs.
+
+Tested: 133/133 vitest (8 new behaviour tests: enrage, charge, backstab, formation, flanking path, retreat-heal-rejoin,
+fort alarm, no self-targeting over a full run). Duel matrix unchanged. Build OK. Headless Chrome: boss wave with bar and
+enrage banner, defeat screen with stats, Back to the Mall returns to `#/`, Escape card now launches its own mode.
+
+Next: WebAudio SFX + mute toggle (batch 4), sw.js offline (batch 5), online (batch 6).

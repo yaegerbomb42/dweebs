@@ -6,7 +6,7 @@ import { UNIT_TYPES, RECRUITABLE, COUNTER_OF, counterMult, stats, bounty } from 
 import { computeDamage, splashFalloff, knockback, COVER_MULT } from '../src/sim/warfareDamage.js';
 import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveBudget, waveThreat, unlockedTypes } from '../src/sim/warfareWaves.js';
 import { pickTarget, shouldRetreat, flankGoal, commanderDecide } from '../src/sim/warfareAI.js';
-import { createBattle, stepBattle, spawnUnit, battleHash, applyCommand, armyCounts, PREP_FIRST } from '../src/sim/warfareBattle.js';
+import { createBattle, stepBattle, spawnUnit, battleHash, applyCommand, armyCounts, PREP_FIRST, ENRAGE_KAMIS, CHARGE, BACKSTAB, FORT_ALARM } from '../src/sim/warfareBattle.js';
 import { duel } from '../src/sim/warfareDuel.js';
 
 const SEEDS = [1, 2, 3, 4, 5];
@@ -23,7 +23,7 @@ describe('warfare units', () => {
       expect(RECRUITABLE, type).toContain(COUNTER_OF[type]);
     }
     expect(() => stats('nope')).toThrow();
-    expect(bounty('rocket')).toBe(16);
+    expect(bounty('rocket')).toBe(24);
   });
   it('counter multipliers express the triangle', () => {
     expect(counterMult('rocket', 'shield')).toBeLessThan(1);
@@ -216,7 +216,9 @@ describe('warfare battle loop', () => {
     const s2 = createBattle({ seed: 4 });
     const pol = mixPolicy();
     for (let i = 0; i < 30 * 400 && !s2.winner; i++) { stepBattle(s2, pol(s2)); for (const e of s2.events) types.add(e.type); }
-    for (const t of ['hit', 'death', 'fire', 'explode', 'retreat', 'convert', 'waveStart', 'waveClear', 'fortHit']) expect(types, t).toContain(t);
+    const idle = createBattle({ seed: 4 });
+    for (let i = 0; i < 30 * 600 && !idle.winner; i++) { stepBattle(idle); for (const e of idle.events) types.add(e.type); }
+    for (const t of ['hit', 'death', 'fire', 'explode', 'retreat', 'convert', 'waveStart', 'waveClear', 'fortHit', 'lose']) expect(types, t).toContain(t);
   });
   it('versus: two AI commanders fight to a winner', () => {
     const st = createBattle({ seed: 5, mode: 'versus' });
@@ -225,3 +227,109 @@ describe('warfare battle loop', () => {
     expect(armyCounts(st)[st.winner]).toBeGreaterThan(0);
   });
 });
+
+describe('warfare enemy behaviours (in the sim)', () => {
+  const arena = () => {
+    const st = createBattle({ seed: 11, mode: 'versus', army: false, coins: 0 });
+    st.income = 0;
+    st.forts.blue.invulnerable = true; st.forts.red.invulnerable = true;
+    return st;
+  };
+  it('the boss enrages once below half HP and calls in kamis', () => {
+    const st = arena();
+    const boss = spawnUnit(st, 'red', 'boss', { x: 10, z: 0 });
+    spawnUnit(st, 'blue', 'shield', { x: -10, z: 0 });
+    stepBattle(st);
+    boss.hp = boss.maxHp * 0.45;
+    const before = st.units.filter(u => u.type === 'kami').length;
+    const seen = [];
+    for (let i = 0; i < 5; i++) { stepBattle(st); seen.push(...st.events.map(e => e.type)); }
+    expect(seen.filter(t => t === 'enrage').length).toBe(1);
+    expect(st.units.filter(u => u.type === 'kami' && u.team === 'red').length - before).toBe(ENRAGE_KAMIS);
+    expect(boss.enraged).toBe(true);
+    expect(boss.speedMul).toBeGreaterThan(1);
+  });
+  it('brutes charge targets at mid range', () => {
+    const st = arena();
+    const brute = spawnUnit(st, 'red', 'brute', { x: 4, z: 0 });
+    brute.dashCd = 0;
+    spawnUnit(st, 'blue', 'shield', { x: -3, z: 0 });
+    const types = [];
+    for (let i = 0; i < 3; i++) { stepBattle(st); types.push(...st.events.map(e => e.type)); }
+    expect(types).toContain('charge');
+    expect(brute.dash).toBeGreaterThan(0);
+    expect(brute.dashCd).toBeGreaterThan(CHARGE.cooldown - 10);
+  });
+  it('sneaks backstab a target busy with someone else', () => {
+    const st = arena();
+    const victim = spawnUnit(st, 'blue', 'rocket', { x: 0, z: 0 });
+    const decoy = spawnUnit(st, 'red', 'shield', { x: 8, z: 0 });
+    const sneak = spawnUnit(st, 'red', 'sneak', { x: 0, z: 1.2 });
+    sneak.cd = 0;
+    victim.targetId = decoy.id;
+    let hit = null, stab = false;
+    for (let i = 0; i < 6 && !hit; i++) {
+      victim.targetId = decoy.id;
+      stepBattle(st);
+      for (const e of st.events) {
+        if (e.type === 'backstab') stab = true;
+        if (e.type === 'hit' && e.src === 'sneak') hit = e;
+      }
+    }
+    expect(stab).toBe(true);
+    expect(hit.dmg).toBeCloseTo(14 * BACKSTAB * 1.8, 5);
+  });
+  it('rockets hold formation behind their own shield wall', () => {
+    const st = arena();
+    spawnUnit(st, 'red', 'shield', { x: 20, z: 0 });
+    const rocket = spawnUnit(st, 'red', 'rocket', { x: 18.5, z: 3 });
+    spawnUnit(st, 'blue', 'shield', { x: -2, z: 0 }); // inside rocket aggro, outside rocket range
+    for (let i = 0; i < 60; i++) stepBattle(st);
+    const shield = st.units.find(u => u.team === 'red' && u.type === 'shield');
+    expect(rocket.x).toBeGreaterThan(shield.x + 1.5);
+  });
+  it('flankers arc wide instead of walking straight in', () => {
+    const st = arena();
+    const sneak = spawnUnit(st, 'red', 'sneak', { x: 16, z: 0 });
+    spawnUnit(st, 'blue', 'rocket', { x: -4, z: 0 });
+    let maxZ = 0;
+    for (let i = 0; i < 60; i++) { stepBattle(st); maxZ = Math.max(maxZ, Math.abs(sneak.z)); }
+    expect(maxZ).toBeGreaterThan(2.5);
+  });
+  it('wounded units retreat, heal at the fort and rejoin', () => {
+    const st = arena();
+    const r = spawnUnit(st, 'blue', 'rocket', { x: -20, z: 0 });
+    spawnUnit(st, 'red', 'shield', { x: 30, z: 18 }); // keeps the battle alive, far out of aggro
+    r.hp = r.maxHp * 0.2;
+    const states = new Set();
+    for (let i = 0; i < 30 * 20; i++) { stepBattle(st); states.add(r.state); }
+    expect(states).toContain('retreat');
+    expect(r.state).toBe('fight');
+    expect(r.hp).toBeGreaterThan(r.maxHp * 0.8);
+  });
+  it('defenders answer a raid on their fort even outside normal aggro', () => {
+    const st = createBattle({ seed: 3, army: false });
+    const raider = spawnUnit(st, 'red', 'shield', { x: -36 + FORT_ALARM - 4, z: 10 });
+    const guard = spawnUnit(st, 'blue', 'shield', { x: -22, z: -6 });
+    stepBattle(st);
+    expect(guard.targetId).toBe(raider.id);
+  });
+  it('a converted unit never targets or grabs itself', () => {
+    const st = run2();
+    for (const u of st.units) { expect(u.carrying).not.toBe(u.id); expect(u.targetId).not.toBe(u.id); }
+  });
+});
+
+function run2() {
+  const st = createBattle({ seed: 1 });
+  const mix = ['shield', 'rocket', 'shield', 'kami', 'rocket', 'stealer'];
+  let k = 0;
+  for (let i = 0; i < 30 * 600 && !st.winner; i++) {
+    const c = [];
+    if (st.tick % 30 === 0 && st.coins.blue >= 40) c.push({ type: 'recruit', team: 'blue', unit: mix[k++ % mix.length] });
+    if (st.phase === 'prep' && st.coins.blue < 40) c.push({ type: 'startWave' });
+    stepBattle(st, c);
+    for (const u of st.units) if (u.carrying === u.id || u.carriedBy === u.id) throw new Error('self-carry at tick ' + st.tick);
+  }
+  return st;
+}

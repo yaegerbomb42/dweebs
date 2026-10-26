@@ -34,7 +34,7 @@ const CSS = `
 .wf-count .b{color:#7cc4ff}.wf-count .r{color:#ff8a95}
 .wf-corner{position:absolute;top:10px;right:12px;display:flex;gap:8px}
 .wf-corner button{padding:6px 12px;font-size:16px}
-.wf-prep{position:absolute;top:70px;left:50%;transform:translateX(-50%);text-align:center}
+.wf-prep{position:absolute;top:110px;left:50%;transform:translateX(-50%);text-align:center}
 .wf-prep button{font-size:20px}
 .wf-prep .t{font-family:'Lilita One',sans-serif;font-size:20px;text-shadow:0 2px 0 #1b1030;margin-bottom:6px}
 .wf-cards{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:10px}
@@ -62,6 +62,10 @@ const CSS = `
 .wf-stat b{display:block;font-family:'Lilita One',sans-serif;font-size:28px;color:#ffd23f}
 .wf-stat span{font-size:12px;font-weight:700;opacity:.85}
 .wf-net{position:absolute;top:10px;left:12px}
+.wf-boss{position:absolute;top:62px;left:50%;transform:translateX(-50%);width:min(420px,80vw);background:rgba(90,15,24,.85);border:3px solid #ffd23f;border-radius:14px;padding:5px 12px;font-family:'Lilita One',sans-serif;text-align:center}
+.wf-boss .wf-bar i{background:#ffd23f}
+.wf-boss.enraged{animation:wfrage .4s infinite alternate}
+@keyframes wfrage{to{border-color:#ff4d5e}}
 .wf-dmg-layer{position:fixed;inset:0;pointer-events:none;z-index:39;overflow:hidden}
 .wf-dmg{position:absolute;left:0;top:0;font-family:'Lilita One',sans-serif;font-size:18px;color:#fff;text-shadow:0 2px 0 #1b1030,0 0 4px #1b1030;opacity:0;white-space:nowrap;will-change:transform}
 .wf-dmg.crit{color:#ffd23f;font-size:24px}
@@ -117,6 +121,7 @@ export class WarfareHud {
           <button class="alt" data-a="mute" title="Mute (M)">🔊</button>
           <button class="alt" data-a="pause" title="Pause (Esc)">❚❚</button>
         </div>
+        <div class="wf-boss wf-hidden" data-f="boss"><span>⚙️ BRASS BULLY</span><div class="wf-bar"><i></i></div></div>
         <div class="wf-prep" data-f="prep">
           <div class="t" data-f="prepText"></div>
           <button data-a="startWave">START WAVE (SPACE)</button>
@@ -218,6 +223,13 @@ export class WarfareHud {
     set('coinsCards', coins, () => {
       for (const c of this.root.querySelectorAll('.wf-card')) c.classList.toggle('off', coins < UNIT_TYPES[c.dataset.u].cost);
     });
+    let boss = null;
+    for (const u of st.units) if (u.type === 'boss') { boss = u; break; }
+    set('bossShow', !!boss, v => this.f('boss').classList.toggle('wf-hidden', !v));
+    if (boss) {
+      set('bossHp', Math.ceil(boss.hp), () => { this.f('boss').querySelector('i').style.width = Math.max(0, boss.hp / boss.maxHp * 100).toFixed(1) + '%'; });
+      set('bossRage', boss.enraged, v => this.f('boss').classList.toggle('enraged', v));
+    }
     const prep = st.phase === 'prep';
     set('prep', prep, v => this.f('prep').classList.toggle('wf-hidden', !v));
     if (prep) set('prepT', Math.ceil(st.prepTicks / WF_HZ), s => {

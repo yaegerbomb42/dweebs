@@ -29,11 +29,11 @@ export function unlockedTypes(n) {
 }
 
 /** Coins the defender earns for clearing wave N. */
-export const waveReward = n => 60 + 15 * n;
+export const waveReward = n => 80 + 20 * n;
 
 /**
  * The exact spawn list for wave N (array of type names, spawn order).
- * Boss waves lead with the boss and spend 55% of the budget on escorts.
+ * Boss waves lead with the boss and spend 45% of the budget on escorts.
  * The cycle start rotates with N so consecutive waves feel different.
  */
 export function waveComposition(n) {
@@ -41,8 +41,7 @@ export function waveComposition(n) {
   let budget = waveBudget(n);
   if (isBossWave(n)) {
     out.push('boss');
-    budget = Math.round(budget * 0.55);
-    if (n >= 10) out.push('brute');
+    budget = Math.round(budget * (n >= 10 ? 0.55 : 0.45));
   }
   const types = unlockedTypes(n);
   let i = n % types.length;

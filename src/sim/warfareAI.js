@@ -45,7 +45,7 @@ export function pickTarget(u, enemies) {
   const aggro = s.aggro;
   let best = null, bestScore = Infinity;
   for (const e of enemies) {
-    if (!e.alive || e.carriedBy) continue;
+    if (!e.alive || e.carriedBy || e.team === u.team || e === u) continue;
     const dx = e.x - u.x, dz = e.z - u.z;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d > aggro) continue;

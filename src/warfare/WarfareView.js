@@ -138,6 +138,9 @@ export class WarfareView {
           break;
         }
         case 'spawn': if (e) e.spawnT = 0.35; break;
+        case 'charge': fx.number(ev.x, 3, ev.z, 'CHARGE!', 'weak'); fx.puff(ev.x, ev.z); if (e) e.leanX -= 1.5; break;
+        case 'backstab': fx.number(ev.x, 2.9, ev.z, 'BACKSTAB!', 'crit'); break;
+        case 'enrage': fx.shockwave(ev.x, ev.z, 7, 0xff4d5e); fx.addShake(0.8); fx.number(ev.x, 4.5, ev.z, 'ENRAGED!', 'crit'); if (e) e.enraged = true; break;
         case 'rally': this.rally[ev.team].pulse = 0.5; break;
         default: break;
       }
@@ -181,7 +184,8 @@ export class WarfareView {
       if (e.m.spark) e.m.spark.scale.setScalar(0.7 + Math.abs(Math.sin(t * 30 + e.x)) * 0.8);
       if (e.type === 'boss') {
         const back = tilt.getObjectByName('backGear');
-        if (back) back.rotation.y += dt * 3;
+        if (back) back.rotation.y += dt * (e.enraged ? 9 : 3);
+        if (e.enraged) tilt.scale.multiplyScalar(1 + Math.abs(Math.sin(t * 10)) * 0.06);
         if (e.m.gear) e.m.gear.rotation.y += dt * 1.5;
       }
       // retreat flag: a little white plastic flag on a dowel
