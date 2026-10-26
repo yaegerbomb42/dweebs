@@ -205,22 +205,7 @@ async function init() {
   document.addEventListener('pointerlockchange', onPointerLockChange);
   canvas.addEventListener('click', (e) => {
     if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) {
-      if (currentWarfare) {
-        const mouse = new THREE.Vector2(
-          (e.clientX / window.innerWidth) * 2 - 1,
-          -(e.clientY / window.innerHeight) * 2 + 1
-        );
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, camera);
-        if (currentWarfare.terrainMesh) {
-          const hits = raycaster.intersectObject(currentWarfare.terrainMesh);
-          if (hits.length > 0) {
-            currentWarfare.setRallyPoint(hits[0].point.x, hits[0].point.z);
-          }
-        }
-      } else {
-        cam.lock();
-      }
+      if (!currentWarfare) cam.lock();
     }
   });
 
@@ -370,6 +355,7 @@ function applyAudioSettings() {
 }
 
 function toMenu() {
+  if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   match.phase = Phase.MENU;
   clearRematch();
   spectateTarget = null;
@@ -395,7 +381,46 @@ function clearDweebs() {
   player = null;
 }
 
+/** Game 5: Dweeb Warfare. Takes over the scene with its own board, sim, HUD and audio. */
+function startWarfare() {
+  clearRematch();
+  clearDweebs();
+  match.phase = Phase.MENU;
+  arena.hazardsActive = false;
+  spectateTarget = null;
+  if (arena.setStadiumVisible) arena.setStadiumVisible(false);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
+  if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+  if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+  if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
+  colony = null;
+  if (currentWarfare) currentWarfare.dispose();
+  cam.unlock();
+  currentMode = 'warfare';
+  currentWarfare = new DweebWarfare({ scene, camera, canvas: renderer.domElement, onExit: exitWarfare });
+  for (const id of ['main-menu', 'results-screen', 'how-to-play', 'round-screen', 'pause-screen', 'civ-hud']) $(id)?.classList.add('hidden');
+  $('hud').classList.remove('hidden'); // tells the app shell a game is live
+  audio.init();
+  audio.resume();
+  applyAudioSettings();
+  audio.stopMusic();
+}
+
+function exitWarfare() {
+  toMenu();
+  if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = true;
+  setTimeout(() => { location.hash = '#/'; }, 0);
+}
+
 function startMatch() {
+  const launch = window.__dweebsLaunch;
+  window.__dweebsLaunch = null;
+  if (launch?.mode && GAME_MODES[launch.mode]) settings.mode = launch.mode;
+  if (launch?.arena && ARENAS.some(a => a.id === launch.arena)) settings.arena = launch.arena;
+  if ((settings.mode || 'derby') === 'warfare') return startWarfare();
+  if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
   clearRematch();
   clearDweebs();
   arena.setArena(settings.arena);
@@ -438,24 +463,8 @@ function startMatch() {
   const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
   const isEscape = (currentMode === 'escape');
   const isMimic = (currentMode === 'mimic');
-  const isWarfare = (currentMode === 'warfare');
 
-  if (isWarfare) {
-    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
-    if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
-    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
-    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
-    if (currentWarfare) currentWarfare.dispose();
-    currentWarfare = new DweebWarfare(physics, scene);
-    cam.setMode('god');
-    cam.target.set(0, 0, 0);
-    cam.targetDistance = 35;
-    $('civ-hud')?.classList.add('hidden');
-    $('hud-top')?.classList.remove('hidden');
-    $('hud-cards')?.classList.add('hidden');
-    const timer = $('hud-timer');
-    if (timer) timer.textContent = 'WARFARE 100v100';
-  } else if (isMimic) {
+  if (isMimic) {
     if (arena.setStadiumVisible) arena.setStadiumVisible(false);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
     if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
@@ -905,6 +914,15 @@ function loop() {
     return;
   }
 
+  // Dweeb Warfare runs its own fixed-step sim, camera and HUD; the brawler stack sits idle.
+  if (currentWarfare) {
+    currentWarfare.update(rawDt);
+    sky.update(rawDt);
+    water.update(rawDt);
+    effect.render(scene, camera);
+    return;
+  }
+
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
   const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
@@ -954,13 +972,6 @@ function loop() {
     cam.setTarget(0, -1, 0);
   }
   arena.update(dt);
-  if (currentWarfare) {
-    currentWarfare.update(dt);
-    const timer = $('hud-timer');
-    if (timer && !currentWarfare.gameOver) {
-      timer.textContent = `BLUE ${currentWarfare.blueCount} vs RED ${currentWarfare.redCount}`;
-    }
-  }
   if (currentMimicLab) {
     currentMimicLab.update(dt, player, dweebs, combat);
   }

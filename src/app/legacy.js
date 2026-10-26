@@ -83,6 +83,9 @@ export function launchGameMode(mode, arena = null) {
     const arenaBtn = document.querySelector(`#main-menu .seg[data-setting="arena"] button[data-v="${arena}"]`);
     if (arenaBtn) arenaBtn.click();
   }
+  // The shell re-syncs the menu segs from its own saved settings while the match route opens,
+  // which used to snap every Mall card back to the saved mode. A one-shot override wins.
+  window.__dweebsLaunch = { mode, arena };
   return startOfflineMatch();
 }
 

@@ -1,488 +1,289 @@
-// DweebWarfare.js — 100 vs 100 Mass Physics Battle Simulator (Game 5)
+// DweebWarfare.js — Game 5 controller. Owns the deterministic battle (src/sim/warfareBattle.js),
+// steps it at a fixed 30 Hz, feeds local commands in, and drives the view, HUD, audio and camera.
 //
-// Features:
-//   - Rocket Launchers with explosive recoil
-//   - Stealers (Kidnappers) who tackle enemies and haul them back to the Conversion Pen
-//   - Kamis (Bomb Runners) who sprint into battle lines with cartoon TNT and detonate
-//   - Shield Phalanx that blocks incoming rockets and pushes frontlines
-//   - Commander RTS point-and-click rally orders
-
+//   title  → attract battle (AI vs AI) behind the start screen with tutorial hints
+//   playing→ defense (waves, boss every 5, win after FINAL_WAVE) or versus AI
+//   paused / over → pause menu, win/lose screen with stats and restart
 import * as THREE from 'three';
-import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
+import { createBattle, stepBattle, WF_DT, FIELD } from '../sim/warfareBattle.js';
+import { commanderDecide } from '../sim/warfareAI.js';
+import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
+import { FINAL_WAVE } from '../sim/warfareWaves.js';
+import { WarfareView } from './WarfareView.js';
+import { WarfareHud } from './WarfareHud.js';
 
-export const UNIT_ROLES = {
-  SHIELD: 'shield',
-  ROCKET: 'rocket',
-  STEALER: 'stealer',
-  KAMI: 'kami',
+export { RECRUITABLE as UNIT_ROLES };
+
+const ENEMY_HINTS = {
+  rocket: 'Enemy <b>rockets</b> lob splash shells. Walk <b>shields</b> into them.',
+  stealer: 'Enemy <b>stealers</b> kidnap your dweebs! <b>Rockets</b> shred them in the open.',
+  kami: '<b>Kamis</b> blow up shield walls. <b>Stealers</b> flip their fuses.',
+  sneak: '<b>Sneaks</b> flank around your line to knife rockets. Keep <b>shields</b> near your gunners.',
+  brute: '<b>Brutes</b> are too heavy to steal. Swarm them with <b>kamis</b>.',
+  boss: 'The <b>Brass Bully</b> is here! Kamis deal bonus damage. Keep shields spread out.',
 };
 
 export class DweebWarfare {
-  constructor(physicsWorld, scene) {
-    this.physicsWorld = physicsWorld;
+  /**
+   * @param {object} o
+   * @param {THREE.Scene} o.scene
+   * @param {THREE.Camera} o.camera
+   * @param {HTMLCanvasElement} o.canvas
+   * @param {() => void} [o.onExit] leave Warfare (back to the mall)
+   */
+  constructor({ scene, camera, canvas, onExit } = {}) {
     this.scene = scene;
-    this.group = new THREE.Group();
-    this.scene.add(this.group);
-
-    this.colliders = [];
-    this.blueUnits = [];
-    this.redUnits = [];
-    this.projectiles = [];
-    this.particles = [];
-    this.clock = 0;
-    this.gameOver = false;
-    this.convertedCount = 0;
-
-    // Commander beacon
-    this.rallyBeacon = null;
-    this.rallyPos = new THREE.Vector3(0, 0, 0);
-
-    // Reusable geometries & materials for high-count efficiency
-    this._initSharedMeshes();
-    this._buildBattlefield();
-    this._spawnArmies(45); // 45 vs 45 = 90 high-performance chaotic physics combatants
+    this.camera = camera;
+    this.canvas = canvas;
+    this.onExit = onExit;
+    this.view = new WarfareView(scene, camera);
+    this.hud = new WarfareHud({ onAction: a => this._action(a), onRecruit: u => this.recruit(u) });
+    this.hud.setModeButtons({ online: false });
+    this.team = 'blue';
+    this.mode = 'defense';
+    this.phase = 'title';
+    this.pending = [];
+    this.acc = 0;
+    this.seen = new Set();
+    this.cam = { x: 0, z: 2, dist: 52, tx: 0, tz: 2, tdist: 52 };
+    this.keys = new Set();
+    this.raycaster = new THREE.Raycaster();
+    this._ndc = new THREE.Vector2();
+    this.audio = null;           // WarfareAudio, attached later
+    this._wire();
+    document.body.classList.add('warfare-active');
+    this._startAttract();
+    if (/[?&]wfdebug\b/.test(location.search)) window.__wf = this;
   }
 
-  get blueCount() {
-    return this.blueUnits.length;
+  // Legacy surface main.js used before the rewrite
+  get gameOver() { return this.phase === 'over'; }
+  get blueCount() { return this.st ? this.st.units.filter(u => u.team === 'blue').length : 0; }
+  get redCount() { return this.st ? this.st.units.filter(u => u.team === 'red').length : 0; }
+  get terrainMesh() { return this.view.pickMesh; }
+  setRallyPoint(x, z) { this.pending.push({ type: 'rally', team: this.team, x, z }); }
+
+  _startAttract() {
+    this.phase = 'title';
+    this.st = createBattle({ seed: (Date.now() & 0xffff) + 1, mode: 'versus' });
+    this.attract = true;
+    this.view.reset();
+    this.view.localTeam = this.team;
+    this.hud.refreshBest();
+    this.hud.screen('title');
+    this.cam.tx = 0; this.cam.tz = 2; this.cam.tdist = 56;
   }
 
-  get redCount() {
-    return this.redUnits.length;
-  }
-
-  _initSharedMeshes() {
-    this.geoBody = new THREE.DodecahedronGeometry(0.55, 1);
-    this.geoShield = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 8);
-    this.geoRocket = new THREE.CylinderGeometry(0.12, 0.16, 1.1, 6);
-    this.geoBomb = new THREE.SphereGeometry(0.38, 8, 8);
-
-    this.matBlue = toonMat({ color: 0x3b82f6, flatShading: true });
-    this.matRed = toonMat({ color: 0xef4444, flatShading: true });
-    this.matShield = toonMat({ color: 0x64748b, flatShading: true });
-    this.matRocket = toonMat({ color: 0xf59e0b, flatShading: true });
-    this.matBomb = toonMat({ color: 0x1e293b, flatShading: true });
-    this.matWood = toonMat({ color: 0x78350f, flatShading: true });
-  }
-
-  _buildBattlefield() {
-    // 80m x 45m Battlefield Arena
-    const groundGeo = new THREE.BoxGeometry(84, 1.0, 48);
-    const groundMat = toonMat({ color: 0xe2e8f0, flatShading: true });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.position.set(0, -0.5, 0);
-    this.terrainMesh = ground;
-    this.group.add(ground);
-    if (this.physicsWorld) {
-      this.physicsWorld.createStaticBox(0, -0.5, 0, 42, 0.5, 24, 'stone');
-    }
-
-    // Outer Boundary Walls
-    const wallNorth = new THREE.Mesh(new THREE.BoxGeometry(84, 4, 1), this.matWood);
-    wallNorth.position.set(0, 2, -24);
-    const wallSouth = new THREE.Mesh(new THREE.BoxGeometry(84, 4, 1), this.matWood);
-    wallSouth.position.set(0, 2, 24);
-    this.group.add(wallNorth, wallSouth);
-
-    if (this.physicsWorld) {
-      this.physicsWorld.createStaticBox(0, 2, -24, 42, 2, 0.5, 'wood');
-      this.physicsWorld.createStaticBox(0, 2, 24, 42, 2, 0.5, 'wood');
-      this.physicsWorld.createStaticBox(-42, 2, 0, 0.5, 2, 24, 'wood');
-      this.physicsWorld.createStaticBox(42, 2, 0, 0.5, 2, 24, 'wood');
-    }
-
-    // Central No-Man's Land Barricades
-    for (let i = -16; i <= 16; i += 8) {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 4), this.matWood);
-      bar.position.set((Math.random() - 0.5) * 6, 0.7, i);
-      bar.rotation.y = (Math.random() - 0.5) * 0.4;
-      this.group.add(bar);
-      if (this.physicsWorld) {
-        this.physicsWorld.createStaticBox(bar.position.x, 0.7, bar.position.z, 0.8, 0.7, 2, 'wood');
-      }
-    }
-
-    // Blue Conversion Pen (West: x = -34)
-    this.bluePen = this._createConversionPen(-34, 0, 0x3b82f6);
-    // Red Conversion Pen (East: x = 34)
-    this.redPen = this._createConversionPen(34, 0, 0xef4444);
-
-    // Rally Beacon Marker
-    const beaconGeo = new THREE.ConeGeometry(0.8, 2.5, 6);
-    const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, wireframe: true });
-    this.rallyBeacon = new THREE.Mesh(beaconGeo, beaconMat);
-    this.rallyBeacon.rotation.x = Math.PI;
-    this.rallyBeacon.position.set(0, 3.5, 0);
-    this.group.add(this.rallyBeacon);
-    noOutline(this.rallyBeacon);
-  }
-
-  _createConversionPen(x, z, color) {
-    const pen = new THREE.Group();
-    pen.position.set(x, 0, z);
-
-    const pad = new THREE.Mesh(
-      new THREE.CylinderGeometry(4.5, 4.8, 0.3, 12),
-      toonMat({ color, flatShading: true })
-    );
-    pad.position.y = 0.15;
-    pen.add(pad);
-
-    const light = new THREE.PointLight(color, 2.5, 12);
-    light.position.set(0, 2, 0);
-    pen.add(light);
-
-    this.group.add(pen);
-    return { x, z, radius: 4.5 };
-  }
-
-  _spawnArmies(countPerTeam) {
-    const roles = [
-      UNIT_ROLES.SHIELD, UNIT_ROLES.SHIELD,
-      UNIT_ROLES.ROCKET,
-      UNIT_ROLES.STEALER,
-      UNIT_ROLES.KAMI,
-    ];
-
-    // Spawn Blue Army (West side: x = -26 to -14)
-    for (let i = 0; i < countPerTeam; i++) {
-      const role = roles[i % roles.length];
-      const x = -24 + (Math.random() - 0.5) * 12;
-      const z = (Math.random() - 0.5) * 36;
-      const unit = this._createUnit('blue', role, x, 0.6, z);
-      this.blueUnits.push(unit);
-    }
-
-    // Spawn Red Army (East side: x = 14 to 26)
-    for (let i = 0; i < countPerTeam; i++) {
-      const role = roles[i % roles.length];
-      const x = 24 + (Math.random() - 0.5) * 12;
-      const z = (Math.random() - 0.5) * 36;
-      const unit = this._createUnit('red', role, x, 0.6, z);
-      this.redUnits.push(unit);
+  start(mode = 'defense') {
+    this.mode = mode;
+    this.attract = false;
+    this.team = 'blue';
+    this.st = createBattle({ seed: (Date.now() & 0x7fffffff) | 1, mode });
+    this.pending = [];
+    this.seen = new Set();
+    this.acc = 0;
+    this.endTimer = 0;
+    this.view.reset();
+    this.view.localTeam = this.team;
+    this.phase = 'playing';
+    this.hud.last = {};
+    this.hud.screen('game');
+    this.cam.tx = -16; this.cam.tz = 3; this.cam.tdist = 40;
+    this.audio?.unlock();
+    this.audio?.waveStart(false);
+    if (mode === 'defense') {
+      this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5`, '', 2.6);
+      this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
+    } else {
+      this.hud.banner('VERSUS', 'Smash the red fort before they smash yours', '', 2.6);
+      this.hud.toast('The AI buys counters to your army. Mix it up!', 8);
     }
   }
 
-  _createUnit(team, role, x, y, z) {
-    const group = new THREE.Group();
-    group.position.set(x, y, z);
+  recruit(type) {
+    if (this.phase !== 'playing' || !RECRUITABLE.includes(type)) return;
+    if (this.st.coins[this.team] < UNIT_TYPES[type].cost) { this.audio?.deny(); this.hud.toast(`Need 🪙 ${UNIT_TYPES[type].cost} for a ${UNIT_TYPES[type].name}`, 2.5); return; }
+    this.pending.push({ type: 'recruit', team: this.team, unit: type });
+  }
 
-    const matTeam = team === 'blue' ? this.matBlue : this.matRed;
-    const bodyMesh = new THREE.Mesh(this.geoBody, matTeam);
-    bodyMesh.position.y = 0.55;
-    group.add(bodyMesh);
+  _action(a) {
+    this.audio?.unlock();
+    this.audio?.click();
+    if (a === 'defense' || a === 'versus') this.start(a);
+    else if (a === 'startWave') this.pending.push({ type: 'startWave' });
+    else if (a === 'pause') this.setPaused(true);
+    else if (a === 'resume') this.setPaused(false);
+    else if (a === 'restart') this.start(this.mode);
+    else if (a === 'quit') this._startAttract();
+    else if (a === 'exit') this.onExit?.();
+    else if (a === 'mute') this.toggleMute();
+    else if (a === 'online-coop' || a === 'online-versus') this.hud.toast('Online Warfare needs the dweebs server.', 3);
+  }
 
-    // Googly Eyes
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const pupilMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 6), eyeMat);
-    eyeL.position.set(team === 'blue' ? 0.45 : -0.45, 0.7, -0.16);
-    const pupilL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), pupilMat);
-    pupilL.position.set(team === 'blue' ? 0.54 : -0.54, 0.7, -0.16);
-    group.add(eyeL, pupilL);
+  toggleMute() {
+    if (!this.audio) return;
+    this.audio.setMuted(!this.audio.muted);
+    this.hud.setMute(this.audio.muted);
+  }
 
-    // Role-specific Gear
-    let gearMesh = null;
-    if (role === UNIT_ROLES.SHIELD) {
-      gearMesh = new THREE.Mesh(this.geoShield, this.matShield);
-      gearMesh.rotation.z = Math.PI / 2;
-      gearMesh.position.set(team === 'blue' ? 0.65 : -0.65, 0.55, 0);
-      group.add(gearMesh);
-    } else if (role === UNIT_ROLES.ROCKET) {
-      gearMesh = new THREE.Mesh(this.geoRocket, this.matRocket);
-      gearMesh.rotation.z = Math.PI / 3;
-      gearMesh.position.set(0, 1.1, 0);
-      group.add(gearMesh);
-    } else if (role === UNIT_ROLES.KAMI) {
-      gearMesh = new THREE.Mesh(this.geoBomb, this.matBomb);
-      gearMesh.position.set(0, 1.25, 0);
-      group.add(gearMesh);
-    } else if (role === UNIT_ROLES.STEALER) {
-      // Sleek bandit mask headband
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.58, 0.2, 8), this.matWood);
-      band.position.y = 0.7;
-      group.add(band);
-    }
+  setPaused(on) {
+    if (on && this.phase === 'playing') { this.phase = 'paused'; this.hud.screen('pause'); }
+    else if (!on && this.phase === 'paused') { this.phase = 'playing'; this.hud.screen('game'); this.acc = 0; }
+  }
 
-    this.group.add(group);
-
-    return {
-      team,
-      role,
-      mesh: group,
-      pos: new THREE.Vector3(x, y, z),
-      vel: new THREE.Vector3((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.2),
-      hp: role === UNIT_ROLES.SHIELD ? 140 : 80,
-      alive: true,
-      attackCooldown: Math.random() * 2.5,
-      carryingTarget: null, // for Stealers hauling enemies!
-      carriedBy: null,
+  _wire() {
+    this._onKey = e => {
+      if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (e.type === 'keyup') { this.keys.delete(k); return; }
+      this.keys.add(k);
+      if (k === 'escape') { if (this.phase === 'playing') this.setPaused(true); else if (this.phase === 'paused') this.setPaused(false); e.preventDefault(); return; }
+      if (k === 'm') { this.toggleMute(); return; }
+      if (this.phase !== 'playing') return;
+      const n = '1234'.indexOf(e.key);
+      if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
+      else if (k === ' ') { this.pending.push({ type: 'startWave' }); e.preventDefault(); }
     };
+    this._onPointer = e => {
+      if (this.phase !== 'playing' || e.button !== 0) return;
+      const p = this._pick(e.clientX, e.clientY);
+      if (p) { this.setRallyPoint(p.x, p.z); this.audio?.click(); }
+    };
+    this._onWheel = e => {
+      if (this.phase === 'title') return;
+      this.cam.tdist = Math.max(22, Math.min(70, this.cam.tdist + Math.sign(e.deltaY) * 3));
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', this._onKey);
+    window.addEventListener('keyup', this._onKey);
+    this.canvas?.addEventListener('pointerdown', this._onPointer);
+    this.canvas?.addEventListener('wheel', this._onWheel, { passive: false });
   }
 
-  setRallyPoint(x, z) {
-    this.rallyPos.set(x, 0, z);
-    if (this.rallyBeacon) {
-      this.rallyBeacon.position.set(x, 3.5, z);
+  _pick(cx, cy) {
+    this._ndc.set((cx / window.innerWidth) * 2 - 1, -(cy / window.innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(this._ndc, this.camera);
+    const hit = this.raycaster.intersectObject(this.view.pickMesh)[0];
+    return hit ? { x: hit.point.x, z: hit.point.z } : null;
+  }
+
+  _stepOnce() {
+    const st = this.st;
+    let cmds;
+    if (this.attract) cmds = [...commanderDecide(st, 'blue'), ...commanderDecide(st, 'red')];
+    else {
+      cmds = this.pending.splice(0);
+      if (st.mode === 'versus') cmds.push(...commanderDecide(st, 'red'));
+    }
+    stepBattle(st, cmds);
+    this.view.afterStep(st);
+    if (!this.attract) this._react(st.events);
+    this.audio?.events(st.events, this.team);
+  }
+
+  _react(events) {
+    const hud = this.hud, st = this.st;
+    for (const ev of events) {
+      if (ev.type === 'waveStart') {
+        hud.banner(ev.boss ? 'BOSS WAVE!' : `WAVE ${ev.wave}`, ev.boss ? 'The Brass Bully rolls in' : `${ev.count} enemies incoming`, ev.boss ? 'boss' : '');
+      } else if (ev.type === 'waveClear') {
+        hud.banner('WAVE CLEARED', `+🪙 ${ev.reward} · your army patches up`, 'good');
+      } else if (ev.type === 'spawn' && ev.team !== this.team && !this.seen.has(ev.unit)) {
+        this.seen.add(ev.unit);
+        if (ENEMY_HINTS[ev.unit] && (st.wave > 1 || ev.unit !== 'shield')) hud.toast(ENEMY_HINTS[ev.unit], 7);
+      } else if (ev.type === 'recruit' && ev.team === this.team) {
+        hud.pop(ev.unit);
+      } else if (ev.type === 'convert' && ev.from === this.team && !this.seen.has('lostConvert')) {
+        this.seen.add('lostConvert');
+        hud.toast('One of yours got <b>kidnapped</b>! Protect your line with <b>rockets</b>.', 6);
+      } else if (ev.type === 'fortHit' && ev.team === this.team && st.forts[this.team].hp < st.forts[this.team].maxHp * 0.35 && !this.seen.has('lowFort')) {
+        this.seen.add('lowFort');
+        hud.toast('Your fort is <b>cracking</b>! Pull the rally flag back home.', 6);
+      } else if (ev.type === 'win' || ev.type === 'lose') {
+        this.endTimer = 1.6;
+      }
     }
   }
 
-  update(dt) {
-    this.clock += dt;
-    if (this.gameOver) return;
-
-    if (this.rallyBeacon) {
-      this.rallyBeacon.rotation.y += dt * 3.0;
-      this.rallyBeacon.position.y = 3.2 + Math.sin(this.clock * 4) * 0.4;
+  _end() {
+    const st = this.st, s = st.stats[this.team];
+    const won = st.winner === this.team;
+    this.phase = 'over';
+    if (this.mode === 'defense') {
+      const reached = won ? FINAL_WAVE : st.wave;
+      const best = +localStorage.getItem('dweebs-warfare-best') || 0;
+      if (reached > best) localStorage.setItem('dweebs-warfare-best', String(reached));
     }
-
-    // Update Projectiles
-    this._updateProjectiles(dt);
-
-    // Update Blue and Red Armies
-    this._updateArmy(this.blueUnits, this.redUnits, this.bluePen, dt);
-    this._updateArmy(this.redUnits, this.blueUnits, this.redPen, dt);
-
-    // Clean up dead units
-    this.blueUnits = this.blueUnits.filter(u => u.alive);
-    this.redUnits = this.redUnits.filter(u => u.alive);
-
-    // Check Victory Condition
-    if (this.blueUnits.length === 0 || this.redUnits.length === 0) {
-      this.gameOver = true;
-      const winner = this.blueUnits.length > 0 ? 'BLUE ARMY' : 'RED ARMY';
-      const announcer = document.getElementById('announcer');
-      if (announcer) {
-        announcer.className = 'show go';
-        announcer.innerHTML = `${winner} VICTORY!<small>Warfare Concluded · ${this.convertedCount} Dweebs Kidnapped &amp; Converted</small>`;
-      }
-    }
-  }
-
-  _updateArmy(army, enemyArmy, homePen, dt) {
-    for (const u of army) {
-      if (!u.alive) continue;
-
-      // If being carried by a Stealer, pin to the stealer's hands
-      if (u.carriedBy) {
-        if (!u.carriedBy.alive) {
-          u.carriedBy = null;
-        } else {
-          u.pos.copy(u.carriedBy.pos);
-          u.pos.y = 1.6;
-          u.mesh.position.copy(u.pos);
-          u.mesh.rotation.z = Math.sin(this.clock * 12) * 0.4;
-          continue;
-        }
-      }
-
-      u.attackCooldown = Math.max(0, u.attackCooldown - dt);
-
-      // Find nearest living enemy
-      let nearestDist = Infinity;
-      let target = null;
-      for (const e of enemyArmy) {
-        if (!e.alive || e.carriedBy) continue;
-        const d = u.pos.distanceTo(e.pos);
-        if (d < nearestDist) {
-          nearestDist = d;
-          target = e;
-        }
-      }
-
-      // ── Role Behaviors ──
-
-      // 1. STEALER: Infiltrate, tackle, carry back to conversion pen
-      if (u.role === UNIT_ROLES.STEALER) {
-        if (u.carryingTarget) {
-          // Sprint back to Home Conversion Pen!
-          const dx = homePen.x - u.pos.x;
-          const dz = homePen.z - u.pos.z;
-          const dist = Math.hypot(dx, dz) || 1;
-          u.vel.x = (dx / dist) * 7.5;
-          u.vel.z = (dz / dist) * 7.5;
-
-          if (dist < homePen.radius) {
-            // CONVERT ENEMY!
-            const victim = u.carryingTarget;
-            victim.team = u.team;
-            victim.carriedBy = null;
-            victim.mesh.children[0].material = u.team === 'blue' ? this.matBlue : this.matRed;
-            enemyArmy.splice(enemyArmy.indexOf(victim), 1);
-            army.push(victim);
-            u.carryingTarget = null;
-            this.convertedCount++;
-
-            const announcer = document.getElementById('announcer');
-            if (announcer && Math.random() < 0.25) {
-              announcer.className = 'show trick';
-              announcer.innerHTML = `CONVERTED!<small>${u.team.toUpperCase()} Stealer captured an enemy Dweeb!</small>`;
-            }
-          }
-        } else if (target && nearestDist < 1.4) {
-          // Tackle and grab target overhead!
-          u.carryingTarget = target;
-          target.carriedBy = u;
-        } else if (target) {
-          // Sprint toward nearest enemy
-          const dx = target.pos.x - u.pos.x;
-          const dz = target.pos.z - u.pos.z;
-          const dist = Math.hypot(dx, dz) || 1;
-          u.vel.x = (dx / dist) * 6.2;
-          u.vel.z = (dz / dist) * 6.2;
-        }
-      }
-
-      // 2. KAMI: Fast sprint toward enemy and detonate!
-      else if (u.role === UNIT_ROLES.KAMI) {
-        if (target && nearestDist < 2.2) {
-          // BOOM!
-          u.alive = false;
-          this.group.remove(u.mesh);
-          this._createExplosion(u.pos.x, u.pos.y, u.pos.z, 5.0, 75, enemyArmy);
-        } else if (target) {
-          const dx = target.pos.x - u.pos.x;
-          const dz = target.pos.z - u.pos.z;
-          const dist = Math.hypot(dx, dz) || 1;
-          u.vel.x = (dx / dist) * 6.8;
-          u.vel.z = (dz / dist) * 6.8;
-        }
-      }
-
-      // 3. ROCKET LAUNCHER: Range artillery
-      else if (u.role === UNIT_ROLES.ROCKET) {
-        if (target && nearestDist < 24 && nearestDist > 8) {
-          u.vel.set(0, 0, 0);
-          if (u.attackCooldown <= 0) {
-            u.attackCooldown = 3.2;
-            this._fireRocket(u.pos, target.pos, u.team, enemyArmy);
-            // Recoil kickback!
-            const dx = u.pos.x - target.pos.x;
-            const dz = u.pos.z - target.pos.z;
-            const d = Math.hypot(dx, dz) || 1;
-            u.vel.x = (dx / d) * 5.0;
-            u.vel.z = (dz / d) * 5.0;
-          }
-        } else if (target) {
-          const dx = target.pos.x - u.pos.x;
-          const dz = target.pos.z - u.pos.z;
-          const dist = Math.hypot(dx, dz) || 1;
-          const sign = nearestDist <= 8 ? -1 : 1;
-          u.vel.x = (dx / dist) * 4.0 * sign;
-          u.vel.z = (dz / dist) * 4.0 * sign;
-        }
-      }
-
-      // 4. SHIELD PHALANX: Frontline tanks
-      else {
-        if (target && nearestDist < 1.4) {
-          u.vel.set(0, 0, 0);
-          if (u.attackCooldown <= 0) {
-            u.attackCooldown = 1.0;
-            target.hp -= 22;
-            if (target.hp <= 0) {
-              target.alive = false;
-              this.group.remove(target.mesh);
-            }
-          }
-        } else if (target) {
-          const dx = target.pos.x - u.pos.x;
-          const dz = target.pos.z - u.pos.z;
-          const dist = Math.hypot(dx, dz) || 1;
-          u.vel.x = (dx / dist) * 4.4;
-          u.vel.z = (dz / dist) * 4.4;
-        }
-      }
-
-      // Move unit
-      u.pos.x += u.vel.x * dt;
-      u.pos.z += u.vel.z * dt;
-      u.vel.multiplyScalar(0.92);
-
-      // Clamp to battlefield bounds
-      u.pos.x = THREE.MathUtils.clamp(u.pos.x, -40, 40);
-      u.pos.z = THREE.MathUtils.clamp(u.pos.z, -22, 22);
-
-      u.mesh.position.copy(u.pos);
-    }
-  }
-
-  _fireRocket(fromPos, toPos, team, enemyArmy) {
-    const geo = new THREE.CylinderGeometry(0.14, 0.18, 0.9, 6);
-    const mat = new THREE.MeshBasicMaterial({ color: team === 'blue' ? 0x38bdf8 : 0xf87171 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(fromPos);
-    mesh.position.y += 0.8;
-    this.group.add(mesh);
-    noOutline(mesh);
-
-    const dir = toPos.clone().sub(fromPos);
-    dir.y = 0;
-    const dist = dir.length();
-    dir.normalize();
-
-    this.projectiles.push({
-      mesh,
-      pos: mesh.position.clone(),
-      vel: dir.multiplyScalar(16.0).setY(7.0 + dist * 0.25),
-      team,
-      enemyArmy,
-      lifetime: 3.5,
+    const secs = Math.round(st.tick * WF_DT);
+    const time = `${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')}`;
+    const sub = this.mode === 'defense'
+      ? (won ? `The fort held through all ${FINAL_WAVE} waves!` : `The fort fell on wave ${st.wave}.`)
+      : (won ? 'The red fort is rubble.' : 'Your fort got flattened.');
+    this.hud.showEnd({
+      won, sub,
+      stats: [
+        [this.mode === 'defense' ? 'waves cleared' : 'time', this.mode === 'defense' ? `${st.stats.wavesCleared}/${FINAL_WAVE}` : time],
+        ['enemies popped', s.kills],
+        ['dweebs lost', s.lost],
+        ['kidnapped & converted', s.converted],
+        ['coins earned', s.coinsEarned],
+        ['damage dealt', Math.round(s.dmgDealt)],
+      ],
     });
+    this.audio?.[won ? 'win' : 'lose']();
   }
 
-  _updateProjectiles(dt) {
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const p = this.projectiles[i];
-      p.vel.y -= 18.0 * dt; // gravity
-      p.pos.addScaledVector(p.vel, dt);
-      p.mesh.position.copy(p.pos);
-      p.lifetime -= dt;
-
-      // Hit ground or target
-      if (p.pos.y <= 0.4 || p.lifetime <= 0) {
-        this.group.remove(p.mesh);
-        this.projectiles.splice(i, 1);
-        this._createExplosion(p.pos.x, 0.5, p.pos.z, 4.2, 55, p.enemyArmy);
-      }
+  update(rawDt) {
+    const dt = Math.min(rawDt, 0.1);
+    if (this.phase === 'playing' || this.phase === 'title') {
+      this.acc += dt;
+      let n = 0;
+      while (this.acc >= WF_DT && n < 5) { this.acc -= WF_DT; this._stepOnce(); n++; }
+      if (n === 5) this.acc = 0;
+      if (this.attract && this.st.winner) this.st = createBattle({ seed: (this.st.seed * 7 + 3) & 0xffff, mode: 'versus' });
     }
+    if (this.endTimer > 0 && this.phase === 'playing') {
+      this.endTimer -= dt;
+      if (this.endTimer <= 0) this._end();
+    }
+    const alpha = this.phase === 'playing' || this.phase === 'title' ? this.acc / WF_DT : 1;
+    this.view.frame(this.st, alpha, this.phase === 'paused' ? 0 : dt);
+    if (this.phase !== 'title') this.hud.update(this.st, this.team, dt);
+    this._camera(dt);
   }
 
-  _createExplosion(x, y, z, radius, damage, targetArmy) {
-    // Blast visual flash
-    const flash = new THREE.Mesh(
-      new THREE.SphereGeometry(radius * 0.8, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8 })
-    );
-    flash.position.set(x, y, z);
-    this.group.add(flash);
-    noOutline(flash);
-    setTimeout(() => this.group.remove(flash), 180);
-
-    // Apply blast damage & knockback to nearby enemies
-    for (const u of targetArmy) {
-      if (!u.alive) continue;
-      const d = Math.hypot(u.pos.x - x, u.pos.z - z);
-      if (d < radius) {
-        u.hp -= damage * (1 - d / radius);
-        const knock = 8.0 * (1 - d / radius);
-        u.vel.x += ((u.pos.x - x) / (d || 1)) * knock;
-        u.vel.z += ((u.pos.z - z) / (d || 1)) * knock;
-
-        if (u.hp <= 0) {
-          u.alive = false;
-          this.group.remove(u.mesh);
-        }
-      }
+  _camera(dt) {
+    const c = this.cam;
+    if (this.phase === 'playing' || this.phase === 'paused') {
+      const pan = 26 * dt * (c.dist / 46);
+      if (this.keys.has('a') || this.keys.has('arrowleft')) c.tx -= pan;
+      if (this.keys.has('d') || this.keys.has('arrowright')) c.tx += pan;
+      if (this.keys.has('w') || this.keys.has('arrowup')) c.tz -= pan;
+      if (this.keys.has('s') || this.keys.has('arrowdown')) c.tz += pan;
+      c.tx = Math.max(-FIELD.halfX, Math.min(FIELD.halfX, c.tx));
+      c.tz = Math.max(-FIELD.halfZ, Math.min(FIELD.halfZ, c.tz));
+    } else if (this.phase === 'title') {
+      c.tx = Math.sin(this.view.time * 0.12) * 14;
     }
+    const k = Math.min(1, dt * 5);
+    c.x += (c.tx - c.x) * k; c.z += (c.tz - c.z) * k; c.dist += (c.tdist - c.dist) * k;
+    const pitch = 0.98;
+    const sh = this.view.fx.shake;
+    const jx = (Math.random() - 0.5) * sh, jy = (Math.random() - 0.5) * sh, jz = (Math.random() - 0.5) * sh;
+    this.camera.position.set(c.x + jx, Math.sin(pitch) * c.dist + jy, c.z + Math.cos(pitch) * c.dist + jz);
+    this.camera.lookAt(c.x + jx * 0.5, 0, c.z + jz * 0.5);
   }
 
   dispose() {
-    this.scene.remove(this.group);
-    for (const c of this.colliders) {
-      if (this.physicsWorld && c.body) {
-        this.physicsWorld.world.removeRigidBody(c.body);
-      }
-    }
+    window.removeEventListener('keydown', this._onKey);
+    window.removeEventListener('keyup', this._onKey);
+    this.canvas?.removeEventListener('pointerdown', this._onPointer);
+    this.canvas?.removeEventListener('wheel', this._onWheel);
+    this.audio?.dispose?.();
+    this.view.dispose();
+    this.hud.dispose();
+    document.body.classList.remove('warfare-active');
   }
 }
+
+export { COUNTER_OF };
