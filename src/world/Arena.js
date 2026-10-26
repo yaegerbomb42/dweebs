@@ -154,6 +154,7 @@ export class Arena {
   }
 
   build() {
+    const beforeCount = this.scene.children.length;
     this._createIsland();
     this._createPlatforms();
     this._createSpinner();
@@ -170,6 +171,16 @@ export class Arena {
     this._createLava();
     this._createArenaTheme();
     this._spawnStartItems();
+    this._stadiumNodes = this.scene.children.slice(beforeCount);
+  }
+
+  setStadiumVisible(visible) {
+    if (this._stadiumNodes) {
+      for (const node of this._stadiumNodes) {
+        if (node) node.visible = visible;
+      }
+    }
+    if (this.themeGroup) this.themeGroup.visible = visible;
   }
 
   // ─── Arena personality ───

@@ -20,7 +20,7 @@
  * Bump CACHE_NAME on every deploy that changes the shell. Old caches are dropped in activate.
  */
 
-const CACHE_NAME = 'dweebs-v2';
+const CACHE_NAME = 'dweebs-mall-v1';
 const SHELL = ['./', './index.html', './favicon.svg', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {

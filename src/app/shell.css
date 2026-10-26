@@ -338,3 +338,112 @@
 }
 /* The player-facing toggle sets the same flag for in-game shake and confetti. */
 :root[data-reduced-motion="on"] #app-toasts { transition: none; }
+
+/* ─── The Dweeb Mall Hub ─── */
+.mall-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 1240px;
+  width: 95vw;
+  gap: 18px;
+  padding: 10px 0;
+}
+.mall-header {
+  text-align: center;
+}
+.mall-title {
+  font-family: var(--display);
+  font-size: clamp(38px, 6vw, 68px);
+  color: var(--yellow);
+  -webkit-text-stroke: 5px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 8px 0 var(--ink);
+  margin-bottom: 4px;
+  letter-spacing: 2px;
+}
+.mall-subtitle {
+  font-family: var(--display);
+  font-size: clamp(16px, 2.2vw, 22px);
+  color: var(--cream);
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+}
+.mall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+.mall-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  border-radius: 22px;
+  box-shadow: 0 8px 0 var(--ink);
+  padding: 20px 14px 16px 14px;
+  transition: transform .14s ease, box-shadow .14s ease;
+}
+.mall-card:hover {
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: 0 13px 0 var(--ink);
+}
+.mall-badge {
+  position: absolute;
+  top: -12px;
+  background: var(--yellow);
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  padding: 2px 10px;
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 1px;
+  box-shadow: 0 3px 0 var(--ink);
+}
+.mall-badge.badge-green { background: var(--green); }
+.mall-badge.badge-blue { background: var(--blue); color: var(--cream); }
+.mall-badge.badge-purple { background: #b56cff; color: var(--cream); }
+.mall-badge.badge-red { background: var(--red); color: var(--cream); }
+.mall-icon {
+  font-size: 46px;
+  margin: 10px 0 6px 0;
+  filter: drop-shadow(0 4px 0 rgba(27, 16, 48, 0.2));
+}
+.mall-card-title {
+  font-family: var(--display);
+  font-size: 21px;
+  color: var(--ink);
+  margin-bottom: 6px;
+  line-height: 1.1;
+}
+.mall-card-desc {
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.35;
+  flex-grow: 1;
+  margin-bottom: 14px;
+}
+.mall-btn {
+  width: 100%;
+  font-size: 18px;
+  padding: 8px 12px;
+}
+.mall-btn.green { background: var(--green); }
+.mall-btn.purple { background: #b56cff; color: #fff; }
+.mall-footer {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 10px;
+}
+.mall-footer .btn {
+  font-size: 18px;
+  padding: 8px 20px;
+}

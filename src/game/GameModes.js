@@ -5,6 +5,17 @@
 // 4. 'brawl'   — Classic Knockout Brawl
 
 export const GAME_MODES = {
+  adventure: {
+    id: 'adventure',
+    name: 'Civilization & Adventure',
+    tagline: 'Living open-world! Build a tiny civilization, conquer puzzle ruins, spread knowledge across generations.',
+    stocks: 999,
+    hasWeapons: false,
+    hasWallDrop: false,
+    hasContraptions: true,
+    hasEscapePuzzles: true,
+    isCivilization: true,
+  },
   derby: {
     id: 'derby',
     name: 'Dumb Ways to Die',
@@ -34,6 +45,28 @@ export const GAME_MODES = {
     hasWallDrop: false,
     hasContraptions: false,
     hasEscapePuzzles: true,
+  },
+  mimic: {
+    id: 'mimic',
+    name: 'Mimic & Mutate Lab',
+    tagline: 'First-person toy lab! Demonstrate physical antics, watch crowds of Dweebs copy & mutate them.',
+    stocks: 999,
+    hasWeapons: false,
+    hasWallDrop: false,
+    hasContraptions: true,
+    hasEscapePuzzles: false,
+    isMimic: true,
+  },
+  warfare: {
+    id: 'warfare',
+    name: 'Dweeb Warfare 100v100',
+    tagline: 'Mass physics battle sim! Rocket launchers, stealers, kamis, and tactical commander orders.',
+    stocks: 999,
+    hasWeapons: true,
+    hasWallDrop: false,
+    hasContraptions: true,
+    hasEscapePuzzles: false,
+    isWarfare: true,
   },
   brawl: {
     id: 'brawl',

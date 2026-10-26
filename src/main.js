@@ -34,9 +34,24 @@ import { OBJECT_DEFS } from './world/ObjectRegistry.js';
 import { PALETTE } from './render/Toon.js';
 import { statsFor, BALANCE } from './game/Balance.js';
 import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
+import { Meadowlands } from './world/Meadowlands.js';
+import { Colony } from './adventure/colony.js';
+import { BuildingManager } from './adventure/building.js';
+import { EscapeSandbox } from './escape/EscapeSandbox.js';
+import { MimicLab } from './mimic/MimicLab.js';
+import { DweebWarfare } from './warfare/DweebWarfare.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
+
+let currentMeadowlands = null;
+let colony = null;
+let buildingManager = null;
+let currentEscapeSandbox = null;
+let currentMimicLab = null;
+let currentWarfare = null;
+let activeCitizenIdx = 0;
+let isBuildToolbarOpen = false;
 
 const ROSTER = [
   { name: 'Blorp', type: 'blob', color: PALETTE.pink },
@@ -188,8 +203,25 @@ async function init() {
   setupMenu();
   window.addEventListener('resize', onResize);
   document.addEventListener('pointerlockchange', onPointerLockChange);
-  canvas.addEventListener('click', () => {
-    if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) cam.lock();
+  canvas.addEventListener('click', (e) => {
+    if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) {
+      if (currentWarfare) {
+        const mouse = new THREE.Vector2(
+          (e.clientX / window.innerWidth) * 2 - 1,
+          -(e.clientY / window.innerHeight) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+        if (currentWarfare.terrainMesh) {
+          const hits = raycaster.intersectObject(currentWarfare.terrainMesh);
+          if (hits.length > 0) {
+            currentWarfare.setRallyPoint(hits[0].point.x, hits[0].point.z);
+          }
+        }
+      } else {
+        cam.lock();
+      }
+    }
   });
 
   await hideLoading();
@@ -401,6 +433,119 @@ function startMatch() {
   currentMode = settings.mode || 'derby';
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
+
+  // ── Mode Initialization (Game 1, Game 2, Game 3, Game 4, Game 5) ──
+  const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
+  const isEscape = (currentMode === 'escape');
+  const isMimic = (currentMode === 'mimic');
+  const isWarfare = (currentMode === 'warfare');
+
+  if (isWarfare) {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
+    if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+    if (currentWarfare) currentWarfare.dispose();
+    currentWarfare = new DweebWarfare(physics, scene);
+    cam.setMode('god');
+    cam.target.set(0, 0, 0);
+    cam.targetDistance = 35;
+    $('civ-hud')?.classList.add('hidden');
+    $('hud-top')?.classList.remove('hidden');
+    $('hud-cards')?.classList.add('hidden');
+    const timer = $('hud-timer');
+    if (timer) timer.textContent = 'WARFARE 100v100';
+  } else if (isMimic) {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
+    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+    if (currentMimicLab) currentMimicLab.dispose();
+    currentMimicLab = new MimicLab(physics, scene);
+    if (player && player.body) {
+      player.body.setTranslation({ x: 0, y: 1.2, z: 0 }, true);
+    }
+    for (let i = 0; i < dweebs.length; i++) {
+      const d = dweebs[i];
+      if (!d.isPlayer && d.body) {
+        const ang = (i / dweebs.length) * Math.PI * 2;
+        d.body.setTranslation({ x: Math.cos(ang) * 8.5, y: 1.2, z: Math.sin(ang) * 8.5 }, true);
+      }
+    }
+    cam.setMode('first_person');
+    $('civ-hud')?.classList.add('hidden');
+    $('hud-top')?.classList.remove('hidden');
+    $('hud-cards')?.classList.remove('hidden');
+    const timer = $('hud-timer');
+    if (timer) timer.textContent = 'MIMIC LAB';
+  } else if (isEscape) {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
+    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+    if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+    if (currentEscapeSandbox) currentEscapeSandbox.dispose();
+    currentEscapeSandbox = new EscapeSandbox(physics, scene);
+    if (player && player.body) {
+      player.body.setTranslation({ x: 0, y: 1.2, z: 6 }, true);
+    }
+    // Spawn companion bot inside chamber
+    if (dweebs.length > 1 && dweebs[1].body) {
+      dweebs[1].body.setTranslation({ x: 2, y: 1.2, z: 6 }, true);
+    }
+    cam.setMode('explorer');
+    $('civ-hud')?.classList.add('hidden');
+    $('hud-top')?.classList.remove('hidden');
+    $('hud-cards')?.classList.remove('hidden');
+    const timer = $('hud-timer');
+    if (timer) timer.textContent = 'ESCAPE!';
+  } else if (isAdventure) {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
+    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+    if (currentMeadowlands) currentMeadowlands.dispose();
+    currentMeadowlands = new Meadowlands(physics, scene);
+    colony = new Colony();
+    for (const d of dweebs) {
+      if (!d.isPlayer) colony.addCitizen(d);
+    }
+    // Spawn player in village clearing at y = 1.2
+    if (player && player.body) {
+      player.body.setTranslation({ x: 0, y: 1.2, z: 2 }, true);
+    }
+    // Spawn citizens near campfire
+    for (let i = 0; i < colony.citizens.length; i++) {
+      const c = colony.citizens[i];
+      const ang = (i / colony.citizens.length) * Math.PI * 2;
+      if (c.dweeb && c.dweeb.body) {
+        c.dweeb.body.setTranslation({ x: Math.cos(ang) * 4, y: 1.2, z: Math.sin(ang) * 4 }, true);
+      }
+    }
+    cam.setMode('explorer');
+    buildingManager = new BuildingManager(scene, physics);
+    currentMeadowlands.buildingManager = buildingManager;
+    $('civ-hud')?.classList.remove('hidden');
+    $('hud-top')?.classList.add('hidden');
+    $('hud-cards')?.classList.add('hidden');
+    wireCivCameraControls();
+  } else {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+    if (currentMeadowlands) {
+      currentMeadowlands.dispose();
+      currentMeadowlands = null;
+    }
+    if (buildingManager) {
+      buildingManager.cancelPlacing();
+      buildingManager = null;
+    }
+    colony = null;
+    $('civ-hud')?.classList.add('hidden');
+    $('hud-top')?.classList.remove('hidden');
+    $('hud-cards')?.classList.remove('hidden');
+  }
 
   for (const id of ['main-menu', 'results-screen', 'how-to-play']) $(id).classList.add('hidden');
   $('hud').classList.remove('hidden');
@@ -809,6 +954,52 @@ function loop() {
     cam.setTarget(0, -1, 0);
   }
   arena.update(dt);
+  if (currentWarfare) {
+    currentWarfare.update(dt);
+    const timer = $('hud-timer');
+    if (timer && !currentWarfare.gameOver) {
+      timer.textContent = `BLUE ${currentWarfare.blueCount} vs RED ${currentWarfare.redCount}`;
+    }
+  }
+  if (currentMimicLab) {
+    currentMimicLab.update(dt, player, dweebs, combat);
+  }
+  if (currentEscapeSandbox) {
+    currentEscapeSandbox.update(dt, dweebs, combat);
+  }
+  if (currentMeadowlands) {
+    if (buildingManager && player) {
+      buildingManager.update(rawDt, player, currentMeadowlands.terrainMesh);
+    }
+    currentMeadowlands.update(dt, dweebs);
+    if (colony) colony.update(dt, currentMeadowlands);
+
+    // Update Living Civilization HUD
+    const resB = $('res-berries'), resW = $('res-wood'), resS = $('res-stone'), resV = $('unlocked-verbs');
+    if (colony && resB) {
+      resB.textContent = colony.resources.berries;
+      resW.textContent = colony.resources.wood;
+      resS.textContent = colony.resources.stone;
+      resV.textContent = Array.from(colony.unlockedVerbs).map(v => v.toUpperCase()).join(', ');
+      const genEl = $('civ-gen');
+      if (genEl) genEl.textContent = colony.generation;
+    }
+
+    // Citizen Observation Card in Observer mode
+    const banner = $('citizen-banner');
+    if (cam.mode === 'observer' && colony && colony.citizens.length > 0) {
+      const activeCit = colony.citizens[activeCitizenIdx % colony.citizens.length];
+      if (banner && activeCit) {
+        banner.classList.remove('hidden');
+        const nameEl = $('cit-name');
+        const actEl = $('cit-activity');
+        if (nameEl) nameEl.textContent = `${activeCit.name} (${activeCit.personality.name})`;
+        if (actEl) actEl.textContent = activeCit.activityText;
+      }
+    } else if (banner) {
+      banner.classList.add('hidden');
+    }
+  }
   particles.update(dt);
   trails.update(dt, arena.objects);
   bursts.update(rawDt);
@@ -1028,6 +1219,23 @@ function updateNearMiss() {
 }
 
 function followCamera() {
+  if (cam.mode === 'first_person') {
+    const p = player.getPosition();
+    cam.setTarget(p.x, p.y + 0.5, p.z);
+    return;
+  }
+  if (cam.mode === 'god') {
+    // In Civ / God view, camera target is panned freely across the settlement
+    return;
+  }
+  if (cam.mode === 'observer' && colony && colony.citizens.length > 0) {
+    const activeCit = colony.citizens[activeCitizenIdx % colony.citizens.length];
+    if (activeCit && activeCit.dweeb) {
+      const p = activeCit.dweeb.getPosition();
+      cam.setTarget(p.x, p.y, p.z);
+    }
+    return;
+  }
   let focus = player.active ? player : null;
   if (focus) {
     if (spectateTarget) { spectateTarget = null; hud.setSpectator(''); }
@@ -1045,6 +1253,103 @@ function followCamera() {
     const p = focus.getPosition();
     cam.setTarget(p.x, p.y, p.z);
   }
+}
+
+let civControlsWired = false;
+function wireCivCameraControls() {
+  if (civControlsWired) return;
+  civControlsWired = true;
+
+  const btnExp = $('cam-explorer');
+  const btnObs = $('cam-observer');
+  const btnGod = $('cam-god');
+  const btnBuild = $('btn-toggle-build');
+  const buildToolbar = $('build-toolbar');
+
+  const updateButtons = (activeMode) => {
+    btnExp?.classList.toggle('active', activeMode === 'explorer');
+    btnObs?.classList.toggle('active', activeMode === 'observer');
+    btnGod?.classList.toggle('active', activeMode === 'god');
+  };
+
+  const toggleBuild = () => {
+    isBuildToolbarOpen = !isBuildToolbarOpen;
+    buildToolbar?.classList.toggle('hidden', !isBuildToolbarOpen);
+    btnBuild?.classList.toggle('active', isBuildToolbarOpen);
+    if (!isBuildToolbarOpen && buildingManager) {
+      buildingManager.cancelPlacing();
+      document.querySelectorAll('.build-card').forEach(c => c.classList.remove('active'));
+    }
+  };
+
+  btnBuild?.addEventListener('click', toggleBuild);
+
+  // Blueprint card selection
+  document.querySelectorAll('.build-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const bpId = card.dataset.bp;
+      document.querySelectorAll('.build-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      if (buildingManager) buildingManager.startPlacing(bpId);
+    });
+  });
+
+  btnExp?.addEventListener('click', () => {
+    cam.setMode('explorer');
+    updateButtons('explorer');
+  });
+
+  btnObs?.addEventListener('click', () => {
+    if (colony && colony.citizens.length > 0) {
+      activeCitizenIdx = (activeCitizenIdx + 1) % colony.citizens.length;
+      cam.setMode('observer', colony.citizens[activeCitizenIdx]);
+    }
+    updateButtons('observer');
+  });
+
+  btnGod?.addEventListener('click', () => {
+    cam.setMode('god');
+    cam.target.set(0, 0, 0);
+    updateButtons('god');
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (!currentMeadowlands) return;
+    if (e.key === 'b' || e.key === 'B') {
+      toggleBuild();
+    } else if (e.key === 'e' || e.key === 'E') {
+      if (buildingManager && buildingManager.activeBlueprint) {
+        const res = buildingManager.confirmPlacement(colony, currentMeadowlands);
+        if (res && !res.success) {
+          hud?.toast?.(res.reason || 'Cannot place here');
+        }
+      }
+    } else if (e.key === 'Escape') {
+      if (buildingManager && buildingManager.activeBlueprint) {
+        buildingManager.cancelPlacing();
+        document.querySelectorAll('.build-card').forEach(c => c.classList.remove('active'));
+      }
+    } else if (e.key === '1') {
+      cam.setMode('explorer');
+      updateButtons('explorer');
+    } else if (e.key === '2') {
+      if (colony && colony.citizens.length > 0) {
+        activeCitizenIdx = (activeCitizenIdx + 1) % colony.citizens.length;
+        cam.setMode('observer', colony.citizens[activeCitizenIdx]);
+      }
+      updateButtons('observer');
+    } else if (e.key === '3') {
+      cam.setMode('god');
+      cam.target.set(0, 0, 0);
+      updateButtons('god');
+    } else if (cam.mode === 'god') {
+      const panSpeed = 0.8;
+      if (e.key === 'w' || e.key === 'ArrowUp') cam.panGodView(0, panSpeed);
+      if (e.key === 's' || e.key === 'ArrowDown') cam.panGodView(0, -panSpeed);
+      if (e.key === 'a' || e.key === 'ArrowLeft') cam.panGodView(-panSpeed, 0);
+      if (e.key === 'd' || e.key === 'ArrowRight') cam.panGodView(panSpeed, 0);
+    }
+  });
 }
 
 function onResize() {

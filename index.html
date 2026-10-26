@@ -218,6 +218,32 @@
     #spectator-tag { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); font-family: var(--display); font-size: 18px; color: var(--cream); -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; background: rgba(27,16,48,.45); border: 3px solid var(--ink); border-radius: 12px; padding: 3px 12px; opacity: 0; white-space: nowrap; transition: opacity .2s; }
     #spectator-tag.show { opacity: 1; }
     .arena-tag { font-family: var(--display); font-size: 20px; color: var(--cream); -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; background: var(--ink); border-radius: 12px; padding: 4px 14px; letter-spacing: .04em; }
+
+    /* ── Adventure & Living Civ HUD ── */
+    #civ-hud { position: fixed; inset: 0; pointer-events: none; z-index: 12; display: flex; flex-direction: column; justify-content: space-between; padding: 14px 20px; }
+    .civ-bar { pointer-events: auto; display: flex; align-items: center; justify-content: space-between; background: rgba(255, 248, 238, 0.95); border: 4px solid var(--ink); border-radius: 18px; box-shadow: 0 6px 0 var(--ink); padding: 8px 18px; font-family: var(--display); font-size: 19px; }
+    .civ-title { font-size: 22px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+    .civ-stats { display: flex; align-items: center; gap: 16px; font-size: 17px; }
+    .civ-stats b { font-family: var(--body); font-weight: 900; }
+    .civ-camera-modes { display: flex; gap: 8px; }
+    .cam-btn { font-family: var(--display); font-size: 15px; border: 3px solid var(--ink); background: var(--cream); border-radius: 12px; padding: 4px 10px; cursor: pointer; color: var(--ink); transition: transform .08s, background .15s; }
+    .cam-btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
+    .cam-btn.active { background: var(--yellow); box-shadow: 0 3px 0 var(--ink); transform: translateY(-2px); }
+    .citizen-banner { pointer-events: auto; align-self: center; display: flex; align-items: center; gap: 14px; background: rgba(255, 248, 238, 0.96); border: 4px solid var(--ink); border-radius: 20px; box-shadow: 0 8px 0 var(--ink); padding: 10px 22px; animation: slidein .2s ease-out; margin-bottom: 24px; max-width: 600px; }
+    .citizen-info .citizen-name { font-family: var(--display); font-size: 22px; color: var(--ink); }
+    .citizen-info .citizen-act { font-family: var(--body); font-weight: 800; font-size: 16px; color: #475569; margin-top: 2px; }
+
+    /* ── Toy Construction Toolbar ── */
+    .build-toolbar { pointer-events: auto; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 8px; background: rgba(255, 248, 238, 0.98); border: 4px solid var(--ink); border-radius: 20px; box-shadow: 0 8px 0 var(--ink); padding: 12px 20px; margin-bottom: 20px; animation: slidein .2s ease-out; }
+    .build-title { font-family: var(--display); font-size: 19px; color: var(--ink); }
+    .build-hint { font-family: var(--body); font-size: 13px; font-weight: 800; color: #64748b; margin-left: 6px; }
+    .build-cards { display: flex; gap: 10px; }
+    .build-card { display: flex; flex-direction: column; align-items: center; background: #fff; border: 3px solid var(--ink); border-radius: 14px; padding: 6px 12px; cursor: pointer; transition: transform .08s, background .15s; min-width: 90px; }
+    .build-card:hover { transform: translateY(-2px); background: #fef08a; }
+    .build-card.active { background: var(--yellow); box-shadow: 0 4px 0 var(--ink); transform: translateY(-3px); }
+    .bp-icon { font-size: 24px; }
+    .bp-name { font-family: var(--display); font-size: 14px; color: var(--ink); margin-top: 2px; }
+    .bp-cost { font-family: var(--body); font-weight: 900; font-size: 12px; color: #475569; }
     .vote { font-weight: 900; font-size: 15px; color: var(--cream); -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; min-height: 1.4em; }
     .pod .extra { font-size: 13px; font-weight: 900; opacity: .85; }
     #crosshair { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border-radius: 50%; border: 3px solid var(--ink); background: var(--cream); opacity: .7; }
@@ -304,13 +330,15 @@
       <span>Camera</span><div class="seg" data-setting="shake"><button data-v="full">Full</button><button data-v="low">Subtle</button><button data-v="off">Off</button></div>
       <span>Game Mode</span>
       <div class="seg" data-setting="mode" style="margin-bottom:8px;">
-        <button data-v="derby" class="active" title="Dumb Ways to Die">☠️ Die Derby</button>
+        <button data-v="adventure" class="active" title="Living Open World Civilization & Dynasty">🌱 Adventure</button>
+        <button data-v="derby" title="Dumb Ways to Die">☠️ Die Derby</button>
         <button data-v="walldrop" title="1-Life Team Drop Wall">🧱 Wall Drop</button>
         <button data-v="escape" title="Co-Op Puzzle Island">🧩 Escape Island</button>
         <button data-v="brawl" title="Classic Knockout">🥊 Brawl</button>
       </div>
       <span>Arena</span>
       <div class="seg arenas" data-setting="arena" style="margin-bottom:8px;">
+        <button data-v="meadowlands" class="on" title="Region 01: The Meadowlands — Open World">🌱 Meadowlands</button>
         <button data-v="stadium" title="The classic floating toy island">🏟 Stadium</button>
         <button data-v="iceberg" title="Frozen floor, terrible brakes">🧊 Iceberg</button>
         <button data-v="volcano" title="Rising lava and a crumbling rim">🌋 Volcano</button>
@@ -399,6 +427,65 @@
     <div id="spectator-tag"></div>
     <div id="impact-flash"></div>
     <div id="hud-cards"></div>
+
+    <!-- Adventure & Living Civilization HUD -->
+    <div id="civ-hud" class="hidden">
+      <div id="civ-top-bar" class="civ-bar">
+        <span class="civ-title">🌱 New Dweebtopia (Gen <span id="civ-gen">1</span>)</span>
+        <div class="civ-stats">
+          <span title="Fresh Berries">🍓 <b id="res-berries">20</b></span>
+          <span title="Lumber">🪵 <b id="res-wood">12</b></span>
+          <span title="Stone">🪨 <b id="res-stone">8</b></span>
+          <span title="Unlocked Verbs">⚡ <b id="unlocked-verbs">Carry</b></span>
+        </div>
+        <div class="civ-camera-modes">
+          <button id="cam-explorer" class="cam-btn active" title="Press 1">🎒 Explorer</button>
+          <button id="cam-observer" class="cam-btn" title="Press 2">👀 Citizen Cam</button>
+          <button id="cam-god" class="cam-btn" title="Press 3">🗺️ Civ View</button>
+          <button id="btn-toggle-build" class="cam-btn" title="Press B">🔨 Build (B)</button>
+        </div>
+      </div>
+
+      <!-- Toy Construction Blueprint Toolbar -->
+      <div id="build-toolbar" class="build-toolbar hidden">
+        <div class="build-title">🔨 Toy Construction Palette <span class="build-hint">([B] to Toggle · Click to Select Blueprint · [E] to Place · [Esc] to Cancel)</span></div>
+        <div class="build-cards" id="build-cards">
+          <button class="build-card" data-bp="springboard">
+            <span class="bp-icon">🍄</span>
+            <span class="bp-name">Springpad</span>
+            <span class="bp-cost">🪵 1 · 🪨 1</span>
+          </button>
+          <button class="build-card" data-bp="ramp">
+            <span class="bp-icon">🪵</span>
+            <span class="bp-name">Ramp Bridge</span>
+            <span class="bp-cost">🪵 2</span>
+          </button>
+          <button class="build-card" data-bp="tent">
+            <span class="bp-icon">🎪</span>
+            <span class="bp-name">Play Tent</span>
+            <span class="bp-cost">🪵 3 · 🍓 2</span>
+          </button>
+          <button class="build-card" data-bp="firepit">
+            <span class="bp-icon">🔥</span>
+            <span class="bp-name">Firepit Circle</span>
+            <span class="bp-cost">🪵 1 · 🪨 2</span>
+          </button>
+          <button class="build-card" data-bp="catapult">
+            <span class="bp-icon">🎯</span>
+            <span class="bp-name">Toy Catapult</span>
+            <span class="bp-cost">🪵 4 · 🪨 2</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="citizen-banner" class="citizen-banner hidden">
+        <div class="citizen-avatar" id="cit-avatar"></div>
+        <div class="citizen-info">
+          <div class="citizen-name" id="cit-name">Blorp the Adventurer</div>
+          <div class="citizen-act" id="cit-activity">Wandering peacefully around New Dweebtopia</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="round-screen" class="overlay hidden">

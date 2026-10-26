@@ -24,7 +24,7 @@ import { mountSettings } from './settings-screen.js';
 import { loadSettings, saveSettings, serverUrl } from './settings.js';
 import {
   isMatchLive, isAtResults, showOfflineMenu, hideOfflineMenu,
-  startOfflineMatch, watchGameScreens,
+  startOfflineMatch, launchGameMode, watchGameScreens,
 } from './legacy.js';
 import {
   applySettings, watchSettings, installContextLoss, installVisibilityPause,
@@ -134,12 +134,35 @@ export async function upgradeNetClient(opts) {
 
 // ─── title ───
 
-function wireTitle({ nodes, router }) {
-  nodes.title.querySelector('#app-btn-offline').onclick = () => router.go('/play');
-  nodes.title.querySelector('#app-btn-online').onclick = () => router.go('/online');
-  nodes.title.querySelector('#app-btn-how').onclick = () =>
+function wireTitle({ nodes, router, toast }) {
+  // ── The Dweeb Mall: 5 Games in One Living Universe ──
+  nodes.title.querySelector('#app-btn-classic')?.addEventListener('click', () => {
+    launchGameMode('derby', 'stadium');
+  });
+
+  nodes.title.querySelector('#app-btn-dynasty')?.addEventListener('click', () => {
+    launchGameMode('adventure', 'meadowlands');
+  });
+
+  nodes.title.querySelector('#app-btn-escape')?.addEventListener('click', () => {
+    launchGameMode('escape', 'stadium');
+  });
+
+  nodes.title.querySelector('#app-btn-mimic')?.addEventListener('click', () => {
+    launchGameMode('mimic', 'stadium');
+  });
+
+  nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
+    launchGameMode('warfare', 'stadium');
+  });
+
+  // Footer Navigation
+  nodes.title.querySelector('#app-btn-offline')?.addEventListener('click', () => router.go('/play'));
+  nodes.title.querySelector('#app-btn-online')?.addEventListener('click', () => router.go('/online'));
+  nodes.title.querySelector('#app-btn-how')?.addEventListener('click', () => {
     document.getElementById('how-to-play')?.classList.remove('hidden');
-  nodes.title.querySelector('#app-btn-settings').onclick = () => router.go('/settings');
+  });
+  nodes.title.querySelector('#app-btn-settings')?.addEventListener('click', () => router.go('/settings'));
 }
 
 // ─── online: the one-tap door (PLAY NOW) + friends-by-code ───

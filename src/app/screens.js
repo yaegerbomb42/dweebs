@@ -16,15 +16,66 @@ import { BINDING_LABELS } from './settings.js';
 
 export function buildScreens() {
   const title = el(`
-    <section id="app-title" class="app-screen hidden" aria-label="Main menu">
-      <div class="app-title-plate">
-        <button class="btn big" id="app-btn-offline">PLAY OFFLINE</button>
-        <button class="btn big pink" id="app-btn-online">PLAY ONLINE</button>
-        <div class="app-menu-row">
+    <section id="app-title" class="app-screen hidden" aria-label="The Dweeb Mall">
+      <div class="mall-container">
+        <header class="mall-header">
+          <h1 class="mall-title">THE DWEEB MALL</h1>
+          <p class="mall-subtitle">Pick your physics playground — 5 games in one living universe</p>
+        </header>
+
+        <div class="mall-grid">
+          <!-- Game 1: Classic Brawler -->
+          <article class="mall-card card-classic" id="mall-card-1">
+            <div class="mall-badge">CLASSIC BRAWLER</div>
+            <div class="mall-icon">🥊</div>
+            <h3 class="mall-card-title">Knockout Arena</h3>
+            <p class="mall-card-desc">The original 4-player stadium brawler. Dumb ways to die, crazy physics weapons & sudden death.</p>
+            <button class="btn mall-btn yellow" id="app-btn-classic">PLAY BRAWLER</button>
+          </article>
+
+          <!-- Game 2: Expedition & Dynasty -->
+          <article class="mall-card card-dynasty" id="mall-card-2">
+            <div class="mall-badge badge-green">OPEN WORLD SIM</div>
+            <div class="mall-icon">🌱</div>
+            <h3 class="mall-card-title">Expedition &amp; Dynasty</h3>
+            <p class="mall-card-desc">Build a living civilization in The Meadowlands. Watch autonomous Dweebs learn skills and conquer ruins.</p>
+            <button class="btn mall-btn green" id="app-btn-dynasty">ENTER EXPEDITION</button>
+          </article>
+
+          <!-- Game 3: Escape Sandbox -->
+          <article class="mall-card card-escape" id="mall-card-3">
+            <div class="mall-badge badge-blue">PHYSICAL PUZZLES</div>
+            <div class="mall-icon">🧩</div>
+            <h3 class="mall-card-title">Escape Rooms</h3>
+            <p class="mall-card-desc">Puzzles without one solution. Blow hinges off, stack squishy bodies, dig tunnels, or break the roof.</p>
+            <button class="btn mall-btn blue" id="app-btn-escape">PLAY ESCAPE</button>
+          </article>
+
+          <!-- Game 4: Mimic & Mutate -->
+          <article class="mall-card card-mimic" id="mall-card-4">
+            <div class="mall-badge badge-purple">1ST PERSON CHAOS</div>
+            <div class="mall-icon">🐒</div>
+            <h3 class="mall-card-title">Mimic &amp; Mutate</h3>
+            <p class="mall-card-desc">First-person toy lab. Do an action and watch crowds of wide-eyed Dweebs copy and hilariously mutate it.</p>
+            <button class="btn mall-btn purple" id="app-btn-mimic">ENTER LAB</button>
+          </article>
+
+          <!-- Game 5: Dweeb Warfare -->
+          <article class="mall-card card-warfare" id="mall-card-5">
+            <div class="mall-badge badge-red">100 VS 100</div>
+            <div class="mall-icon">⚔️</div>
+            <h3 class="mall-card-title">Dweeb Warfare</h3>
+            <p class="mall-card-desc">Mass physics battle sim. Stealers, rocket launchers, kamis, and giant catapults clashing in pure chaos.</p>
+            <button class="btn mall-btn pink" id="app-btn-warfare">START WARFARE</button>
+          </article>
+        </div>
+
+        <footer class="mall-footer">
+          <button class="btn white" id="app-btn-offline">CUSTOM LOBBY</button>
+          <button class="btn pink" id="app-btn-online">PLAY ONLINE</button>
           <button class="btn white" id="app-btn-how">HOW TO PLAY</button>
           <button class="btn blue" id="app-btn-settings">SETTINGS</button>
-        </div>
-        <p class="app-note">Offline needs no network and is the default mode.</p>
+        </footer>
       </div>
     </section>`);
 

@@ -8,6 +8,24 @@ import { PALETTE } from '../render/Toon.js';
 
 export const ARENAS = [
   {
+    id: 'meadowlands',
+    name: 'The Meadowlands (Region 01)',
+    tag: 'OPEN WORLD',
+    blurb: 'Living low-poly landscape. Babbling brooks, ancient puzzle ruins, and the dawn of Dweeb civilization.',
+    color: 0x48bb78,
+    icon: '🌱',
+    traction: 1.05,
+    slide: 0.95,
+    bumpers: 1,
+    pendulums: 1,
+    lava: false,
+    crust: false,
+    conveyors: false,
+    wind: false,
+    gravity: 1,
+    isWorld: true,
+  },
+  {
     id: 'stadium',
     name: 'Dweeb Stadium',
     tag: 'CLASSIC',

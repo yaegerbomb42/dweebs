@@ -13,6 +13,11 @@ export class CameraController {
     this.distance = 9;       // camera distance from target
     this.targetDistance = 9;
 
+    // Camera Modes: 'explorer' (3rd person), 'observer' (follow citizen), 'god' (tactical builder view)
+    this.mode = 'explorer';
+    this.trackedEntity = null;
+    this.targetPitch = -0.42;
+
     // Zoom & FOV
     this.baseFov = 60;
     this.targetFov = 60;
@@ -89,6 +94,52 @@ export class CameraController {
     this.targetDistance = Math.max(this.minDistance, Math.min(this.maxDistance, this.targetDistance));
   }
 
+  /** Switch between 'explorer', 'observer', and 'god' / 'builder' camera views */
+  setMode(mode, trackedEntity = null) {
+    this.mode = mode;
+    this.trackedEntity = trackedEntity;
+
+    if (mode === 'god') {
+      this.targetPitch = -1.05;
+      this.targetDistance = 28;
+      this.minDistance = 12;
+      this.maxDistance = 55;
+      this.minPitch = -1.45;
+      this.maxPitch = -0.55;
+    } else if (mode === 'observer') {
+      this.targetPitch = -0.38;
+      this.targetDistance = 7.5;
+      this.minDistance = 4;
+      this.maxDistance = 18;
+      this.minPitch = -1.1;
+      this.maxPitch = 0.05;
+    } else if (mode === 'first_person') {
+      this.targetPitch = 0.0;
+      this.targetDistance = 0.05;
+      this.minDistance = 0.0;
+      this.maxDistance = 0.1;
+      this.minPitch = -1.45;
+      this.maxPitch = 1.45;
+    } else {
+      // explorer (default)
+      this.targetPitch = -0.42;
+      this.targetDistance = 9;
+      this.minDistance = 5;
+      this.maxDistance = 22;
+      this.minPitch = -1.25;
+      this.maxPitch = 0.1;
+    }
+  }
+
+  panGodView(dx, dz, dt = 1) {
+    if (this.mode !== 'god') return;
+    const forward = this.getForward();
+    const right = this.getRight();
+    const speed = this.distance * 1.2 * dt;
+    this.target.addScaledVector(forward, -dz * speed);
+    this.target.addScaledVector(right, dx * speed);
+  }
+
   /** Set the position to follow */
   setTarget(x, y, z) {
     this.target.set(x, Math.max(y, -2) + 1.2, z);
@@ -157,6 +208,11 @@ export class CameraController {
     // Smooth distance
     this.distance += (this.targetDistance - this.distance) * Math.min(1, dt * 6);
 
+    // Smooth mode pitch when not manually orbiting
+    if (!this.isLocked && this.targetPitch !== undefined) {
+      this.pitch += (this.targetPitch - this.pitch) * Math.min(1, dt * 4);
+    }
+
     // Dynamic FOV recover
     this.targetFov += (this.baseFov - this.targetFov) * Math.min(1, dt * 8);
     this.currentFov += (this.targetFov - this.currentFov) * Math.min(1, dt * 12);
@@ -178,6 +234,13 @@ export class CameraController {
       const u = 1 - this.kcT / this.kcDur;
       const w = this.kcT > 0 ? 0.55 * Math.min(1, u / 0.25) : 0;
       this.currentTarget.lerp(this.kc, w * Math.min(1, dt * 10));
+    }
+
+    if (this.mode === 'first_person') {
+      this.camera.position.copy(this.currentTarget);
+      const look = this.currentTarget.clone().add(this.getLookDirection());
+      this.camera.lookAt(look);
+      return;
     }
 
     // Calculate camera position from spherical coordinates

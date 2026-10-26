@@ -64,13 +64,26 @@ export function isGameReady() {
  * seg click, so clicking the matching button is both the update and the sync.
  */
 export function syncOfflineSegs(settings) {
-  for (const key of ['bots', 'difficulty', 'stocks', 'music', 'sound', 'type', 'color']) {
+  for (const key of ['bots', 'difficulty', 'stocks', 'music', 'sound', 'type', 'color', 'mode', 'arena']) {
     const seg = document.querySelector(`#main-menu .seg[data-setting="${key}"]`);
     if (!seg) continue;
     const want = String(settings[key]);
     const btn = seg.querySelector(`button[data-v="${want}"]`);
     if (btn && !btn.classList.contains('on')) btn.click();
   }
+}
+
+/** Directly launch any of the Dweeb Mall experiences */
+export function launchGameMode(mode, arena = null) {
+  if (mode) {
+    const modeBtn = document.querySelector(`#main-menu .seg[data-setting="mode"] button[data-v="${mode}"]`);
+    if (modeBtn) modeBtn.click();
+  }
+  if (arena) {
+    const arenaBtn = document.querySelector(`#main-menu .seg[data-setting="arena"] button[data-v="${arena}"]`);
+    if (arenaBtn) arenaBtn.click();
+  }
+  return startOfflineMatch();
 }
 
 /** Show the original offline menu and put it on screen. */

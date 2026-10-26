@@ -177,6 +177,12 @@ export class PhysicsWorld {
     return this._fixed(x, y, z, this.RAPIER.ColliderDesc.cylinder(halfHeight, radius), mat, 'cyl');
   }
 
+  /** Fixed trimesh collider for landscape terrain and complex ruins */
+  createFixedTrimesh(x, y, z, vertices, indices, mat = 'stone') {
+    const desc = this.RAPIER.ColliderDesc.trimesh(vertices, indices);
+    return this._fixed(x, y, z, desc, mat, 'trimesh', CollisionGroups.GROUND);
+  }
+
   /** Kinematic hazard (spinner bar, wrecking cube) */
   createKinematicShape(x, y, z, shape, dims, restitution = 0.4, mat = 'wood') {
     const R = this.RAPIER;
