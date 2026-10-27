@@ -532,3 +532,18 @@ adapter rather than a rewrite — and the adapter is where every assumption got 
 - **What is still not automated, and should not be claimed.** How 100 ms smoothing *feels* in a real
   tab. The two-browser test proves both clients agree on the same tick and that the world moves; it
   says nothing about whether the camera reads well, which needs a human in two tabs.
+
+## 5. 5-Game Multi-Game Switcher & Offline Playtesting Architecture (2026-10-27)
+
+- **The 5 Pillars**:
+  1. **Knockout Arena (Brawler)**: Subgames include Dumb Ways to Die (`derby`), Wall Drop PVP (`walldrop` - team deathmatch with dropping dividing wall, melon cannons, and bouncing melons), and Knockout Brawl (`brawl` - classic 3-stock smash).
+  2. **Expedition & Dynasty (`adventure`)**: Open-world Meadowlands sandbox, colony citizen task assignment (forager, builder, warrior), freeform toy building/repairing, and 3-plate puzzle ruins / vaults.
+  3. **Escape Rooms (`escape`)**: *Dweebscape Chamber* physical puzzle sandbox with 4 concurrent valid breakout solutions: Demolition (explosive barrels/anvils on hinges), Acrobatics (ceiling vent shaft / crate stacking), Counterweight Pulley (loading heavy props into basket), and Power Circuit (battery core socketing).
+  4. **Mimic & Mutate Lab (`mimic`)**: 1st-person toy lab where high jumps, prop yeets, punches, and drop-kicks trigger googly-eyed student copycats to enact 4 distinct mutation archetypes (Overachiever, Clumsy Slapstick, Mad Scientist, Chaos Swarm).
+  5. **Dweeb Warfare (`warfare`)**: Mass 100v100 battle sim with Defend the Fort (20 waves with bosses) and Versus AI Commander mode.
+- **The Omnipresent Game Switcher**:
+  - Direct subgame launch buttons on Title Screen cards in The Dweeb Mall (`screens.js`).
+  - Added `mimic` to `#main-menu` Game Mode selector and a "🏛️ THE DWEEB MALL" button to return to the hub.
+  - Added `#game-switcher-modal` accessible at any time in-game via Pause Menu (`#btn-pause-switcher`), on-screen HUD button (`#hud-switcher-btn`), or pressing `M` on keyboard.
+  - Quick-switching cleanly disposes old state (Warfare, Meadowlands, Escape, Mimic, or Brawler) and boots the new experience offline with zero network blocking.
+

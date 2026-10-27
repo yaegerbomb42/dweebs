@@ -168,6 +168,16 @@ export class MimicLab {
         }
       }
     }
+
+    // 3. Punch / Attack Action Detected
+    if (player.punchTime !== undefined && player.punchTime < 0.15 && this.mutationCooldown <= 0) {
+      this.triggerDemonstration('MEGA BONK / PUNCH', dweebs);
+    }
+
+    // 4. Drop Kick / Slam Action Detected
+    if ((player.dropKicking || player.groundSlamming) && this.mutationCooldown <= 0) {
+      this.triggerDemonstration('FLYING DROP-KICK', dweebs);
+    }
   }
 
   triggerDemonstration(actionName, dweebs) {

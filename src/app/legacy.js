@@ -74,7 +74,7 @@ export function syncOfflineSegs(settings) {
 }
 
 /** Directly launch any of the Dweeb Mall experiences */
-export function launchGameMode(mode, arena = null) {
+export function launchGameMode(mode, arena = null, submode = null) {
   if (mode) {
     const modeBtn = document.querySelector(`#main-menu .seg[data-setting="mode"] button[data-v="${mode}"]`);
     if (modeBtn) modeBtn.click();
@@ -85,7 +85,7 @@ export function launchGameMode(mode, arena = null) {
   }
   // The shell re-syncs the menu segs from its own saved settings while the match route opens,
   // which used to snap every Mall card back to the saved mode. A one-shot override wins.
-  window.__dweebsLaunch = { mode, arena };
+  window.__dweebsLaunch = { mode, arena, submode };
   return startOfflineMatch();
 }
 

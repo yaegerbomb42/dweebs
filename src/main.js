@@ -339,6 +339,76 @@ function setupMenu() {
   $('btn-play-again').onclick = () => { audio.playUIClick(); if (rematch && !rematch.done) voteRematch(); else startMatch(); };
   $('btn-main-menu').onclick = () => { audio.playUIClick(); toMenu(); };
 
+  const toggleSwitcher = () => {
+    audio.playUIClick();
+    const modal = $('game-switcher-modal');
+    if (!modal) return;
+    const isHidden = modal.classList.contains('hidden');
+    if (isHidden) {
+      setPaused(true);
+      cam.unlock();
+      modal.classList.remove('hidden');
+    } else {
+      modal.classList.add('hidden');
+      if (paused) setPaused(false);
+      cam.lock();
+    }
+  };
+
+  $('btn-pause-switcher')?.addEventListener('click', () => {
+    toggleSwitcher();
+  });
+  $('btn-pause-mall')?.addEventListener('click', () => {
+    audio.playUIClick();
+    setPaused(false);
+    toMenu();
+    location.hash = '#/';
+  });
+  $('btn-close-switcher')?.addEventListener('click', () => {
+    audio.playUIClick();
+    $('game-switcher-modal')?.classList.add('hidden');
+  });
+  $('btn-switcher-to-mall')?.addEventListener('click', () => {
+    audio.playUIClick();
+    $('game-switcher-modal')?.classList.add('hidden');
+    setPaused(false);
+    toMenu();
+    location.hash = '#/';
+  });
+  $('btn-back-to-mall')?.addEventListener('click', () => {
+    audio.playUIClick();
+    toMenu();
+    location.hash = '#/';
+  });
+  $('hud-switcher-btn')?.addEventListener('click', () => {
+    toggleSwitcher();
+  });
+
+  for (const btn of document.querySelectorAll('.switcher-btn')) {
+    btn.addEventListener('click', () => {
+      audio.playUIClick();
+      const mode = btn.dataset.mode;
+      const arena = btn.dataset.arena;
+      const sub = btn.dataset.sub;
+      $('game-switcher-modal')?.classList.add('hidden');
+      setPaused(false);
+      window.__dweebsLaunch = { mode, arena, submode: sub };
+      if (mode === 'warfare') {
+        startWarfare(sub || 'defense');
+      } else {
+        startMatch();
+      }
+    });
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (e.code === 'KeyM') {
+      toggleSwitcher();
+      e.preventDefault();
+    }
+  });
+
   // Spectator cam: while you're out, left/right cycles the remaining brawlers.
   window.addEventListener('keydown', e => {
     if (match.phase !== Phase.PLAYING || !player || player.active) return;
@@ -370,7 +440,7 @@ function toMenu() {
   audio.stopMusic();
   audio.setCharge(0);
   hud.setSpectator('');
-  for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen']) $(id).classList.add('hidden');
+  for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud']) $(id)?.classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
 
@@ -386,7 +456,7 @@ function clearDweebs() {
 }
 
 /** Game 5: Dweeb Warfare. Takes over the scene with its own board, sim, HUD and audio. */
-function startWarfare() {
+function startWarfare(submode = 'defense') {
   clearRematch();
   clearDweebs();
   match.phase = Phase.MENU;
@@ -403,7 +473,10 @@ function startWarfare() {
   cam.unlock();
   currentMode = 'warfare';
   currentWarfare = new DweebWarfare({ scene, camera, canvas: renderer.domElement, onExit: exitWarfare, soundOn: settings.sound !== 'off', serverUrl: serverUrl() || defaultUrl(location.search) });
-  for (const id of ['main-menu', 'results-screen', 'how-to-play', 'round-screen', 'pause-screen', 'civ-hud']) $(id)?.classList.add('hidden');
+  if (submode === 'versus' || submode === 'defense') {
+    currentWarfare.start(submode);
+  }
+  for (const id of ['main-menu', 'results-screen', 'how-to-play', 'round-screen', 'pause-screen', 'civ-hud', 'game-switcher-modal']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden'); // tells the app shell a game is live
   audio.init();
   audio.resume();
@@ -423,8 +496,13 @@ function startMatch() {
   window.__dweebsLaunch = null;
   if (launch?.mode && GAME_MODES[launch.mode]) settings.mode = launch.mode;
   if (launch?.arena && ARENAS.some(a => a.id === launch.arena)) settings.arena = launch.arena;
-  if ((settings.mode || 'derby') === 'warfare') return startWarfare();
-  if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+  for (const id of ['game-switcher-modal', 'pause-screen']) $(id)?.classList.add('hidden');
+  if ((settings.mode || 'derby') === 'warfare') return startWarfare(launch?.submode || 'defense');
+  if (currentWarfare) {
+    currentWarfare.dispose();
+    currentWarfare = null;
+    document.body.classList.remove('warfare-active');
+  }
   clearRematch();
   clearDweebs();
   arena.setArena(settings.arena);

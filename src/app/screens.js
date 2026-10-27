@@ -30,6 +30,11 @@ export function buildScreens() {
             <div class="mall-icon">🥊</div>
             <h3 class="mall-card-title">Knockout Arena</h3>
             <p class="mall-card-desc">The original 4-player stadium brawler. Dumb ways to die, crazy physics weapons & sudden death.</p>
+            <div class="mall-subgames">
+              <button class="btn mall-sub-btn yellow" id="app-btn-derby" title="Dumb Ways to Die">☠️ Derby</button>
+              <button class="btn mall-sub-btn yellow" id="app-btn-walldrop" title="Wall Drop PVP">🧱 Wall Drop</button>
+              <button class="btn mall-sub-btn yellow" id="app-btn-brawl" title="Knockout Brawl">🥊 Brawl</button>
+            </div>
             <button class="btn mall-btn yellow" id="app-btn-classic">PLAY BRAWLER</button>
           </article>
 
@@ -66,6 +71,10 @@ export function buildScreens() {
             <div class="mall-icon">⚔️</div>
             <h3 class="mall-card-title">Dweeb Warfare</h3>
             <p class="mall-card-desc">Mass physics battle sim. Stealers, rocket launchers, kamis, and giant catapults clashing in pure chaos.</p>
+            <div class="mall-subgames">
+              <button class="btn mall-sub-btn pink" id="app-btn-warfare-defense" title="Defend Fort 20 Waves">🛡️ Defend</button>
+              <button class="btn mall-sub-btn blue" id="app-btn-warfare-versus" title="100v100 Duel vs AI">⚔️ Versus AI</button>
+            </div>
             <button class="btn mall-btn pink" id="app-btn-warfare">START WARFARE</button>
           </article>
         </div>

@@ -334,6 +334,7 @@
         <button data-v="derby" title="Dumb Ways to Die">☠️ Die Derby</button>
         <button data-v="walldrop" title="1-Life Team Drop Wall">🧱 Wall Drop</button>
         <button data-v="escape" title="Co-Op Puzzle Island">🧩 Escape Island</button>
+        <button data-v="mimic" title="1st Person Mimic & Mutate Lab">🐒 Mimic Lab</button>
         <button data-v="brawl" title="Classic Knockout">🥊 Brawl</button>
         <button data-v="warfare" title="Toy-box army battle: hold the fort">⚔️ Warfare</button>
       </div>
@@ -379,7 +380,10 @@
       <span>Colour</span><div class="seg swatches" data-setting="color"><button data-v="yellow" style="--s:#ffd23f"></button><button data-v="pink" style="--s:#ff6fb5"></button><button data-v="blue" style="--s:#3fa9ff"></button><button data-v="green" style="--s:#5ee06a"></button><button data-v="orange" style="--s:#ff9a3c"></button><button data-v="purple" style="--s:#b56cff"></button></div>
       <span id="type-blurb" class="type-blurb"></span>
     </div>
-    <button class="btn white" id="btn-how">HOW TO PLAY</button>
+    <div class="menu-row" style="margin-top:8px;">
+      <button class="btn yellow" id="btn-back-to-mall">🏛️ THE DWEEB MALL (ALL 5 GAMES)</button>
+      <button class="btn white" id="btn-how">HOW TO PLAY</button>
+    </div>
   </div>
 
   <div id="how-to-play" class="overlay hidden">
@@ -413,6 +417,7 @@
   </div>
 
   <div id="hud" class="hidden">
+    <button id="hud-switcher-btn" class="btn" style="position:absolute;top:14px;left:14px;font-size:14px;padding:6px 14px;pointer-events:auto;z-index:20;background:var(--yellow);box-shadow:0 4px 0 var(--ink);">🎮 SWITCH GAME (M)</button>
     <div id="nameplates"></div>
     <div id="popups"></div>
     <div id="crosshair"></div>
@@ -555,9 +560,82 @@
     <h1>PAUSED</h1>
     <div class="menu-row">
       <button class="btn" id="btn-resume">RESUME</button>
+      <button class="btn blue" id="btn-pause-switcher">🎮 SWITCH GAME</button>
+      <button class="btn white" id="btn-pause-mall">🏛️ DWEEB MALL</button>
       <button class="btn pink" id="btn-quit">QUIT</button>
     </div>
-    <p style="font-weight:900;color:var(--cream);-webkit-text-stroke:2px var(--ink);paint-order:stroke fill">Click resume to lock the mouse again</p>
+    <p style="font-weight:900;color:var(--cream);-webkit-text-stroke:2px var(--ink);paint-order:stroke fill">Click resume or press Esc to continue playing</p>
+  </div>
+
+  <div id="game-switcher-modal" class="overlay hidden" style="z-index: 100; background: rgba(27, 16, 48, 0.75);">
+    <div class="panel" style="max-width: 680px; width: 92%; max-height: 90vh; overflow-y: auto; text-align: center;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2 style="margin: 0; font-size: 32px;">🎮 SWITCH GAME</h2>
+        <button class="btn white" id="btn-close-switcher" style="padding: 4px 14px; font-size: 18px;">✕</button>
+      </div>
+      <p style="margin-bottom: 16px; font-size: 15px; font-weight: 700; opacity: 0.85;">Jump instantly into any of the 5 Dweeb experiences in offline mode:</p>
+      
+      <div style="display: flex; flex-direction: column; gap: 12px; text-align: left;">
+        <!-- Game 1 -->
+        <div style="background: rgba(255,255,255,0.4); border: 3px solid var(--ink); border-radius: 14px; padding: 10px 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <b style="font-size: 18px;">🥊 1. Knockout Arena (Brawler)</b>
+            <span style="font-size: 12px; font-weight: 800; background: var(--yellow); border: 2px solid var(--ink); border-radius: 8px; padding: 2px 8px;">3 SUBGAMES</span>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn yellow switcher-btn" data-mode="derby" data-arena="stadium">☠️ Dumb Ways to Die</button>
+            <button class="btn yellow switcher-btn" data-mode="walldrop" data-arena="stadium">🧱 Wall Drop PVP</button>
+            <button class="btn yellow switcher-btn" data-mode="brawl" data-arena="stadium">🥊 Knockout Brawl</button>
+          </div>
+        </div>
+
+        <!-- Game 2 -->
+        <div style="background: rgba(255,255,255,0.4); border: 3px solid var(--ink); border-radius: 14px; padding: 10px 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <b style="font-size: 18px;">🌱 2. Expedition &amp; Dynasty</b>
+            <span style="font-size: 12px; font-weight: 800; background: var(--green); border: 2px solid var(--ink); border-radius: 8px; padding: 2px 8px; color: var(--ink);">OPEN WORLD SIM</span>
+          </div>
+          <p style="font-size: 13px; margin: 0 0 6px 0; opacity: 0.85;">Build a colony in The Meadowlands, assign citizen jobs, and conquer 3-plate ruin vaults.</p>
+          <button class="btn green switcher-btn" data-mode="adventure" data-arena="meadowlands">🌱 Enter Meadowlands Civilization</button>
+        </div>
+
+        <!-- Game 3 -->
+        <div style="background: rgba(255,255,255,0.4); border: 3px solid var(--ink); border-radius: 14px; padding: 10px 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <b style="font-size: 18px;">🧩 3. Escape Rooms (Dweebscape)</b>
+            <span style="font-size: 12px; font-weight: 800; background: var(--blue); color: #fff; border: 2px solid var(--ink); border-radius: 8px; padding: 2px 8px;">PHYSICAL PUZZLES</span>
+          </div>
+          <p style="font-size: 13px; margin: 0 0 6px 0; opacity: 0.85;">4 concurrent escape routes: Demolition, High Vent Shaft, Counterweight Pulley, or Power Socket.</p>
+          <button class="btn blue switcher-btn" data-mode="escape" data-arena="stadium">🧩 Enter Escape Chamber</button>
+        </div>
+
+        <!-- Game 4 -->
+        <div style="background: rgba(255,255,255,0.4); border: 3px solid var(--ink); border-radius: 14px; padding: 10px 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <b style="font-size: 18px;">🐒 4. Mimic &amp; Mutate Lab</b>
+            <span style="font-size: 12px; font-weight: 800; background: #b56cff; color: #fff; border: 2px solid var(--ink); border-radius: 8px; padding: 2px 8px;">1ST PERSON CHAOS</span>
+          </div>
+          <p style="font-size: 13px; margin: 0 0 6px 0; opacity: 0.85;">First-person physics lab. Demonstrate stunts, watch crowds of Dweebs mutate them into chaos.</p>
+          <button class="btn purple switcher-btn" data-mode="mimic" data-arena="stadium" style="background:#b56cff;color:#fff;">🐒 Enter Mimic Lab</button>
+        </div>
+
+        <!-- Game 5 -->
+        <div style="background: rgba(255,255,255,0.4); border: 3px solid var(--ink); border-radius: 14px; padding: 10px 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <b style="font-size: 18px;">⚔️ 5. Dweeb Warfare (100 vs 100)</b>
+            <span style="font-size: 12px; font-weight: 800; background: var(--red); color: #fff; border: 2px solid var(--ink); border-radius: 8px; padding: 2px 8px;">MASS BATTLE SIM</span>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn pink switcher-btn" data-mode="warfare" data-sub="defense">🛡️ Defend the Fort (20 Waves)</button>
+            <button class="btn blue switcher-btn" data-mode="warfare" data-sub="versus">⚔️ 100v100 Versus AI</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <button class="btn white" id="btn-switcher-to-mall">🏛️ Open Full Mall Screen</button>
+      </div>
+    </div>
   </div>
 
   <div id="results-screen" class="overlay hidden">

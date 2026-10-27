@@ -140,6 +140,17 @@ function wireTitle({ nodes, router, toast }) {
     launchGameMode('derby', 'stadium');
   });
 
+  // Subgames for Game 1 (Knockout Arena)
+  nodes.title.querySelector('#app-btn-derby')?.addEventListener('click', () => {
+    launchGameMode('derby', 'stadium');
+  });
+  nodes.title.querySelector('#app-btn-walldrop')?.addEventListener('click', () => {
+    launchGameMode('walldrop', 'stadium');
+  });
+  nodes.title.querySelector('#app-btn-brawl')?.addEventListener('click', () => {
+    launchGameMode('brawl', 'stadium');
+  });
+
   nodes.title.querySelector('#app-btn-dynasty')?.addEventListener('click', () => {
     launchGameMode('adventure', 'meadowlands');
   });
@@ -152,8 +163,15 @@ function wireTitle({ nodes, router, toast }) {
     launchGameMode('mimic', 'stadium');
   });
 
+  // Game 5 (Dweeb Warfare) and submodes
   nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
-    launchGameMode('warfare', 'stadium');
+    launchGameMode('warfare', 'stadium', 'defense');
+  });
+  nodes.title.querySelector('#app-btn-warfare-defense')?.addEventListener('click', () => {
+    launchGameMode('warfare', 'stadium', 'defense');
+  });
+  nodes.title.querySelector('#app-btn-warfare-versus')?.addEventListener('click', () => {
+    launchGameMode('warfare', 'stadium', 'versus');
   });
 
   // Footer Navigation
@@ -163,6 +181,11 @@ function wireTitle({ nodes, router, toast }) {
     document.getElementById('how-to-play')?.classList.remove('hidden');
   });
   nodes.title.querySelector('#app-btn-settings')?.addEventListener('click', () => router.go('/settings'));
+
+  // Main menu button to return to The Dweeb Mall
+  document.getElementById('btn-back-to-mall')?.addEventListener('click', () => {
+    router.go('/');
+  });
 }
 
 // ─── online: the one-tap door (PLAY NOW) + friends-by-code ───

@@ -434,6 +434,22 @@
   font-size: 18px;
   padding: 8px 12px;
 }
+.mall-subgames {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.mall-sub-btn {
+  flex: 1;
+  font-size: 13px;
+  padding: 6px 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.mall-sub-btn.yellow { background: var(--yellow); }
+.mall-sub-btn.pink { background: var(--pink); color: #fff; }
+.mall-sub-btn.blue { background: var(--blue); color: #fff; }
 .mall-btn.green { background: var(--green); }
 .mall-btn.purple { background: #b56cff; color: #fff; }
 .mall-footer {
