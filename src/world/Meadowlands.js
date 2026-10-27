@@ -10,9 +10,18 @@
 import * as THREE from 'three';
 import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
+import { ToyTown } from './ToyBuildings.js';
+import { TOY_TOWN_LAYOUT } from './ObjectRegistry.js';
+
+/** Cosmetic hats a treasure vault can hold. */
+export const HAT_POOL = ['🍓 Berry Beret', '👑 Tin Crown', '🎩 Top Hat', '🧢 Moss Cap', '⛑️ Acorn Helm'];
+/** Special tools a treasure vault can hold. */
+export const TOOL_POOL = ['🔧 Wobbly Wrench', '🔨 Plush Hammer', '✂️ Snip-Snips', '🧲 Magnet Mitt'];
+/** Cap on torch PointLights so 30+ structures stay at 60 fps. */
+export const MAX_TORCHLIGHTS = 12;
 
 export class Meadowlands {
-  constructor(physicsWorld, scene) {
+  constructor(physicsWorld, scene, options = {}) {
     this.physicsWorld = physicsWorld;
     this.scene = scene;
     this.group = new THREE.Group();
@@ -34,7 +43,43 @@ export class Meadowlands {
     this.elevator = null;
     this.clock = 0;
 
+    // ── Expedition & Dynasty: day/night, ruins, critters, torchlight ──
+    this.ziplines = [];       // registered by watchtower structures
+    this.looseProps = [];     // { body } physics props launchpads can fling
+    this.stuntFeed = [];      // recent physics stunts citizens react to
+    this.torchlights = [];    // PointLights around constructed buildings
+    this.ruins = [];          // treasure-vault ruin sites (3-plate puzzles)
+    this.critters = [];       // invading mischief critters
+    this.critterTimer = 30;   // seconds until the first critter wanders in
+    this.timeOfDay = 8;       // 0-24, starts at a bright morning
+    this.dayLength = 240;     // seconds per full day
+    this.lightLevel = 1;      // 0 (midnight) .. 1 (noon)
+    this.isNight = false;
+    this.dayLight = null;     // directional sun/moon owned by this world
+    this.fireflies = null;    // night firefly point cloud
+    this.fx = options.fx || null;
+    this.toyTown = null;      // handcrafted six-building toy district
+
     this._buildWorld();
+    this._createToyTown();
+  }
+
+  /** The handcrafted six-building toy district around the village. */
+  _createToyTown() {
+    if (!this.physicsWorld) return; // headless tests run without a physics world
+    this.toyTown = new ToyTown(this.physicsWorld, this.scene, {
+      layout: TOY_TOWN_LAYOUT,
+      groundAt: (x, z) => this._getHeight(x, z),
+      fx: this.fx,
+    });
+  }
+
+  setFx(fx) {
+    this.fx = fx;
+    if (this.toyTown) {
+      this.toyTown.fx = fx;
+      for (const s of this.toyTown.structures) s.fx = fx;
+    }
   }
 
   // ─── 1. Terrain Generation (Low-Poly Heightfield + Trimesh) ───
@@ -47,6 +92,8 @@ export class Meadowlands {
     this._createHollowMountains();
     this._createFloraAndLandmarks();
     this._createResourceNodes();
+    this._createToyRuins();
+    this._createDayNight();
   }
 
   _getHeight(x, z) {
@@ -675,7 +722,7 @@ export class Meadowlands {
       { x: -9, z: 2 },
       { x: 10, z: -2 },
       { x: 3, z: 12 },
-      { x: -12, z: -8 },
+      { x: -13, z: 5 },
     ];
     for (const pos of bushPositions) {
       this._createBerryBush(pos.x, this._getHeight(pos.x, pos.z), pos.z);
@@ -706,7 +753,7 @@ export class Meadowlands {
     }
 
     this.group.add(bush);
-    this.berryBushes.push({ x, y, z, berries, available: 5 });
+    this.berryBushes.push({ x, y, z, berries, available: 5, regenTimer: 0 });
 
     if (this.physicsWorld) {
       this.physicsWorld.createFixedCylinder(x, y + 0.8, z, 1.0, 0.8, 'wood');
@@ -718,12 +765,12 @@ export class Meadowlands {
   _createFloraAndLandmarks() {
     // Pine & Deciduous Trees scattered naturally
     const treeCoords = [
-      { x: -22, z: 15, type: 'pine', s: 1.4 },
+      { x: -24, z: 18, type: 'pine', s: 1.4 },
       { x: -26, z: 5, type: 'pine', s: 1.2 },
-      { x: 18, z: -18, type: 'broad', s: 1.3 },
+      { x: 22, z: -20, type: 'broad', s: 1.3 },
       { x: 24, z: -10, type: 'broad', s: 1.5 },
       { x: -14, z: -28, type: 'pine', s: 1.6 },
-      { x: 16, z: 22, type: 'broad', s: 1.1 },
+      { x: 22, z: 22, type: 'broad', s: 1.1 },
       { x: 28, z: 18, type: 'pine', s: 1.3 },
       { x: -32, z: -15, type: 'pine', s: 1.7 },
       { x: 8, z: -25, type: 'broad', s: 1.2 },
@@ -792,15 +839,339 @@ export class Meadowlands {
     }
   }
 
+  // ─── Expedition & Dynasty: Day/Night, Toy Ruins, Critters ───
+
+  _createDayNight() {
+    // One directional light owned by the world: warm sun by day, cold moon by night.
+    const sun = new THREE.DirectionalLight(0xfff2d9, 1.2);
+    sun.position.set(30, 50, 20);
+    this.group.add(sun);
+    this.dayLight = sun;
+
+    // Fireflies: a drifting point cloud that only shows after dark.
+    const count = 60;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 40;
+      positions[i * 3 + 1] = 0.8 + Math.random() * 2.5;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 40;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xd9f99d, size: 0.35, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    this.group.add(points);
+    this.fireflies = points;
+  }
+
+  /** Two more ancient toy ruins, each with a 3-plate puzzle guarding a vault. */
+  _createToyRuins() {
+    const sites = [
+      { id: 'sunken', name: 'Sunken Toy Ruin', x: -20, z: 14 },
+      { id: 'bluff', name: 'Bluff Toy Ruin', x: 30, z: -6 },
+    ];
+    for (const site of sites) {
+      const y = this._getHeight(site.x, site.z);
+      const ruin = {
+        id: site.id, name: site.name, x: site.x, y, z: site.z,
+        plates: [], vault: null, opened: false, progress: 0,
+        loot: {
+          hat: HAT_POOL[Math.floor(Math.random() * HAT_POOL.length)],
+          tool: TOOL_POOL[Math.floor(Math.random() * TOOL_POOL.length)],
+          coins: 15 + Math.floor(Math.random() * 16),
+        },
+      };
+      // Three pressure plates in a triangle around the vault.
+      const offsets = [[-3, 2], [3, 2], [0, -3.5]];
+      offsets.forEach(([ox, oz], i) => {
+        const plate = this._createPressurePlate(site.x + ox, y + 0.1, site.z + oz, `${site.id}_plate_${i}`);
+        ruin.plates.push(plate);
+      });
+      ruin.vault = this._createVault(site.x, y, site.z);
+      this.ruins.push(ruin);
+    }
+  }
+
+  _createVault(x, y, z) {
+    const vault = new THREE.Group();
+    vault.position.set(x, y, z);
+    const stoneMat = toonMat({ color: 0x475569, flatShading: true });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, 2.6), stoneMat);
+    box.position.y = 0.8;
+    vault.add(box);
+    const lid = new THREE.Mesh(
+      new THREE.BoxGeometry(2.8, 0.4, 2.8),
+      toonMat({ color: 0xf59e0b, flatShading: true })
+    );
+    lid.position.y = 1.8;
+    vault.add(lid);
+    // The glow inside: a little treasure light, dark until opened.
+    const glow = new THREE.PointLight(0xffd23f, 0, 8);
+    glow.position.y = 1.6;
+    vault.add(glow);
+    this.group.add(vault);
+    if (this.physicsWorld) {
+      this.physicsWorld.createStaticBox(x, y + 0.8, z, 1.3, 0.8, 1.3, 'stone');
+    }
+    return { group: vault, lid, glow, x, y, z };
+  }
+
+  /** Add a torch (mesh + PointLight) near a building. Capped so 30+ structures stay fast. */
+  addTorchlight(x, y, z) {
+    if (this.torchlights.length >= MAX_TORCHLIGHTS) return null;
+    const torch = new THREE.Group();
+    torch.position.set(x, y, z);
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.12, 1.1, 5),
+      toonMat({ color: 0x78350f, flatShading: true })
+    );
+    post.position.y = 0.55;
+    torch.add(post);
+    const flame = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 6, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffa733 })
+    );
+    flame.position.y = 1.25;
+    torch.add(flame);
+    noOutline(flame);
+    const light = new THREE.PointLight(0xff9922, 0.6, 7);
+    light.position.y = 1.3;
+    torch.add(light);
+    this.group.add(torch);
+    const entry = { group: torch, light, flame, x, y, z };
+    this.torchlights.push(entry);
+    return entry;
+  }
+
+  /** Push a physics stunt event for nearby citizens to react to. */
+  _pushStunt(type, x, z) {
+    this.stuntFeed.push({ type, x, z, at: this.clock });
+    if (this.stuntFeed.length > 12) this.stuntFeed.shift();
+  }
+
+  /** Spawn one mischief critter at the map edge, wandering toward the village. */
+  spawnCritter() {
+    if (this.critters.length >= 3) return null;
+    const ang = Math.random() * Math.PI * 2;
+    const r = 45 + Math.random() * 10;
+    const x = Math.cos(ang) * r;
+    const z = Math.sin(ang) * r;
+    const y = this._getHeight(x, z);
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(0.7, 8, 8),
+      toonMat({ color: 0x475569, flatShading: true })
+    );
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    for (const ex of [-0.25, 0.25]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), eyeMat);
+      eye.position.set(ex, 0.25, 0.55);
+      body.add(eye);
+    }
+    body.position.set(x, y + 0.7, z);
+    noOutline(body);
+    this.group.add(body);
+    const critter = {
+      x, y, z, hp: 2, speed: 2.2, mesh: body,
+      state: 'approach', stealTimer: 0, chewTarget: null, homeX: x, homeZ: z,
+    };
+    this.critters.push(critter);
+    return critter;
+  }
+
+  removeCritter(critter) {
+    const idx = this.critters.indexOf(critter);
+    if (idx !== -1) this.critters.splice(idx, 1);
+    if (critter.mesh) this.group.remove(critter.mesh);
+  }
+
+  _updateDayNight(dt) {
+    this.timeOfDay = (this.timeOfDay + (dt * 24) / this.dayLength) % 24;
+    // Daylight curve: full sun 9-15, dawn/dusk ramps, night 20-5.
+    const t = this.timeOfDay;
+    let level;
+    if (t >= 6 && t < 9) level = (t - 6) / 3;            // dawn
+    else if (t >= 9 && t < 16) level = 1;                // day
+    else if (t >= 16 && t < 20) level = 1 - (t - 16) / 4; // dusk
+    else level = 0;                                       // night
+    this.lightLevel = level;
+    this.isNight = level < 0.25;
+    if (this.dayLight) {
+      this.dayLight.intensity = 0.15 + level * 1.1;
+      this.dayLight.color.setHex(this.isNight ? 0x93c5fd : (level < 0.7 ? 0xffb066 : 0xfff2d9));
+    }
+    if (this.fireflies) {
+      this.fireflies.material.opacity = this.isNight ? 0.9 : 0;
+      if (this.isNight) {
+        const pos = this.fireflies.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          pos.setY(i, 0.8 + Math.sin(this.clock * 0.7 + i * 1.3) * 1.2 + 1.2);
+          pos.setX(i, pos.getX(i) + Math.sin(this.clock * 0.3 + i) * 0.002);
+        }
+        pos.needsUpdate = true;
+      }
+    }
+    for (const torch of this.torchlights) {
+      torch.light.intensity = this.isNight ? 1.6 : 0.4;
+    }
+  }
+
+  _updateBushRegrowth(dt) {
+    for (const bush of this.berryBushes) {
+      if (bush.available >= 5) continue;
+      bush.regenTimer = (bush.regenTimer || 0) + dt;
+      if (bush.regenTimer >= 20) {
+        bush.regenTimer = 0;
+        bush.available = Math.min(5, bush.available + 1);
+      }
+    }
+  }
+
+  _updateRuins(dt, dweebs, colony) {
+    for (const ruin of this.ruins) {
+      if (ruin.opened) continue;
+      let allPressed = true;
+      for (const plate of ruin.plates) {
+        let isPressed = false;
+        for (const d of dweebs) {
+          if (!d.body) continue;
+          const p = d.body.translation();
+          if (Math.hypot(p.x - plate.x, p.z - plate.z) < 1.4 && Math.abs(p.y - plate.y) < 0.8) {
+            isPressed = true;
+            break;
+          }
+        }
+        plate.pressed = isPressed;
+        plate.depressAmount = THREE.MathUtils.lerp(plate.depressAmount, isPressed ? 0.15 : 0, dt * 10);
+        plate.mesh.position.y = plate.y + 0.15 - plate.depressAmount;
+        if (!isPressed) allPressed = false;
+      }
+      if (allPressed) {
+        ruin.opened = true;
+        this._pushStunt('vault', ruin.x, ruin.z);
+        if (colony) {
+          colony.resources.gold = (colony.resources.gold || 0) + ruin.loot.coins;
+          colony.hats.push(ruin.loot.hat);
+          colony.tools.push(ruin.loot.tool);
+          colony._addLog(`🏆 ${ruin.name} vault opened! Found ${ruin.loot.hat}, ${ruin.loot.tool} and ${ruin.loot.coins} gold coins!`);
+        }
+      }
+    }
+    // Animate opened vault lids sliding open.
+    for (const ruin of this.ruins) {
+      if (!ruin.opened || ruin.progress >= 1) continue;
+      ruin.progress = Math.min(1, ruin.progress + dt * 0.5);
+      ruin.vault.lid.position.y = 1.8 + ruin.progress * 1.6;
+      ruin.vault.glow.intensity = ruin.progress * 2.5;
+    }
+  }
+
+  _updateCritters(dt, dweebs, colony) {
+    this.critterTimer -= dt;
+    if (this.critterTimer <= 0) {
+      this.critterTimer = 45;
+      this.spawnCritter();
+    }
+    const barricades = this.buildingManager
+      ? this.buildingManager.placedStructures.filter(s => s.id === 'cannon')
+      : [];
+    for (let i = this.critters.length - 1; i >= 0; i--) {
+      const c = this.critters[i];
+      if (c.state === 'flee') {
+        // Run home and despawn at the edge.
+        const dx = c.homeX - c.x;
+        const dz = c.homeZ - c.z;
+        const len = Math.hypot(dx, dz) || 1;
+        c.x += (dx / len) * c.speed * 1.5 * dt;
+        c.z += (dz / len) * c.speed * 1.5 * dt;
+        if (Math.hypot(c.x - c.homeX, c.z - c.homeZ) < 2) this.removeCritter(c);
+      } else {
+        // Chew the nearest barricade if one is in the way.
+        let target = null;
+        let best = 3;
+        for (const b of barricades) {
+          const d = Math.hypot(b.pos.x - c.x, b.pos.z - c.z);
+          if (d < best) { best = d; target = b; }
+        }
+        if (target) {
+          c.chewTarget = target;
+          target.hp -= 4 * dt;
+          if (target.hp <= 0 && this.buildingManager) {
+            this.buildingManager.destroyStructure(target, colony);
+          }
+          // Chewing in place — don't move.
+        } else {
+          c.chewTarget = null;
+          const dx = 0 - c.x;
+          const dz = 0 - c.z;
+          const len = Math.hypot(dx, dz) || 1;
+          c.x += (dx / len) * c.speed * dt;
+          c.z += (dz / len) * c.speed * dt;
+          c.y = this._getHeight(c.x, c.z);
+        }
+        // Reached the campfire? Steal a berry, then flee.
+        if (Math.hypot(c.x, c.z) < 4) {
+          c.stealTimer += dt;
+          if (c.stealTimer >= 3) {
+            c.stealTimer = 0;
+            if (colony && colony.resources.berries > 0) {
+              colony.resources.berries -= 1;
+              colony._addLog('🦝 A mischief critter snatched a berry from the campfire!');
+            }
+            c.state = 'flee';
+          }
+        }
+      }
+      if (c.mesh) {
+        c.mesh.position.set(c.x, c.y + 0.7 + Math.sin(this.clock * 6 + c.x) * 0.08, c.z);
+      }
+    }
+  }
+
+  /** Plain-data snapshot for save files (loot itself lives on the colony). */
+  serialize() {
+    return {
+      timeOfDay: this.timeOfDay,
+      ruinsOpened: this.ruins.filter(r => r.opened).map(r => r.id),
+    };
+  }
+
+  /** Restore a snapshot produced by serialize(). */
+  restore(data) {
+    if (!data) return;
+    if (typeof data.timeOfDay === 'number') this.timeOfDay = data.timeOfDay;
+    if (Array.isArray(data.ruinsOpened)) {
+      for (const ruin of this.ruins) {
+        if (data.ruinsOpened.includes(ruin.id)) {
+          ruin.opened = true;
+          ruin.progress = 1;
+          ruin.vault.lid.position.y = 3.4;
+          ruin.vault.glow.intensity = 2.5;
+        }
+      }
+    }
+  }
+
   // ─── 7. Simulation & Animation Loop ───
 
-  update(dt, dweebs = []) {
+  update(dt, dweebs = [], colony = null) {
     this.clock += dt;
 
-    // Flicker Campfire Light
+    // Day/night cycle, berry regrowth, vault puzzles and critters.
+    this._updateDayNight(dt);
+    this._updateBushRegrowth(dt);
+    this._updateCritters(dt, dweebs, colony);
+
+    // Flicker Campfire Light (brighter after dark)
     if (this.campfireLight) {
-      this.campfireLight.intensity = 2.6 + Math.sin(this.clock * 12) * 0.3 + Math.cos(this.clock * 19) * 0.2;
+      const base = this.isNight ? 3.4 : 2.6;
+      this.campfireLight.intensity = base + Math.sin(this.clock * 12) * 0.3 + Math.cos(this.clock * 19) * 0.2;
     }
+
+    // Toy-set landmarks (six independent buildings + their moving pieces).
+    this.toyTown?.update(dt, dweebs);
 
     // Totem floating orb bob and spin
     if (this.totemOrb) {
@@ -826,6 +1197,18 @@ export class Meadowlands {
           d.body.setLinvel({ x: curVel.x, y: pad.boostVelocity, z: curVel.z }, true);
           pad.rebound = 0.35;
           if (d.onBounce) d.onBounce();
+          this._pushStunt(pad.launchesItems ? 'launch' : 'bounce', pad.x, pad.z);
+        }
+      }
+      // Launchpads fling loose physics props too, not just Dweebs.
+      if (pad.launchesItems && this.looseProps) {
+        for (const prop of this.looseProps) {
+          if (!prop.body) continue;
+          const pp = prop.body.translation();
+          if (Math.hypot(pp.x - pad.x, pp.z - pad.z) < pad.radius && Math.abs(pp.y - pad.y) < 1.0) {
+            const pv = prop.body.linvel();
+            prop.body.setLinvel({ x: pv.x, y: pad.boostVelocity, z: pv.z }, true);
+          }
         }
       }
       if (pad.rebound > 0) {
@@ -856,6 +1239,9 @@ export class Meadowlands {
     if (bothPlatesActive && !this.gateState.isOpen) {
       this.gateState.isOpen = true;
     }
+
+    // Toy-ruin vaults: three plates at once opens the treasure.
+    this._updateRuins(dt, dweebs, colony);
 
     if (this.gateState.isOpen && this.gateState.progress < 1) {
       this.gateState.progress = Math.min(1, this.gateState.progress + dt * 0.4);
@@ -919,6 +1305,8 @@ export class Meadowlands {
   }
 
   dispose() {
+    this.toyTown?.dispose();
+    this.toyTown = null;
     this.scene.remove(this.group);
     for (const c of this.colliders) {
       if (this.physicsWorld && c.body) {

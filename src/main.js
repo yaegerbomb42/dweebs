@@ -37,6 +37,7 @@ import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
 import { BuildingManager } from './adventure/building.js';
+import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
@@ -54,6 +55,7 @@ let currentMimicLab = null;
 let currentWarfare = null;
 let activeCitizenIdx = 0;
 let isBuildToolbarOpen = false;
+let villageSaveTimer = 0;
 
 const ROSTER = [
   { name: 'Blorp', type: 'blob', color: PALETTE.pink },
@@ -515,7 +517,7 @@ function startMatch() {
     if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
     if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
     if (currentMeadowlands) currentMeadowlands.dispose();
-    currentMeadowlands = new Meadowlands(physics, scene);
+    currentMeadowlands = new Meadowlands(physics, scene, { fx });
     colony = new Colony();
     for (const d of dweebs) {
       if (!d.isPlayer) colony.addCitizen(d);
@@ -533,18 +535,27 @@ function startMatch() {
       }
     }
     cam.setMode('explorer');
-    buildingManager = new BuildingManager(scene, physics);
+    buildingManager = new BuildingManager(scene, physics, { fx });
     currentMeadowlands.buildingManager = buildingManager;
+    currentMeadowlands.onStructureRepaired = (s) => colony._addLog(`🔧 ${s.name} is all patched up!`);
     $('civ-hud')?.classList.remove('hidden');
     $('hud-top')?.classList.add('hidden');
     $('hud-cards')?.classList.add('hidden');
     wireCivCameraControls();
+    // Restore the saved village (if any): citizens, structures, resources, vaults.
+    const savedVillage = loadVillage();
+    if (savedVillage) {
+      const restored = applySave(savedVillage, { colony, buildingManager, world: currentMeadowlands });
+      colony._addLog(`📂 Welcome back! Restored ${restored.citizens} citizens and ${restored.structures} structures.`);
+    }
   } else {
     if (arena.setStadiumVisible) arena.setStadiumVisible(true);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
     if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
     if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
     if (currentMeadowlands) {
+      // Save the village before tearing it down.
+      if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
       currentMeadowlands.dispose();
       currentMeadowlands = null;
     }
@@ -982,17 +993,26 @@ function loop() {
   }
   if (currentMeadowlands) {
     if (buildingManager && player) {
-      buildingManager.update(rawDt, player, currentMeadowlands.terrainMesh);
+      buildingManager.update(rawDt, player, currentMeadowlands.terrainMesh, { dweebs, colony, world: currentMeadowlands });
+      buildingManager.updatePlaced(rawDt, dweebs);
     }
-    currentMeadowlands.update(dt, dweebs);
+    currentMeadowlands.update(dt, dweebs, colony);
     if (colony) colony.update(dt, currentMeadowlands);
 
+    // Autosave the village every 30 seconds.
+    villageSaveTimer += rawDt;
+    if (villageSaveTimer >= 30 && colony && buildingManager) {
+      villageSaveTimer = 0;
+      saveVillage({ colony, buildingManager, world: currentMeadowlands });
+    }
+
     // Update Living Civilization HUD
-    const resB = $('res-berries'), resW = $('res-wood'), resS = $('res-stone'), resV = $('unlocked-verbs');
+    const resB = $('res-berries'), resW = $('res-wood'), resS = $('res-stone'), resV = $('unlocked-verbs'), resG = $('res-gold');
     if (colony && resB) {
       resB.textContent = colony.resources.berries;
       resW.textContent = colony.resources.wood;
       resS.textContent = colony.resources.stone;
+      if (resG) resG.textContent = colony.resources.gold || 0;
       resV.textContent = Array.from(colony.unlockedVerbs).map(v => v.toUpperCase()).join(', ');
       const genEl = $('civ-gen');
       if (genEl) genEl.textContent = colony.generation;
@@ -1006,7 +1026,10 @@ function loop() {
         banner.classList.remove('hidden');
         const nameEl = $('cit-name');
         const actEl = $('cit-activity');
-        if (nameEl) nameEl.textContent = `${activeCit.name} (${activeCit.personality.name})`;
+        if (nameEl) {
+          const roleName = activeCit.role ? ` · ${activeCit.role}` : '';
+          nameEl.textContent = `${activeCit.moodIcon} ${activeCit.name} (${activeCit.personality.name}${roleName})`;
+        }
         if (actEl) actEl.textContent = activeCit.activityText;
       }
     } else if (banner) {

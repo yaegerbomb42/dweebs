@@ -8,9 +8,9 @@ import * as THREE from 'three';
 import { createBattle, stepBattle, battleHash, WF_DT, FIELD } from '../sim/warfareBattle.js';
 import { commanderDecide } from '../sim/warfareAI.js';
 import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
-import { FINAL_WAVE } from '../sim/warfareWaves.js';
+import { DIFFICULTY, FINAL_WAVE } from '../sim/warfareWaves.js';
 import { WarfareView } from './WarfareView.js';
-import { WarfareHud } from './WarfareHud.js';
+import { WarfareHud, bestKey } from './WarfareHud.js';
 import { WarfareAudio } from './WarfareAudio.js';
 import { WarfareNet } from './WarfareNet.js';
 
@@ -24,6 +24,9 @@ const ENEMY_HINTS = {
   brute: '<b>Brutes</b> are too heavy to steal. Swarm them with <b>kamis</b>.',
   boss: 'The <b>Brass Bully</b> is here! Kamis deal bonus damage. Keep shields spread out.',
 };
+
+/** Seconds without a lockstep turn before an online battle is given up. */
+const STALL_GIVE_UP = 12;
 
 const NAME_A = ['Captain', 'General', 'Major', 'Sergeant', 'Admiral', 'Corporal'];
 const NAME_B = ['Dowel', 'Gizmo', 'Sprocket', 'Noodle', 'Widget', 'Pickle', 'Bolt', 'Waffle'];
@@ -61,6 +64,8 @@ export class DweebWarfare {
     this.hud.setModeButtons({ online: !!serverUrl });
     this.team = 'blue';
     this.mode = 'defense';
+    this.difficulty = 'normal';
+    try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
     this.pending = [];
     this.acc = 0;
@@ -94,16 +99,16 @@ export class DweebWarfare {
     this.attract = true;
     this.view.reset();
     this.view.localTeam = this.team;
-    this.hud.refreshBest();
+    this.hud.setDifficulty(this.difficulty);
     this.hud.screen('title');
     this.cam.tx = 0; this.cam.tz = 2; this.cam.tdist = 56;
   }
 
   start(mode = 'defense') {
     this._leaveOnline();
-    this._begin(mode, (Date.now() & 0x7fffffff) | 1, 'blue');
+    this._begin(mode, (Date.now() & 0x7fffffff) | 1, 'blue', this.difficulty);
     if (mode === 'defense') {
-      this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5`, '', 2.6);
+      this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}`, '', 2.6);
       this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
     } else {
       this.hud.banner('VERSUS', 'Smash the red fort before they smash yours', '', 2.6);
@@ -111,11 +116,11 @@ export class DweebWarfare {
     }
   }
 
-  _begin(mode, seed, team) {
+  _begin(mode, seed, team, difficulty = 'normal') {
     this.mode = mode;
     this.attract = false;
     this.team = team;
-    this.st = createBattle({ seed, mode });
+    this.st = createBattle({ seed, mode, difficulty });
     this.pending = [];
     this.outbox = [];
     this.seen = new Set();
@@ -148,7 +153,7 @@ export class DweebWarfare {
       this._wireNet(net);
     }
     this.hud.onlineStatus({ status: code ? `Joining ${code}…` : (kind === 'coop' ? 'Looking for a co-op partner…' : 'Looking for an opponent…') });
-    this.net.queue(kind, { code, name: commanderName() });
+    this.net.queue(kind, { code, name: commanderName(), difficulty: this.difficulty });
   }
 
   _wireNet(net) {
@@ -168,10 +173,10 @@ export class DweebWarfare {
   _startOnline(m) {
     const mode = m.mode === 'versus' ? 'versus' : 'defense';
     this.online = { kind: m.mode, partner: m.partner, turnTicks: m.turnTicks, stallT: 0 };
-    this._begin(mode, m.seed, m.team);
+    this._begin(mode, m.seed, m.team, m.difficulty);
     this.hud.setNet(`ONLINE · ${m.mode === 'coop' ? 'co-op with' : 'vs'} ${m.partner}`);
     if (mode === 'defense') {
-      this.hud.banner('ONLINE CO-OP', `Hold the fort together · shared coins & rally flag`, '', 2.6);
+      this.hud.banner('ONLINE CO-OP', `Hold the fort together · shared coins & rally flag · ${this.st.diff.label}`, '', 2.6);
       this.hud.toast('Both of you command the blue army. Talk it out: who buys what?', 8);
     } else {
       this.hud.banner('ONLINE VERSUS', `You are ${m.team.toUpperCase()} · smash the other fort`, '', 2.6);
@@ -220,6 +225,7 @@ export class DweebWarfare {
       n++;
     }
     if (stalled) { this.acc = Math.min(this.acc, WF_DT); this.online.stallT += dt; } else this.online.stallT = 0;
+    if (this.online.stallT > STALL_GIVE_UP) { this._forfeitEnd(false, 'The server stopped sending turns.'); return; }
     const waiting = this.online.stallT > 1;
     if (waiting !== this.online.waiting) {
       this.online.waiting = waiting;
@@ -245,6 +251,11 @@ export class DweebWarfare {
     this.audio?.unlock();
     this.audio?.click();
     if (a === 'defense' || a === 'versus') this.start(a);
+    else if (a.startsWith('diff-') && DIFFICULTY[a.slice(5)]) {
+      this.difficulty = a.slice(5);
+      try { localStorage.setItem('dweebs-warfare-diff', this.difficulty); } catch { /* private mode */ }
+      this.hud.setDifficulty(this.difficulty);
+    }
     else if (a === 'startWave') this._cmd({ type: 'startWave' });
     else if (a === 'pause') this.setPaused(true);
     else if (a === 'resume') this.setPaused(false);
@@ -287,10 +298,40 @@ export class DweebWarfare {
       if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
     };
+    // Pointer: a tap/click moves the rally flag; a drag pans the camera (touch-friendly); two fingers pinch-zoom.
+    this._ptrs = new Map();
     this._onPointer = e => {
-      if (this.phase !== 'playing' || e.button !== 0) return;
-      const p = this._pick(e.clientX, e.clientY);
-      if (p) { this.setRallyPoint(p.x, p.z); this.audio?.click(); }
+      if (this.phase !== 'playing' || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      this._ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false });
+      if (this._ptrs.size === 2) { const [a, b] = [...this._ptrs.values()]; this._pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), dist: this.cam.tdist }; }
+    };
+    this._onPointerMove = e => {
+      const p = this._ptrs.get(e.pointerId);
+      if (!p || this.phase !== 'playing') return;
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY;
+      if (Math.hypot(p.x - p.sx, p.y - p.sy) > 8) p.moved = true;
+      if (this._ptrs.size >= 2 && this._pinch) {
+        const [a, b] = [...this._ptrs.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d > 10) this.cam.tdist = Math.max(22, Math.min(70, this._pinch.dist * this._pinch.d / d));
+      } else if (p.moved) {
+        const k = this.cam.dist / Math.max(320, window.innerHeight) * 1.6;
+        this.cam.tx = Math.max(-FIELD.halfX, Math.min(FIELD.halfX, this.cam.tx - dx * k));
+        this.cam.tz = Math.max(-FIELD.halfZ, Math.min(FIELD.halfZ, this.cam.tz - dy * k));
+      }
+    };
+    this._onPointerUp = e => {
+      const p = this._ptrs.get(e.pointerId);
+      if (!p) return;
+      const wasMulti = this._ptrs.size > 1 || this._pinch;
+      this._ptrs.delete(e.pointerId);
+      if (this._ptrs.size < 2) this._pinch = this._ptrs.size ? this._pinch : null;
+      if (e.type === 'pointerup' && !p.moved && !wasMulti && this.phase === 'playing') {
+        const hit = this._pick(e.clientX, e.clientY);
+        if (hit) { this.setRallyPoint(hit.x, hit.z); this.audio?.click(); }
+      }
+      if (!this._ptrs.size) this._pinch = null;
     };
     this._onWheel = e => {
       if (this.phase === 'title') return;
@@ -300,6 +341,9 @@ export class DweebWarfare {
     window.addEventListener('keydown', this._onKey);
     window.addEventListener('keyup', this._onKey);
     this.canvas?.addEventListener('pointerdown', this._onPointer);
+    window.addEventListener('pointermove', this._onPointerMove);
+    window.addEventListener('pointerup', this._onPointerUp);
+    window.addEventListener('pointercancel', this._onPointerUp);
     this.canvas?.addEventListener('wheel', this._onWheel, { passive: false });
   }
 
@@ -361,13 +405,16 @@ export class DweebWarfare {
     this.phase = 'over';
     if (this.mode === 'defense') {
       const reached = won ? FINAL_WAVE : st.wave;
-      const best = +localStorage.getItem('dweebs-warfare-best') || 0;
-      if (reached > best) localStorage.setItem('dweebs-warfare-best', String(reached));
+      try {
+        const key = bestKey(st.difficulty);
+        const best = +localStorage.getItem(key) || 0;
+        if (reached > best) localStorage.setItem(key, String(reached));
+      } catch { /* private mode */ }
     }
     const secs = Math.round(st.tick * WF_DT);
     const time = `${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')}`;
     const sub = this.mode === 'defense'
-      ? (won ? `The fort held through all ${FINAL_WAVE} waves!` : `The fort fell on wave ${st.wave}.`)
+      ? (won ? `The fort held through all ${FINAL_WAVE} waves on ${st.diff.label}!` : `The fort fell on wave ${st.wave} (${st.diff.label}).`)
       : (won ? `The ${this.team === 'blue' ? 'red' : 'blue'} fort is rubble.` : 'Your fort got flattened.');
     this.hud.showEnd({
       won, sub,
@@ -432,6 +479,9 @@ export class DweebWarfare {
     window.removeEventListener('keydown', this._onKey);
     window.removeEventListener('keyup', this._onKey);
     this.canvas?.removeEventListener('pointerdown', this._onPointer);
+    window.removeEventListener('pointermove', this._onPointerMove);
+    window.removeEventListener('pointerup', this._onPointerUp);
+    window.removeEventListener('pointercancel', this._onPointerUp);
     this.canvas?.removeEventListener('wheel', this._onWheel);
     this._leaveOnline();
     this.audio?.dispose?.();

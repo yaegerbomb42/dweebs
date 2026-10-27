@@ -368,6 +368,16 @@ export class Dweeb {
 
     if (this.grabbedBy) return;
 
+    // Riding a toy zipline: the cable owns position and velocity until release.
+    if (this.zipRide) {
+      this.body.setGravityScale(0, true);
+      if (this.zipRide.pos) this.body.setTranslation(this.zipRide.pos, true);
+      if (this.zipRide.vel) this.body.setLinvel(this.zipRide.vel, true);
+      this.jumpRequested = false;
+      this.jumpBuffer = 0;
+      return;
+    }
+
     // Frozen solid: held exactly where you were. Gravity comes back when it thaws.
     if (this.freezeTimer > 0) {
       this.body.setGravityScale(0, true);

@@ -37,7 +37,7 @@ export class WarfareNet {
   }
 
   _send(m) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); }
-  queue(mode, { code = '', name = 'Dweeb' } = {}) { this.turns = []; this.nextTurn = 0; this._send({ wf: 'queue', mode, code, name }); }
+  queue(mode, { code = '', name = 'Dweeb', difficulty = 'normal' } = {}) { this.turns = []; this.nextTurn = 0; this._send({ wf: 'queue', mode, code, name, difficulty }); }
   cancel() { this._send({ wf: 'cancel' }); }
   sendCmds(cmds) { if (cmds.length) this._send({ wf: 'cmd', cmds }); }
   sendHash(turn, h) { this._send({ wf: 'hash', turn, h }); }

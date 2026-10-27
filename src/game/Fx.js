@@ -253,6 +253,123 @@ export class Fx {
     this.audio.playSpringBoing(this._pan(pos));
   }
 
+  // ─── Toy-set architecture ───
+
+  _toyWord(word, pos, color = 0xffd23f, size = 'small') {
+    if (this._near(pos, 16) > 0) this.hud.popup(word, pos, size, color);
+  }
+
+  doorThwack(pos) {
+    this.particles.dust({ x: pos.x, y: pos.y - 0.4, z: pos.z }, 10);
+    this.particles.emit(pos, { count: 10, colors: [0xffd23f, 0xffffff, 0xd4a86a], speed: 5, up: 2, size: 0.12, life: 0.35 });
+    this.audio.playComicBonk(this._pan(pos));
+    this.audio.playWoodBreak(this._pan(pos));
+    this._toyWord('THWACK!', pos, 0xffd23f, 'big');
+    this.cam?.shake?.(0.16);
+  }
+
+  doorOpen(pos) {
+    this.audio.playWhoosh(this._pan(pos), 0.6);
+    this.particles.dust({ x: pos.x, y: pos.y - 0.7, z: pos.z }, 3);
+  }
+
+  doorClose(pos) {
+    this.audio.playWoodBreak(this._pan(pos));
+    this.particles.dust({ x: pos.x, y: pos.y - 0.7, z: pos.z }, 3);
+  }
+
+  trapdoor(pos) {
+    this.audio.playWoodBreak(this._pan(pos));
+    this.particles.dust({ x: pos.x, y: pos.y - 0.2, z: pos.z }, 8);
+    this.particles.ring(pos, { color: 0xffd23f, size: 1.8, life: 0.25 });
+  }
+
+  lever(pos) {
+    this.audio.playTech(this._pan(pos));
+    this.particles.sparkle(pos, 0xffd23f);
+  }
+
+  crank(pos) {
+    this.audio.playUIClick();
+    this.audio.playWhoosh(this._pan(pos), 0.25);
+    this.particles.emit(pos, { count: 4, colors: [0xffd23f, 0xffffff], speed: 2, up: 1, size: 0.08, life: 0.3 });
+  }
+
+  button(pos) {
+    this.audio.playUIClick();
+    this.particles.ring({ x: pos.x, y: pos.y + 0.1, z: pos.z }, { color: 0xffd23f, size: 1.3, life: 0.22 });
+  }
+
+  ladder(pos) {
+    this.audio.playGrab(this._pan(pos));
+    this.particles.sparkle(pos, 0xffd23f);
+  }
+
+  ropeSwing(pos) {
+    this.audio.playWhoosh(this._pan(pos), 0.9);
+    this.particles.emit(pos, { count: 5, colors: [0xd4a86a, 0xffffff], speed: 2.5, up: 1, size: 0.1, life: 0.3 });
+  }
+
+  zipStart(pos) {
+    this.audio.playSpringBoing(this._pan(pos));
+    this.audio.playWhoosh(this._pan(pos), 1);
+    this.particles.sparkle(pos, 0x3ee6d0);
+    this._toyWord('WHEEE!', pos, 0x3ee6d0);
+  }
+
+  zipEnd(pos) {
+    this.particles.dust({ x: pos.x, y: pos.y, z: pos.z }, 10);
+    this.particles.ring(pos, { color: 0x3ee6d0, size: 2.0, life: 0.3 });
+    this.audio.playLand(8, this._pan(pos));
+  }
+
+  sailLaunch(pos) {
+    this.particles.emit(pos, { count: 12, colors: [0xfff8ee, 0xffd23f, 0xffffff], speed: 5, up: 4, size: 0.14, life: 0.5 });
+    this.audio.playWhoosh(this._pan(pos), 1);
+    this.audio.playSpringBoing(this._pan(pos));
+    this._toyWord('WHOOOSH!', pos, 0xfff8ee);
+  }
+
+  poolSplash(pos, color = 0x3fa9ff) {
+    this.particles.ring({ x: pos.x, y: pos.y, z: pos.z }, { color, size: 2.2, life: 0.35 });
+    this.particles.emit(pos, { count: 18, colors: [color, 0xffffff], speed: 4, up: 5, size: 0.13, life: 0.5, gravity: 9 });
+    this.audio.playSplash(this._pan(pos), 0.8);
+  }
+
+  fortSmash(pos, color = 0xd4a86a, power = 1) {
+    this.particles.emit(pos, { count: 20 + Math.round(power * 8), colors: [color, 0x6b3f1d, 0xffd23f, 0xffffff], speed: 7 * power, up: 4, size: 0.15, life: 0.6 });
+    this.particles.ring(pos, { color: 0xffd23f, size: 2.4, life: 0.28 });
+    this.audio.playWoodBreak(this._pan(pos));
+    this.audio.playComicBonk(this._pan(pos));
+    this._toyWord(power > 1 ? 'KABLOOEY!' : 'CRUNCH!', pos, 0xffd23f, power > 1 ? 'big' : 'small');
+    this.cam?.shake?.(0.35 * power);
+  }
+
+  fortRepair(pos) {
+    this.particles.sparkle(pos, 0x5ee06a);
+    this.particles.emit(pos, { count: 5, colors: [0x5ee06a, 0xffffff], speed: 2, up: 2, size: 0.09, life: 0.4 });
+    this.audio.playComicBonk(this._pan(pos));
+    this._toyWord('FIXED!', pos, 0x5ee06a);
+  }
+
+  propLaunch(pos, color = 0xff6fb5) {
+    this.particles.ring(pos, { color, size: 1.4, life: 0.25 });
+    this.particles.emit(pos, { count: 8, colors: [color, 0xffffff], speed: 3, up: 2, size: 0.1, life: 0.35 });
+    this.audio.playLaunch(this._pan(pos));
+  }
+
+  gate(pos) {
+    this.audio.playTech(this._pan(pos));
+    this.particles.emit(pos, { count: 10, colors: [0x3ee6d0, 0xffffff], speed: 2.5, up: 2, size: 0.1, life: 0.4 });
+    this._toyWord('CLUNK!', pos, 0x3ee6d0);
+  }
+
+  drawbridge(pos) {
+    this.audio.playWoodBreak(this._pan(pos));
+    this.particles.dust({ x: pos.x, y: pos.y, z: pos.z }, 12);
+    this._toyWord('CREAK…', pos, 0xd4a86a);
+  }
+
   dive(d) {
     const pos = d.getPosition();
     this.particles.dust({ x: pos.x, y: pos.y - 0.4, z: pos.z }, 8);

@@ -393,3 +393,79 @@ export function getArenaObjects() {
 export function getObjectDef(key) {
   return OBJECT_DEFS[key];
 }
+
+/**
+ * STRUCTURE_CATALOG — the handcrafted toy-set architecture of New Dweebtopia.
+ * These are set pieces, not throwable props: each one is built by ToyBuildings.js and owns its
+ * colliders, moving mechanisms and a destructible/repairable state.
+ */
+export const STRUCTURE_CATALOG = [
+  {
+    id: 'windmill',
+    name: 'Windmill of Whirls',
+    icon: '🌬️',
+    cost: { wood: 8, stone: 3 },
+    desc: 'A multi-level mill whose cloth sails scoop Dweebs into the sky.',
+    footprint: 9,
+    verb: 'ride',
+  },
+  {
+    id: 'watchtower',
+    name: 'Lookout Watchtower',
+    icon: '🗼',
+    cost: { wood: 9, stone: 2 },
+    desc: 'Stilt tower, climbable ladder, crow’s nest and a physics zipline down.',
+    footprint: 8,
+    verb: 'climb',
+  },
+  {
+    id: 'gazebo',
+    name: 'Bouncy Gazebo',
+    icon: '🎪',
+    cost: { wood: 5, berries: 2 },
+    desc: 'A striped canopy with a high-velocity trampoline roof and plush-ball button.',
+    footprint: 8,
+    verb: 'bounce',
+  },
+  {
+    id: 'clockwork',
+    name: 'Toy Clockwork Tower',
+    icon: '⚙️',
+    cost: { wood: 7, stone: 4 },
+    desc: 'Exposed cogs, rotating clock-hand stepping stones and a counterweight lift.',
+    footprint: 8,
+    verb: 'tinker',
+  },
+  {
+    id: 'waterwheel',
+    name: 'Waterwheel Conveyor Chute',
+    icon: '💧',
+    cost: { wood: 8, stone: 3 },
+    desc: 'A curved banking chute that spills into a soft pool, driven by a waterwheel.',
+    footprint: 11,
+    verb: 'slide',
+  },
+  {
+    id: 'fort',
+    name: 'Breakable Toy Fort',
+    icon: '🏰',
+    cost: { wood: 12, stone: 6 },
+    desc: 'Stacked block ramparts that shatter under charged smashes and get rebuilt by workers.',
+    footprint: 11,
+    verb: 'smash',
+  },
+];
+
+export function getStructureDef(id) {
+  return STRUCTURE_CATALOG.find(s => s.id === id) || null;
+}
+
+/** A balanced set of pre-placed landmarks for the Meadowlands adventure map. */
+export const TOY_TOWN_LAYOUT = [
+  { id: 'windmill', x: -17, z: 13.5, rotationY: 0.55 },
+  { id: 'watchtower', x: 27.5, z: 5, rotationY: -0.72 },
+  { id: 'gazebo', x: 10, z: 10.5, rotationY: 0.22 },
+  { id: 'clockwork', x: -11.5, z: -9, rotationY: -0.35 },
+  { id: 'waterwheel', x: 12.5, z: 18.5, rotationY: 0.95 },
+  { id: 'fort', x: 17.5, z: -13.5, rotationY: 0.3 },
+];

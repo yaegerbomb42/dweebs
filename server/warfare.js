@@ -8,7 +8,7 @@
 // Wire: JSON text frames tagged with `wf` (the brawler protocol is binary and its opcodes are all
 // < 0x7b, so a frame starting with '{' is unambiguous). Same port, same process, same rate limiter.
 //
-//   client → server  {wf:'queue', mode:'coop'|'versus', name?, code?} · {wf:'cancel'} · {wf:'cmd', cmds:[…]}
+//   client → server  {wf:'queue', mode:'coop'|'versus', name?, code?, difficulty?} · {wf:'cancel'} · {wf:'cmd', cmds:[…]}
 //                    {wf:'hash', turn, h} · {wf:'over'} (my battle ended normally) · {wf:'leave'} (quit / forfeit)
 //   server → client  {wf:'queued', mode, code} · {wf:'start', seed, mode, slot, team, turnTicks, turnMs, partner}
 //                    {wf:'turn', n, cmds:[…]} · {wf:'desync', turn} · {wf:'peerLeft'} · {wf:'error', message}
@@ -18,6 +18,7 @@ export const TURN_TICKS = 3;          // sim runs at 30 Hz → 3 ticks per turn
 export const MAX_CMDS_PER_TURN = 12;  // per player, per turn
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const RECRUITABLE = new Set(['shield', 'rocket', 'stealer', 'kami']);
+const DIFFICULTIES = new Set(['easy', 'normal', 'hard']);
 
 /** Keep only well-formed commands, and force the sender's team (a client cannot command the other side). */
 export function sanitizeCmd(c, team) {
@@ -78,7 +79,8 @@ export class WarfareLobby {
       partner = this.waiting.find(w => w.mode === mode && w.client !== client);
     }
     if (!partner) {
-      const entry = { client, mode, code: this._code(), name };
+      const difficulty = DIFFICULTIES.has(m.difficulty) ? m.difficulty : 'normal';
+      const entry = { client, mode, code: this._code(), name, difficulty };
       this.waiting.push(entry);
       client.send({ wf: 'queued', mode, code: entry.code });
       return;
@@ -98,12 +100,13 @@ export class WarfareLobby {
       { client: a.client, slot: 0, team: 'blue', name: a.name, alive: true },
       { client: b.client, slot: 1, team: mode === 'versus' ? 'red' : 'blue', name: b.name, alive: true },
     ];
-    const match = { mode, seed, players, turn: 0, inbox: [], hashes: new Map(), desynced: false };
+    const difficulty = a.difficulty || 'normal'; // the host (whoever waited) picks
+    const match = { mode, seed, difficulty, players, turn: 0, inbox: [], hashes: new Map(), desynced: false };
     this.matches.add(match);
     for (const p of players) {
       this.byClient.set(p.client, match);
       const other = players[1 - p.slot];
-      p.client.send({ wf: 'start', seed, mode, slot: p.slot, team: p.team, turnTicks: TURN_TICKS, turnMs: TURN_MS, partner: other.name });
+      p.client.send({ wf: 'start', seed, mode, difficulty, slot: p.slot, team: p.team, turnTicks: TURN_TICKS, turnMs: TURN_MS, partner: other.name });
     }
   }
 

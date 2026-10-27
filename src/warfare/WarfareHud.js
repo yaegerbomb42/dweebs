@@ -24,6 +24,9 @@ const CSS = `
 .wf-hints b{color:#ffd23f}
 .wf-modes{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
 .wf-small{font-size:13px;opacity:.75;margin-top:12px}
+.wf-diff{display:flex;gap:6px;justify-content:center;align-items:center;margin-top:10px;font-size:13px}
+.wf-root .wf-diff button{font-size:13px;padding:5px 12px;background:#3a2a5a;color:#fff8ee;box-shadow:0 3px 0 #1b1030}
+.wf-root .wf-diff button.on{background:#ffd23f;color:#2a1a3a;box-shadow:0 3px 0 #b08a10}
 .wf-top{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:10px;align-items:center}
 .wf-chip{background:rgba(27,16,48,.78);border:3px solid #fff8ee;border-radius:14px;padding:6px 12px;font-family:'Lilita One',sans-serif;font-size:18px;white-space:nowrap}
 .wf-chip.boss{background:#a82534}
@@ -72,10 +75,14 @@ const CSS = `
 .wf-dmg.weak{color:#c9c4d6;font-size:14px}
 .wf-dmg.word{color:#5ee06a;font-size:22px}
 body.warfare-active #hud>*{display:none!important}
+body.warfare-active canvas{touch-action:none}
 @media (max-width:640px){.wf-card{width:84px}.wf-card .h{display:none}.wf-title{font-size:40px}.wf-hints{grid-template-columns:1fr}.wf-fort{width:120px}}
 `;
 
 const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣' };
+
+/** localStorage key for the best defense wave; normal keeps the original key. */
+export const bestKey = d => (d && d !== 'normal' ? `dweebs-warfare-best-${d}` : 'dweebs-warfare-best');
 
 export class WarfareHud {
   constructor(cb) {
@@ -104,6 +111,7 @@ export class WarfareHud {
             <button class="alt" data-a="online-coop">ONLINE CO-OP</button>
             <button class="alt" data-a="online-versus">ONLINE VERSUS</button>
           </div>
+          <div class="wf-diff">Fort defense: <button data-a="diff-easy">EASY</button><button data-a="diff-normal">NORMAL</button><button data-a="diff-hard">HARD</button></div>
           <div class="wf-small"><span data-f="best"></span> · WASD/arrows pan · wheel zooms · M mutes · Esc pauses</div>
           <div style="margin-top:14px"><button class="alt" data-a="exit">◀ BACK TO THE MALL</button></div>
         </div>
@@ -184,9 +192,16 @@ export class WarfareHud {
     for (const s of ['title', 'game', 'pause', 'end', 'online']) this.q(`[data-s="${s}"]`).classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
   }
 
-  refreshBest() {
-    const best = +localStorage.getItem('dweebs-warfare-best') || 0;
-    this.f('best').textContent = best ? `Best: wave ${best}${best >= FINAL_WAVE ? ' (fort held!)' : ''}` : 'No record yet';
+  refreshBest(difficulty = 'normal') {
+    let best = 0;
+    try { best = +localStorage.getItem(bestKey(difficulty)) || 0; } catch { /* private mode */ }
+    const tag = difficulty === 'normal' ? '' : ` (${difficulty})`;
+    this.f('best').textContent = best ? `Best${tag}: wave ${best}${best >= FINAL_WAVE ? ' — fort held!' : ''}` : `No record yet${tag}`;
+  }
+
+  setDifficulty(key) {
+    for (const b of this.root.querySelectorAll('.wf-diff button')) b.classList.toggle('on', b.dataset.a === `diff-${key}`);
+    this.refreshBest(key);
   }
 
   setMute(m) { this.q('[data-a="mute"]').textContent = m ? '🔇' : '🔊'; }

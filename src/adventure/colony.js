@@ -1,6 +1,11 @@
 // colony.js — Civilization management, dynasty lineage, knowledge totem, and off-screen events
+//
+// Expedition & Dynasty additions: citizen roles and a build queue (Builders work
+// through queued blueprints), capped resource stores with silo overflow, and the
+// vault loot that citizens bring home — gold coins, cosmetic hats, special tools.
 
-import { Citizen, PERSONALITIES } from './citizen.js';
+import { Citizen, PERSONALITIES, ROLES } from './citizen.js';
+import { BLUEPRINTS, SILO_CAP_BONUS } from './building.js';
 
 export class Colony {
   constructor() {
@@ -13,7 +18,19 @@ export class Colony {
       wood: 12,
       berries: 20,
       stone: 8,
+      gold: 0,
     };
+    // Soft storage caps. Gains through addResource() clamp to these; every silo
+    // placed raises them by SILO_CAP_BONUS, and overflow routes into silos.
+    this.storageCap = {
+      wood: 99,
+      berries: 99,
+      stone: 99,
+      gold: 999,
+    };
+    this.hats = [];   // cosmetic hats won from treasure vaults
+    this.tools = [];  // special tools won from treasure vaults
+    this.buildQueue = []; // blueprint ids waiting for a Builder
     this.expeditionTimer = 0;
 
     this._addLog('The dawn of New Dweebtopia. The first settlement is founded in The Meadowlands.');
@@ -38,6 +55,106 @@ export class Colony {
     return citizen;
   }
 
+  /** Assign a citizen a role (or null to clear it). Returns false on bad role id. */
+  assignRole(citizen, roleId) {
+    if (!citizen || typeof citizen.assignRole !== 'function') return false;
+    const ok = citizen.assignRole(roleId);
+    if (ok && roleId) {
+      this._addLog(`${citizen.name} is now the village ${ROLES[roleId].name} ${ROLES[roleId].icon}.`);
+    }
+    return ok;
+  }
+
+  /**
+   * Add resources, respecting the storage cap. Overflow goes into silos
+   * (first with room); whatever is left over is lost to the meadow.
+   * Returns { added, overflowStored, overflowLost }.
+   */
+  addResource(res, n, silos = []) {
+    if (n <= 0) return { added: 0, overflowStored: 0, overflowLost: 0 };
+    const cap = this.storageCap[res] ?? Infinity;
+    const room = Math.max(0, cap - (this.resources[res] || 0));
+    const added = Math.min(n, room);
+    this.resources[res] = (this.resources[res] || 0) + added;
+    let overflow = n - added;
+    let overflowStored = 0;
+    for (const silo of silos) {
+      if (overflow <= 0) break;
+      if (typeof silo.deposit !== 'function') continue;
+      const moved = silo.deposit(res, overflow);
+      overflow -= moved;
+      overflowStored += moved;
+    }
+    return { added, overflowStored, overflowLost: overflow };
+  }
+
+  /** Queue a blueprint for the Builders. Returns false for unknown ids / dupes. */
+  queueBuild(blueprintId) {
+    if (!BLUEPRINTS.some(b => b.id === blueprintId)) return false;
+    if (this.buildQueue.includes(blueprintId)) return false;
+    this.buildQueue.push(blueprintId);
+    this._addLog(`📋 The ${blueprintId} blueprint was added to the build queue.`);
+    return true;
+  }
+
+  cancelBuild(blueprintId) {
+    const idx = this.buildQueue.indexOf(blueprintId);
+    if (idx === -1) return false;
+    this.buildQueue.splice(idx, 1);
+    return true;
+  }
+
+  /**
+   * A Builder finished hammering: pay the cost and raise the structure.
+   * Called with the world so the structure can register its physics hooks.
+   * Returns true when the build completed.
+   */
+  _completeBuild(blueprintId, world) {
+    const bp = BLUEPRINTS.find(b => b.id === blueprintId);
+    if (!bp) {
+      this.cancelBuild(blueprintId);
+      return false;
+    }
+    if (!world || !world.buildingManager) {
+      this._addLog(`⚠️ No building manager — the ${bp.name} could not be raised.`);
+      return false;
+    }
+    for (const [res, count] of Object.entries(bp.cost)) {
+      if ((this.resources[res] || 0) < count) {
+        this._addLog(`⚠️ Not enough ${res} to build the ${bp.name} — it stays on the queue.`);
+        return false;
+      }
+    }
+    for (const [res, count] of Object.entries(bp.cost)) {
+      this.resources[res] -= count;
+    }
+    const pos = this._nextBuildSite(world);
+    const structure = world.buildingManager._instantiateStructure(bp.id, pos, world);
+    if (bp.id === 'silo' && this.storageCap) {
+      for (const res of ['wood', 'berries', 'stone']) {
+        this.storageCap[res] = (this.storageCap[res] || 0) + SILO_CAP_BONUS;
+      }
+    }
+    world.buildingManager.placedStructures.push(structure);
+    this.cancelBuild(blueprintId);
+    this._addLog(`🔨 A Builder raised the ${bp.name}!`);
+    return true;
+  }
+
+  /** Where the next Builder-built structure goes: a clearing off the campfire. */
+  _nextBuildSite(world) {
+    const placed = world.buildingManager ? world.buildingManager.placedStructures.length : 0;
+    const ang = (placed * 2.4) % (Math.PI * 2);
+    const r = 8 + (placed % 3) * 3;
+    return { x: Math.cos(ang) * r, y: 0, z: Math.sin(ang) * r };
+  }
+
+  /** Silo structures from a world, for addResource() overflow routing. */
+  _silosFrom(world) {
+    if (!world || !world.buildingManager) return [];
+    return world.buildingManager.placedStructures.filter(s => s.id === 'silo');
+  }
+
   unlockVerb(verbId, discovererName = 'The Pioneer') {
     if (this.unlockedVerbs.has(verbId)) return false;
     this.unlockedVerbs.add(verbId);
@@ -55,7 +172,7 @@ export class Colony {
   update(dt, world) {
     // 1. Update all autonomous citizens
     for (const citizen of this.citizens) {
-      citizen.update(dt, world, this.citizens);
+      citizen.update(dt, world, this.citizens, this);
     }
 
     // 2. Periodic off-screen emergent civilization adventures (every ~25 seconds)
@@ -69,14 +186,15 @@ export class Colony {
   _simulateEmergentEvent(world) {
     if (this.citizens.length === 0) return;
     const actor = this.citizens[Math.floor(Math.random() * this.citizens.length)];
+    const silos = this._silosFrom(world);
 
     const events = [
       () => {
-        this.resources.berries += 5;
+        this.addResource('berries', 5, silos);
         this._addLog(`🍓 ${actor.name} returned from the riverbank with a basket of fresh wild berries.`);
       },
       () => {
-        this.resources.wood += 3;
+        this.addResource('wood', 3, silos);
         this._addLog(`🪵 ${actor.name} dragged a sturdy fallen timber branch back to the workshop.`);
       },
       () => {
@@ -87,7 +205,7 @@ export class Colony {
         }
       },
       () => {
-        this.resources.stone += 2;
+        this.addResource('stone', 2, silos);
         this._addLog(`🪨 ${actor.name} unearthed strange mineral quartz near the cavern entrance.`);
       },
       () => {
@@ -110,6 +228,62 @@ export class Colony {
       for (const v of this.unlockedVerbs) {
         c.learnVerb(v);
       }
+    }
+  }
+
+  /** Plain-data snapshot for save files. */
+  serialize() {
+    return {
+      name: this.name,
+      generation: this.generation,
+      resources: { ...this.resources },
+      storageCap: { ...this.storageCap },
+      unlockedVerbs: Array.from(this.unlockedVerbs),
+      hats: [...this.hats],
+      tools: [...this.tools],
+      buildQueue: [...this.buildQueue],
+      citizens: this.citizens.map(c => ({
+        name: c.name,
+        personalityId: c.personality.id,
+        role: c.role,
+        hunger: c.hunger,
+        energy: c.energy,
+        curiosity: c.curiosity,
+        social: c.social,
+        knownVerbs: Array.from(c.knownVerbs),
+        friends: Array.from(c.friends.entries()),
+      })),
+    };
+  }
+
+  /** Restore a snapshot produced by serialize(). Citizens are matched by index. */
+  restore(data) {
+    if (!data) return;
+    if (typeof data.name === 'string') this.name = data.name;
+    if (typeof data.generation === 'number') this.generation = data.generation;
+    if (data.resources) this.resources = { ...this.resources, ...data.resources };
+    if (data.storageCap) this.storageCap = { ...this.storageCap, ...data.storageCap };
+    if (Array.isArray(data.unlockedVerbs)) this.unlockedVerbs = new Set(data.unlockedVerbs);
+    if (Array.isArray(data.hats)) this.hats = [...data.hats];
+    if (Array.isArray(data.tools)) this.tools = [...data.tools];
+    if (Array.isArray(data.buildQueue)) this.buildQueue = [...data.buildQueue];
+    if (Array.isArray(data.citizens)) {
+      data.citizens.forEach((saved, i) => {
+        const c = this.citizens[i];
+        if (!c) return;
+        if (saved.name) c.name = saved.name;
+        if (saved.personalityId) {
+          const p = PERSONALITIES.find(pp => pp.id === saved.personalityId);
+          if (p) c.personality = p;
+        }
+        if (saved.role !== undefined) c.role = saved.role;
+        if (typeof saved.hunger === 'number') c.hunger = saved.hunger;
+        if (typeof saved.energy === 'number') c.energy = saved.energy;
+        if (typeof saved.curiosity === 'number') c.curiosity = saved.curiosity;
+        if (typeof saved.social === 'number') c.social = saved.social;
+        if (Array.isArray(saved.knownVerbs)) c.knownVerbs = new Set(saved.knownVerbs);
+        if (Array.isArray(saved.friends)) c.friends = new Map(saved.friends);
+      });
     }
   }
 }

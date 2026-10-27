@@ -36,9 +36,20 @@ export const waveReward = n => 80 + 20 * n;
  * Boss waves lead with the boss and spend 45% of the budget on escorts.
  * The cycle start rotates with N so consecutive waves feel different.
  */
-export function waveComposition(n) {
+/**
+ * Defense difficulty. Multiplies the wave budget and the enemy's per-wave hp/dmg scaling,
+ * and sets the fort's toughness and the starting coins. Normal is the tuned baseline.
+ */
+export const DIFFICULTY = {
+  easy: { label: 'Easy', budget: 0.75, hp: 0.85, dmg: 0.85, fort: 1.3, coins: 200 },
+  normal: { label: 'Normal', budget: 1, hp: 1, dmg: 1, fort: 1, coins: 150 },
+  hard: { label: 'Hard', budget: 1.25, hp: 1.12, dmg: 1.1, fort: 0.85, coins: 130 },
+};
+export const difficultyOf = key => DIFFICULTY[key] || DIFFICULTY.normal;
+
+export function waveComposition(n, budgetMul = 1) {
   const out = [];
-  let budget = waveBudget(n);
+  let budget = Math.round(waveBudget(n) * budgetMul);
   if (isBossWave(n)) {
     out.push('boss');
     budget = Math.round(budget * (n >= 10 ? 0.55 : 0.45));

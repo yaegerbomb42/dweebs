@@ -168,6 +168,50 @@ export class PhysicsWorld {
     return this._fixed(x, y, z, this.RAPIER.ColliderDesc.cuboid(hw, hh, hd), mat, 'static', CollisionGroups.WALL);
   }
 
+  /**
+   * Fixed box with an arbitrary rotation (toy-tower chutes, angled ramps, hinged panels).
+   * `quat` is a Three-style { x, y, z, w } or Rapier quaternion; omitted for axis-aligned.
+   */
+  createStaticBoxRotated(x, y, z, hw, hh, hd, quat = null, mat = 'toy') {
+    const R = this.RAPIER;
+    const desc = R.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    if (quat) desc.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
+    const body = this.world.createRigidBody(desc);
+    const material = getMaterial(mat);
+    const collider = this.world.createCollider(R.ColliderDesc.cuboid(hw, hh, hd)
+      .setFriction(material.friction)
+      .setRestitution(material.restitution)
+      .setCollisionGroups(this._makeGroups(CollisionGroups.WALL, CollisionGroups.ALL)), body);
+    const id = `static_${this._nextId++}`;
+    this.bodies.set(id, { rigid: body, collider, type: 'static', material: mat });
+    this.register(collider, { kind: 'stage', material: mat });
+    return { id, body, collider };
+  }
+
+  /** Fixed cone (gazebo / tower roofs). Rapier's cone points +Y. */
+  createFixedCone(x, y, z, radius, halfHeight, mat = 'toy') {
+    return this._fixed(x, y, z, this.RAPIER.ColliderDesc.cone(halfHeight, radius), mat, 'cone', CollisionGroups.WALL);
+  }
+
+  /**
+   * Kinematic box whose collider can sit offset from the body origin. This lets a mesh pivot
+   * (a clock hand, drawbridge hinge, elevator basket) drive a collider that swings around it.
+   */
+  createKinematicBox(x, y, z, hx, hy, hz, mat = 'wood', offset = null, friction = 0.8, restitution = 0.05) {
+    const R = this.RAPIER;
+    const body = this.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z));
+    const desc = R.ColliderDesc.cuboid(hx, hy, hz)
+      .setFriction(friction)
+      .setRestitution(restitution)
+      .setCollisionGroups(this._makeGroups(CollisionGroups.WALL, CollisionGroups.ALL));
+    if (offset) desc.setTranslation(offset.x || 0, offset.y || 0, offset.z || 0);
+    const collider = this.world.createCollider(desc, body);
+    const id = `kin_${this._nextId++}`;
+    this.bodies.set(id, { rigid: body, collider, type: 'kinematic' });
+    this.register(collider, { kind: 'hazard', material: mat });
+    return { id, body, collider };
+  }
+
   /** Fixed body with a convex-hull collider (points in body-local space) */
   createFixedHull(x, y, z, points, mat = 'toy') {
     return this._fixed(x, y, z, this.RAPIER.ColliderDesc.convexHull(points), mat, 'hull');

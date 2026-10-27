@@ -12,7 +12,7 @@ import { Rng } from './rng.js';
 import { stats, otherTeam, bounty, RECRUITABLE } from './warfareUnits.js';
 import { computeDamage, splashFalloff, knockback, COVER_RADIUS } from './warfareDamage.js';
 import { pickTarget, shouldRetreat, flankGoal, REJOIN_AT } from './warfareAI.js';
-import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward } from './warfareWaves.js';
+import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward, DIFFICULTY } from './warfareWaves.js';
 
 export const WF_HZ = 30;
 export const WF_DT = 1 / WF_HZ;
@@ -58,17 +58,20 @@ function teamStats() {
  * @param {'defense'|'versus'} [o.mode]
  * @param {boolean} [o.army] spawn the starting armies (tests turn this off for duels)
  */
-export function createBattle({ seed = 1, mode = 'defense', army = true, coins } = {}) {
+export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal' } = {}) {
   const versus = mode === 'versus';
+  const dkey = !versus && Object.hasOwn(DIFFICULTY, difficulty) ? difficulty : 'normal';
+  const diff = DIFFICULTY[dkey];
+  const fortHp = versus ? 1200 : Math.round(DEFENSE_FORT_HP * diff.fort);
   const st = {
-    mode, seed, tick: 0, rng: new Rng(seed), nextId: 1,
+    mode, seed, tick: 0, difficulty: dkey, diff, rng: new Rng(seed), nextId: 1,
     units: [], shells: [], events: [],
     forts: {
-      blue: { x: -FORT_X, z: 0, hp: versus ? 1200 : DEFENSE_FORT_HP, maxHp: versus ? 1200 : DEFENSE_FORT_HP, r: FORT_RADIUS, invulnerable: false },
+      blue: { x: -FORT_X, z: 0, hp: fortHp, maxHp: fortHp, r: FORT_RADIUS, invulnerable: false },
       red: { x: FORT_X, z: 0, hp: 1200, maxHp: 1200, r: FORT_RADIUS, invulnerable: !versus },
     },
     rally: { blue: { x: -22, z: 0 }, red: { x: 22, z: 0 } },
-    coins: { blue: coins ?? 150, red: versus ? (coins ?? 150) : 0 },
+    coins: { blue: coins ?? (versus ? 150 : diff.coins), red: versus ? (coins ?? 150) : 0 },
     wave: 0,
     phase: versus ? 'battle' : 'prep',
     prepTicks: versus ? 0 : PREP_FIRST,
@@ -525,8 +528,9 @@ function updatePhase(st) {
     if (st.prepTicks > 0) { st.prepTicks--; return; }
     st.wave++;
     st.phase = 'battle';
-    st.spawnQueue = waveComposition(st.wave);
-    st.scaling = waveScaling(st.wave);
+    st.spawnQueue = waveComposition(st.wave, st.diff.budget);
+    const sc = waveScaling(st.wave);
+    st.scaling = { hpMul: sc.hpMul * st.diff.hp, dmgMul: sc.dmgMul * st.diff.dmg };
     st.spawnCd = 0;
     st.events.push({ type: 'waveStart', wave: st.wave, boss: isBossWave(st.wave), count: st.spawnQueue.length });
     return;
