@@ -8,7 +8,8 @@
 //   node tools/headless-match.mjs                     one 4-bot match, default seed
 //   node tools/headless-match.mjs --bots 8 --seed 42  an 8-bot match
 //   node tools/headless-match.mjs --matches 3         run N matches, all seeds reported
-//   node tools/headless-match.mjs --ticks 7200        give up after N ticks (default 18000)
+//   node tools/headless-match.mjs --ticks 40000        give up after N ticks (default 40000:
+//                                                      a best-of-3 can need ~37000 on slow rounds)
 //   node tools/headless-match.mjs --verify            run the same match twice and compare the
 //                                                      checksum at EVERY tick
 //   node tools/headless-match.mjs --snapshot-at 900   snapshot at tick N, restore into a second
@@ -32,7 +33,7 @@ const flag = name => args.includes(`--${name}`);
 const BOTS = opt('bots', 4);
 const SEED = opt('seed', 1);
 const MATCHES = opt('matches', 1);
-const MAX_TICKS = opt('ticks', 18000);
+const MAX_TICKS = opt('ticks', 40000);
 const SNAPSHOT_AT = opt('snapshot-at', 0);
 const VERIFY = flag('verify');
 const PERF = flag('perf');

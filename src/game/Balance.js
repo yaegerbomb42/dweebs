@@ -99,7 +99,7 @@ export const BALANCE = {
 
   // Recovery tools (Spec 6)
   airDodge: { speed: 11, invuln: 0.25, duration: 0.28, cooldown: 1.2 },
-  tech: { window: 0.1, invuln: 0.3, missProne: 0.55 },
+  tech: { buffer: 0.1, invuln: 0.3, missProne: 0.55 },
   ledge: { maxHang: 1.2, reach: 1.1, height: 1.4, jumpVel: 11.5, regrab: 0.6 },
 
   // Timed parry / counter. Press C just before a hit lands: no damage, the attacker

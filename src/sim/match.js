@@ -42,6 +42,7 @@ export class SimMatch {
     this.roundWinner = -1;
     this.matchWinner = -1;
     this.lastCount = 4;
+    this.playerOutAt = null;
     this.stocks = config.stocks;
     this.roundsToWin = config.roundsToWin;
     this.roundTime = config.roundTime;
@@ -71,6 +72,7 @@ export class SimMatch {
     this.suddenDeath = false;
     this.blastSide = BALANCE.match.blastSide;
     this.roundWinner = -1;
+    this.playerOutAt = null;
     this.phase = Phase.COUNTDOWN;
     for (const d of this.dweebs) {
       d.stocks = this.stocks;
@@ -130,9 +132,14 @@ export class SimMatch {
       const p = d.position;
       let kind = null;
       if (p[1] < WATER_LEVEL + 0.6) {
-        // Barely under, near the lip: one flail buys a splash-jump before the dunk counts.
-        if (d.swimFlail > 0) continue;
-        if (!d.flailUsed && Math.hypot(p[0], p[2]) < STAGE_RADIUS + BALANCE.water.flailEdge) {
+        // Deep below the world: no flail, no debate — take the stock. A flailing dweeb hovers
+        // at the waterline; fifty metres past it nothing is coming back, and without this a
+        // dweeb whose flail ever froze could fall forever while still "active".
+        if (p[1] < WATER_LEVEL - 50) kind = 'splash';
+        // Flailing: one chance to splash-jump out.
+        else if (d.swimFlail > 0) continue;
+        // Barely under, right by the lip: flail first (micro-comeback), then the dunk counts
+        else if (!d.flailUsed && Math.hypot(p[0], p[2]) < STAGE_RADIUS + BALANCE.water.flailEdge) {
           d.flailUsed = true;
           d.swimFlail = BALANCE.water.flailTime;
           api.emit('flail', { a: d.id, x: p[0], y: p[1], z: p[2] });
@@ -150,7 +157,14 @@ export class SimMatch {
     // Round over when one dweeb is left standing, or when the clock runs out. A lone
     // dweeb (online with no bots) plays until the clock, instead of winning at GO.
     const standing = dweebs.filter(d => !d.eliminated).length;
-    if (standing === 0 || (dweebs.length > 1 && standing <= 1) || this.timer <= 0) this._endRound(dweebs, api);
+    const player = dweebs.find(d => !d.isBot);
+    if (standing === 0 || (dweebs.length > 1 && standing <= 1) || this.timer <= 0) {
+      this._endRound(dweebs, api);
+    } else if (player?.eliminated) {
+      // Let the player watch the finish for a moment before wrapping up (live Match parity).
+      this.playerOutAt ??= this.time;
+      if (this.time - this.playerOutAt > 3) this._endRound(dweebs, api);
+    }
   }
 
   /**
@@ -182,6 +196,7 @@ export class SimMatch {
 
   _endRound(dweebs, api) {
     if (this.phase !== Phase.PLAYING) return;
+    this.playerOutAt = null;
     const ranked = this.roundStandings(dweebs);
     const winner = ranked[0];
     if (!winner) return;
@@ -222,7 +237,7 @@ export class SimMatch {
       countdown: this.countdown, phaseTimer: this.phaseTimer, time: this.time,
       suddenDeath: this.suddenDeath, blastSide: this.blastSide,
       roundWinner: this.roundWinner, matchWinner: this.matchWinner, lastCount: this.lastCount,
-      stocks: this.stocks,
+      stocks: this.stocks, playerOutAt: this.playerOutAt,
     };
   }
 

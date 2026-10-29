@@ -87,7 +87,16 @@ export class Bot {
     // ── Priority 1: do not die. Off the island, go home. ──
     if (!overGround || pos[1] < -0.8) {
       this._steerTo(f, 0, 0, 1);
-      if (me.canAct && r.chance(this.p.recover)) {
+      // The flail's one splash-jump needs no jumps left — but it needs a deliberate press
+      // inside the 0.6 s window, so take it on purpose instead of hoping the recover roll
+      // below happens to fire. Not gated on canAct: the sim's flail branch honors the jump
+      // edge even in hitstun, which is exactly when dweebs usually start flailing.
+      // Difficulty still gates it: easy bots fumble the timing.
+      if (me.flail && this.recoverJumpCd <= 0 && r.chance(this.p.recover)) {
+        f.jump = true;
+        this.recoverJumpCd = secs(0.35);
+        return f;
+      }      if (me.canAct && r.chance(this.p.recover)) {
         if (vel[1] < 1 && me.jumpsLeft > 0 && this.recoverJumpCd <= 0) {
           f.jump = true;
           this.recoverJumpCd = secs(0.35);
@@ -97,6 +106,17 @@ export class Bot {
         }
       }
       return f;
+    }
+
+    // Tech the landing: tumbling over the stage and about to hit the floor — dodge at the
+    // last moment, difficulty-gated like the live bot's techChance. Never off-stage: a tech
+    // zeroes velocity, and off the island that means dropping straight into the lagoon.
+    if (me.ragdoll && overGround && !me.grounded && vel[1] < -2) {
+      const tti = pos[1] / Math.max(1, -vel[1]); // seconds to impact, roughly
+      if (tti < 0.12 && r.chance(this.p.tech)) {
+        f.dodge = true;
+        return f;
+      }
     }
 
     if (!me.canAct) return f;   // hitstun, grabbed or KO'd: no agency

@@ -175,12 +175,15 @@ export class SimPhysics {
    *
    * The subtlety worth writing down: `World.restoreSnapshot` hands back a NEW World with NEW
    * handles, so the `bodies` / `byCollider` / `kinds` maps are all stale afterwards. They are
-   * rebuilt by replaying the sim's own entity-id creation order against Rapier's body order, which
-   * the snapshot preserves. That is a contract with Rapier, not with ourselves, so it is an
-   * explicit method and not a hidden assumption.
+   * rebuilt by replaying an id list against Rapier's body order — which is `forEach` (slot)
+   * order, NOT creation order and NOT map insertion order: a removed body leaves a slot that
+   * the next created body reuses, so after any despawn the three orders disagree. The id list
+   * must therefore be recorded in forEach order at snapshot time (see dynamicIdOrder); zipping
+   * against any other order silently cross-links bodies to the wrong ids the moment an entity
+   * id is recycled, and the sim then reads one item's body as another's.
    *
    * @param {Uint8Array} bytes from takeSnapshot()
-   * @param {number[]} idOrder entity ids in the order the sim created them
+   * @param {number[]} idOrder entity ids in forEach order (see dynamicIdOrder)
    */
   restoreSnapshot(bytes, idOrder) {
     this.world = RAPIER.World.restoreSnapshot(bytes);
@@ -190,9 +193,10 @@ export class SimPhysics {
     this.byCollider = new Map();
     // Iterate with `forEach`, NOT `bodies.get(i)`: `get` takes a rigid-body HANDLE, and
     // Rapier's 0.21 JS bindings return a Number, so `get(0)`/`get(1)` silently return the same
-    // (or a zero) body. forEach is the only iteration that visits every body — and it happens to
-    // hand them back in creation order, fixed bodies first, which is exactly the order the sim
-    // allocated entity ids in. That is what makes the id re-link below possible.
+    // (or a zero) body. forEach is the only iteration that visits every body. Its order is
+    // stable across a takeSnapshot/restoreSnapshot round-trip (verified empirically), which is
+    // what makes the id re-link below possible — provided idOrder was recorded in this same
+    // order (dynamicIdOrder), not in creation order.
     const dyn = [];
     this.world.bodies.forEach(b => { if (b.isDynamic()) dyn.push(b); });
     let k = 0;
@@ -204,6 +208,21 @@ export class SimPhysics {
     }
   }
 
-  /** The ids of every dynamic body, in creation order — what restoreSnapshot needs. */
-  dynamicIdOrder() { return [...this.bodies.keys()]; }
+  /**
+   * The ids of every dynamic body, in `world.bodies.forEach` visitation order.
+   *
+   * This is the ONLY order that survives a snapshot/restore round-trip (forEach walks the
+   * body's slots, so it is stable even after removals and id recycling). Creation order and
+   * map insertion order both diverge from it the moment an entity id is recycled — which
+   * items do constantly — so they must not be used here.
+   */
+  dynamicIdOrder() {
+    const byBody = new Map();
+    for (const [id, e] of this.bodies) byBody.set(e.body, id);
+    const out = [];
+    this.world.bodies.forEach(b => {
+      if (b.isDynamic()) out.push(byBody.get(b));
+    });
+    return out;
+  }
 }

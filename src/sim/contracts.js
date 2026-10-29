@@ -294,6 +294,8 @@ export const EV = Object.freeze({
   WHIFF: 'whiff',
   /** Dweeb a grabbed dweeb b. */
   GRAB: 'grab',
+  /** Dweeb a wriggled out of dweeb b's grab. b eats a brief hitstun. */
+  ESCAPE: 'escape',
   /** Dweeb a threw. b is the dweeb thrown, or 0 when a held item was thrown instead. */
   THROW: 'throw',
   /** Dweeb a dropped its held item voluntarily. */

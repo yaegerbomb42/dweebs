@@ -143,6 +143,7 @@ export class Sim {
       id, key, pos: [pos.x, pos.y, pos.z], vel: [0, 0, 0], spin: [0, 0, 0],
       heldBy: 0, active: true, ttl: 0, thrown: 0, trick: false, thrower: 0,
       fuse: def.explosive ? 1.5 : 0, explosive: !!def.explosive,
+      powerup: null, aim: null,
     };
     this.items.push(it);
     this.events.emit('spawn', { a: id, x: pos.x, y: pos.y, z: pos.z, kind: key });
@@ -218,6 +219,14 @@ export class Sim {
         other.heldKind = '';
       }
     }
+    // If this dweeb was carrying someone, that carry ends too — otherwise the victim stays
+    // grabbedBy an inactive holder forever: no agency, no escape clock, a ghost.
+    for (const other of this.dweebs) {
+      if (other && other.grabbedBy === d.id) {
+        other.grabbedBy = 0;
+        other.escapeTimer = 0;
+      }
+    }
     d.held = 0;
     d.heldKind = '';
     d.grabbedBy = 0;
@@ -225,6 +234,8 @@ export class Sim {
     d.charge = 0;
     d.swimFlail = 0;
     d.ragdolling = false;
+    d.ragdollTimer = 0;
+    d.techBuffer = 0;
     d.physics?.setGravityScale(d.id, 0);
     this.physics.setPos(d.id, KO_PARK_X, KO_PARK_Y, KO_PARK_Z);
     this.physics.setVel(d.id, 0, 0, 0);
@@ -282,6 +293,9 @@ export class Sim {
       this._carryItems();
       this._tickItemLifetimes();
     }
+    // Carried dweebs stay pinned to their holder (and can wriggle free) in every phase —
+    // a grab that starts during the countdown must not dangle into the round.
+    this.combat.updateHeld(seated, api);
 
     // 6. rules
     this.match.step(seated, api);
@@ -407,6 +421,7 @@ export class Sim {
         id: it.id, key: it.key, pos: [...it.pos], vel: [...it.vel], spin: [...it.spin],
         heldBy: it.heldBy, active: it.active, ttl: it.ttl, thrown: it.thrown,
         trick: it.trick, thrower: it.thrower, fuse: it.fuse, powerup: it.powerup ?? null,
+        aim: it.aim ? { ...it.aim } : null,
       })),
       itemKeys: [...this.itemKeys],
       arena: {
@@ -455,6 +470,7 @@ export class Sim {
 
     this.items = snap.items.map(it => ({
       ...it, pos: [...it.pos], vel: [...it.vel], spin: [...it.spin],
+      aim: it.aim ? { ...it.aim } : null,
       explosive: itemDef(it.key).explosive === true,
     }));
     this.itemKeys = [...(snap.itemKeys ?? [])];

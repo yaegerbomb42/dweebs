@@ -89,6 +89,8 @@ export class SimCombat {
 
     for (const t of dweebs) {
       if (t === attacker || !t.active || t.invuln > 0) continue;
+      // Your own captive is not a target (live releaseAttack parity); anyone else's is.
+      if (t.grabbedBy === attacker.id) continue;
       const dx = t.position[0] - p[0], dz = t.position[2] - p[2];
       const dy = t.position[1] - p[1];
       const dist = Math.hypot(dx, dz);
@@ -131,7 +133,9 @@ export class SimCombat {
       best.grabbedBy = attacker.id;
       best.isCharging = false;
       best.charge = 0;
-      best.escapeTimer = 1.2;
+      // Escape clock: percent makes wriggling harder, floaty types slip out sooner.
+      // Mirrors the live Dweeb.setGrabbed formula; updateHeld() below reads it.
+      best.escapeTimer = (1.4 + best.percent * 0.008) * best.stats.escape;
       attacker.heldKind = 'dweeb';
       attacker.held = best.id;
       api.emit?.('grab', { a: attacker.id, b: best.id, mag: bestD });
@@ -151,6 +155,44 @@ export class SimCombat {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Per-tick upkeep for a carried dweeb — the headless half of the live
+   * CombatSystem._updateHeld. Pins the victim above the holder's head (so a grab in the
+   * water or mid-air carries them out of it, like the live game), ticks the escape clock,
+   * and on expiry the victim wriggles free: tossed away and up, holder eats a brief
+   * hitstun. A dangling hold (holder out, victim gone) is released instead of kept.
+   * Deterministic: no RNG anywhere in here.
+   */
+  updateHeld(dweebs, api) {
+    for (const d of dweebs) {
+      if (!d.active || d.heldKind !== 'dweeb' || !d.held) continue;
+      const t = api.byId?.(d.held);
+      if (!t || !t.active || t.grabbedBy !== d.id) {
+        if (t && t.grabbedBy === d.id) { t.grabbedBy = 0; t.escapeTimer = 0; }
+        d.held = 0;
+        d.heldKind = '';
+        continue;
+      }
+      const p = d.position;
+      const s = d.megaT > 0 ? 1.5 : 1;
+      this.physics.setPos(t.id, p[0], p[1] + 1.15 * s, p[2]);
+      this.physics.setVel(t.id, 0, 0, 0);
+      t.yaw = d.yaw + Math.PI / 2;
+      t.escapeTimer -= TICK_DT;
+      if (t.escapeTimer <= 0) {
+        // Wriggled free!
+        const fx = Math.sin(d.yaw), fz = Math.cos(d.yaw);
+        t.grabbedBy = 0;
+        t.escapeTimer = 0;
+        d.held = 0;
+        d.heldKind = '';
+        this.physics.setVel(t.id, -fx * 5, 7, -fz * 5);
+        d.hitstun = Math.max(d.hitstun, 0.35);
+        api.emit?.('escape', { a: t.id, b: d.id });
+      }
+    }
   }
 
   /** Let go of whatever is held, dropping it in place. */
@@ -244,7 +286,7 @@ export class SimCombat {
     }
 
     for (const d of dweebs) {
-      if (!d.active || d.invuln > 0) continue;
+      if (!d.active || d.invuln > 0 || d.grabbedBy) continue;
       const p = d.position;
       if (Math.hypot(p[0] - item.pos[0], p[1] - item.pos[1], p[2] - item.pos[2]) > 0.95) continue;
       const atk = A.thrown(def.heft, item.trick ? 1.4 : Math.min(1.4, speed / 22));
@@ -292,7 +334,7 @@ export class SimCombat {
       if (!d.active || d.diveTimer <= 0) continue;
       const p = d.position, v = d.velocity;
       for (const t of dweebs) {
-        if (t === d || !t.active || t.invuln > 0) continue;
+        if (t === d || !t.active || t.invuln > 0 || t.grabbedBy) continue;
         if (Math.hypot(t.position[0] - p[0], t.position[2] - p[2]) > 1.4) continue;
         const atk = scale(A.dive);
         t.applyHit({ ...atk, dirX: v[0], dirZ: v[2], lift: 0.4, from: d }, api);

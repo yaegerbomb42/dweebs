@@ -71,6 +71,8 @@ export class SimDweeb {
     // Combat / movement state
     this.hitstun = 0;
     this.ragdolling = false;
+    this.ragdollTimer = 0;   // counts down while tumbling; stand up when it lapses (live parity)
+    this.techBuffer = 0;     // dodge pressed while tumbling: techs a landing within the window
     this.invuln = 0;
     this.attackCooldown = 0;
     this.isCharging = false;
@@ -198,6 +200,29 @@ export class SimDweeb {
       if (this.styleTimer <= 0) this.style = 0;
     }
 
+    // The flail clock is not agency: it runs even while grabbed (the live postStep has no
+    // grabbedBy gate either). A frozen flail would make the match rules skip this dweeb's
+    // splash-KO check forever — an immortal dweeb falling out of the world, still "active".
+    if (this.grabbedBy && this.swimFlail > 0) {
+      this.swimFlail -= TICK_DT;
+      if (this.swimFlail <= 0) this.physics.setGravityScale(this.id, 1);
+    }
+
+    // Ragdoll clock (live postStep parity): without this a tumbled dweeb that lands never
+    // stands back up — canAct stays false forever and the bot idles on the floor. A buffered
+    // dodge techs the landing instead, via the existing recover().
+    this.techBuffer = Math.max(0, this.techBuffer - TICK_DT);
+    if (this.ragdolling) {
+      this.ragdollTimer -= TICK_DT;
+      if (this.techBuffer > 0 && this.grounded) {
+        this.techBuffer = 0;
+        this.recover(api);
+      } else if (this.ragdollTimer <= 0 &&
+          (this.grounded || this.ragdollTimer < -KB.ragdollAirMax)) {
+        this._standUp();
+      }
+    }
+
     // Held by someone: no agency at all, and no timers past this point run against us.
     if (this.grabbedBy) { this._write(vx, vy, vz); return; }
 
@@ -211,6 +236,9 @@ export class SimDweeb {
         this.specialFall = true;
       }
     }
+    // Tumble tech: a dodge pressed while ragdolling buffers a tech for the landing window
+    // (the InputFrame contract promises "tech a hard landing while tumbling").
+    else if (dodgeUp && this.ragdolling) this.techBuffer = BALANCE.tech.buffer;
     if (superUp && this.style >= 100) this.superArmed = true;
     if (dropUp && this.held) api.onDrop?.(this);
     // A press is buffered for 0.2 s, so clicking a hair early (still in cooldown or hitstun)
@@ -380,6 +408,9 @@ export class SimDweeb {
     this.hitstun = KB.hitstunBase + KB.hitstunPerLaunch * launch;
     this.ragdolling = launch >= KB.ragdollAt;
     if (this.ragdolling) this.hitstun += KB.ragdollAirMax;
+    // The tumble lasts about as long as the hitstun, like the live startRagdoll(hitstun + 0.2).
+    // A bigger follow-up hit extends it (max), it never shortens it.
+    if (this.ragdolling) this.ragdollTimer = Math.max(this.ragdollTimer, this.hitstun + 0.2);
     this.isCharging = false;
     this.charge = 0;
     this.diBudget = DI.strength * MV.speed;
@@ -403,6 +434,8 @@ export class SimDweeb {
   /** Zero out a launch and stand back up. Used by a tech. */
   recover(api) {
     this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.techBuffer = 0;
     this.hitstun = 0;
     this.diBudget = 0;
     this.specialFall = false;
@@ -413,6 +446,18 @@ export class SimDweeb {
     api?.emit?.('land', { a: this.id, kind: 'tech', mag: 0 });
   }
 
+  /**
+   * The ragdoll clock ran out: stop tumbling and stand. No invuln, no tech credit — the
+   * live recoverFromRagdoll, minus the visuals. (The live adds a short knockdown when the
+   * tech was missed; the sim has no prone state, so it just stands.)
+   */
+  _standUp() {
+    this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.physics.setAngvel(this.id, 0, 0, 0);
+    this.physics.lockRotations(this.id, true);
+  }
+
   /** Put a dweeb back on stage with fresh stocks, at a spawn point the arena chose. */
   respawn(pos) {
     this.out = false;
@@ -420,6 +465,8 @@ export class SimDweeb {
     this.percent = 0;
     this.hitstun = 0;
     this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.techBuffer = 0;
     this.diBudget = 0;
     this.isCharging = false;
     this.charge = 0;
@@ -448,10 +495,13 @@ export class SimDweeb {
     this.percent = 0;
     this.hitstun = 0;
     this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.techBuffer = 0;
     this.held = 0;
     this.heldKind = '';
     this.grabbedBy = 0;
     this.swimFlail = 0;
+    this.flailUsed = false;
     this.isCharging = false;
     this.charge = 0;
     this.physics.setPos(this.id, pos.x, pos.y, pos.z);
@@ -472,6 +522,7 @@ export class SimDweeb {
       // Read by bots; not required by the wire contract.
       canAct: this.canAct, jumpsLeft: this.jumpsLeft, isCharging: this.isCharging,
       charge: this.charge, mega: this.megaT > 0, bubble: this.bubbleT > 0,
+      flail: this.swimFlail > 0, ragdoll: this.ragdolling,
       lastHitBy: this.lastHitBy, botTarget: this.botTarget || 0,
     };
   }
@@ -484,6 +535,7 @@ export class SimDweeb {
       active: this.active, respawnTimer: this.respawnTimer, kos: this.kos, falls: this.falls,
       lastHitBy: this.lastHitBy, lastHitAt: this.lastHitAt, damageDealt: this.damageDealt || 0,
       hitstun: this.hitstun, ragdolling: this.ragdolling, invuln: this.invuln,
+      ragdollTimer: this.ragdollTimer, techBuffer: this.techBuffer,
       attackCooldown: this.attackCooldown, isCharging: this.isCharging, charge: this.charge,
       attackBuffer: this.attackBuffer, throwCharging: this.throwCharging, throwCharge: this.throwCharge,
       swing: this.swing, diveTimer: this.diveTimer, diveCooldown: this.diveCooldown,
