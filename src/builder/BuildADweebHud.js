@@ -210,6 +210,181 @@ const CSS = `
 .bd-btn.icon { padding: 8px 12px; font-size: 15px; }
 .bd-btn:disabled { opacity: 0.35; cursor: default; transform: none !important; }
 
+/* Dojo controls */
+.bd-dojo-row {
+  pointer-events: auto;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.bd-dojo-btn {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 14px;
+  padding: 8px 14px;
+  border: 3px solid #fff8ee;
+  border-radius: 12px;
+  background: #332357;
+  color: #fff8ee;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #14101c;
+  transition: transform 0.08s, filter 0.15s;
+}
+.bd-dojo-btn:hover { transform: translateY(-2px); filter: brightness(1.15); }
+.bd-dojo-btn:active { transform: translateY(2px); }
+.bd-records {
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(20,16,28,0.8);
+  border-radius: 8px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* Build slots */
+.bd-slots { display: flex; gap: 6px; flex-wrap: wrap; }
+.bd-slot-btn {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 11px;
+  background: #332357;
+  color: #fff8ee;
+  border: 2px solid #ffd23f;
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bd-slot-btn:hover { background: #ffd23f; color: #14101c; }
+.bd-slot-btn.empty { opacity: 0.45; border-style: dashed; }
+.bd-slot-save {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 11px;
+  background: #14101c;
+  color: #5ee06a;
+  border: 2px solid #5ee06a;
+  border-radius: 8px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.bd-slot-save:hover { background: #5ee06a; color: #14101c; }
+
+/* Dojo report modal */
+.bd-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 6, 20, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  pointer-events: auto;
+}
+.bd-modal-backdrop.hidden { display: none !important; }
+.bd-modal {
+  background: #1b1030;
+  border: 4px solid #ffd23f;
+  border-radius: 20px;
+  padding: 20px 24px;
+  width: 520px;
+  max-width: calc(100vw - 60px);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  box-shadow: 0 10px 0 #14101c, 0 0 40px rgba(255, 210, 63, 0.25);
+  color: #fff8ee;
+  font-family: 'Nunito', system-ui, sans-serif;
+}
+.bd-modal h2 {
+  font-family: 'Lilita One', sans-serif;
+  color: #ffd23f;
+  margin: 0 0 10px 0;
+  font-size: 24px;
+}
+.bd-modal-close {
+  float: right;
+  font-family: 'Lilita One', sans-serif;
+  font-size: 16px;
+  background: #ff4d5e;
+  color: #fff;
+  border: 2px solid #14101c;
+  border-radius: 10px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.bd-result-banner {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 30px;
+  text-align: center;
+  padding: 8px;
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.bd-result-banner.win { background: #1d5c2a; color: #5ee06a; }
+.bd-result-banner.loss { background: #5c1d1d; color: #ff4d5e; }
+.bd-result-banner.draw { background: #332357; color: #ffd23f; }
+.bd-fight-log {
+  background: #14101c;
+  border: 2px solid #332357;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.bd-vs-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.bd-vs-card {
+  flex: 1;
+  background: #14101c;
+  border: 2px solid #332357;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.bd-vs-card .bd-vs-name { font-family: 'Lilita One', sans-serif; font-size: 15px; color: #ffd23f; }
+.bd-gauntlet-round {
+  display: flex;
+  justify-content: space-between;
+  background: #14101c;
+  border: 2px solid #332357;
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 800;
+}
+.bd-gauntlet-round.won { border-color: #5ee06a; }
+.bd-gauntlet-round.lost { border-color: #ff4d5e; }
+.bd-evo-spark {
+  font-family: monospace;
+  font-size: 13px;
+  background: #14101c;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 8px;
+  letter-spacing: 1px;
+}
+.bd-synergy-tag {
+  font-size: 10px;
+  font-weight: 800;
+  background: #3fa9ff;
+  color: #14101c;
+  border-radius: 6px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+
 .bd-center-action {
   pointer-events: auto;
   display: flex;
@@ -250,6 +425,10 @@ export class BuildADweebHud {
     // CustomEvents so the HUD stays in sync without the app shell wiring anything.
     this._onConfigSync = e => this.syncForm(e.detail?.config);
     this._onHistorySync = e => this._syncHistoryButtons(e.detail || {});
+    this._onDojoReport = e => this._renderDojoReport(e.detail || {});
+    this._onSlotsSync = e => this._renderSlots(e.detail?.slots || {});
+    this._slots = {};
+    this._records = null;
 
     // Undo/redo keyboard shortcuts (skipped while typing in a field).
     this._onKeyDown = e => {
@@ -271,7 +450,14 @@ export class BuildADweebHud {
     ) {
       document.addEventListener('bd-config-sync', this._onConfigSync);
       document.addEventListener('bd-history-sync', this._onHistorySync);
+      document.addEventListener('bd-dojo-report', this._onDojoReport);
+      document.addEventListener('bd-slots-sync', this._onSlotsSync);
       document.addEventListener('keydown', this._onKeyDown);
+      // Pull initial lab state (slots + dojo records) via the event bridge.
+      if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+        document.dispatchEvent(new CustomEvent('bd-slots-request'));
+        document.dispatchEvent(new CustomEvent('bd-dojo-records-request'));
+      }
     }
   }
 
@@ -302,11 +488,195 @@ export class BuildADweebHud {
   requestRedo() { this._askLab('onRedo', 'bd-redo'); }
   requestSoftMutate() { this._askLab('onSoftMutate', 'bd-soft-mutate'); }
 
+  /** Breed the current build with the selected opponent (or a raw config). */
+  requestBreed(partner) {
+    const fn = this.handlers.onBreed;
+    if (typeof fn === 'function') { fn(partner); return; }
+    this._dispatchLabEvent('bd-breed', { partner });
+  }
+
+  /** Guided evolution toward a fight-rating target. */
+  requestEvolve(rounds = 12, target = 80) {
+    const fn = this.handlers.onEvolve;
+    if (typeof fn === 'function') { fn({ rounds, target }); return; }
+    this._dispatchLabEvent('bd-evolve', { rounds, target });
+  }
+
+  /** Simulated dojo spar vs the selected opponent. */
+  requestDojoSpar(opp, bestOf = 3) {
+    const fn = this.handlers.onDojoSpar;
+    if (typeof fn === 'function') { fn(opp, { bestOf }); return; }
+    this._dispatchLabEvent('bd-dojo-spar', { opp, bestOf });
+  }
+
+  /** Simulated dojo gauntlet: 'ladder' or 'endless'. */
+  requestDojoGauntlet(mode = 'ladder') {
+    const fn = this.handlers.onDojoGauntlet;
+    if (typeof fn === 'function') { fn(mode); return; }
+    this._dispatchLabEvent('bd-dojo-gauntlet', { mode });
+  }
+
+  requestSlotSave(slot) {
+    const fn = this.handlers.onSlotSave;
+    if (typeof fn === 'function') { fn(slot); return; }
+    this._dispatchLabEvent('bd-slot-save', { slot });
+  }
+
+  requestSlotLoad(slot) {
+    const fn = this.handlers.onSlotLoad;
+    if (typeof fn === 'function') { fn(slot); return; }
+    this._dispatchLabEvent('bd-slot-load', { slot });
+  }
+
+  _dispatchLabEvent(name, detail) {
+    if (
+      typeof document !== 'undefined'
+      && typeof document.dispatchEvent === 'function'
+      && typeof CustomEvent === 'function'
+    ) {
+      document.dispatchEvent(new CustomEvent(name, { detail }));
+    }
+  }
+
   _syncHistoryButtons({ canUndo, canRedo }) {
     const undo = this.root?.querySelector('#bd-btn-undo');
     const redo = this.root?.querySelector('#bd-btn-redo');
     if (undo) undo.disabled = !canUndo;
     if (redo) redo.disabled = !canRedo;
+  }
+
+  /** Render build-slot buttons from the lab's slot state. */
+  _renderSlots(slots = {}) {
+    this._slots = slots || {};
+    const el = this.root?.querySelector('#bd-slots');
+    if (!el) return;
+    el.querySelectorAll('[data-slot]').forEach(btn => {
+      const i = btn.dataset.slot;
+      const s = this._slots[i];
+      btn.classList.toggle('empty', !s);
+      btn.textContent = s ? `SLOT ${i}: ${(s.name || 'Saved').toUpperCase().slice(0, 14)}` : `SLOT ${i}: EMPTY`;
+      btn.title = s ? `Load "${s.name}" (saved ${s.savedAt ? new Date(s.savedAt).toLocaleDateString() : 'earlier'})` : `Slot ${i} is empty — hit 💾${i} to save here`;
+    });
+  }
+
+  /** Render the dojo records strip. */
+  _renderRecords(r = {}) {
+    this._records = r;
+    const el = this.root?.querySelector('#bd-dojo-records');
+    if (!el) return;
+    el.textContent =
+      `🥋 SPAR ${r.sparWins ?? 0}-${r.sparLosses ?? 0}-${r.sparDraws ?? 0}` +
+      ` · 🏆 LADDER BEST ${r.bestLadder ?? 0}/6${(r.ladderClears ?? 0) > 0 ? ` (${r.ladderClears}👑)` : ''}` +
+      ` · ∞ BEST ${r.bestEndless ?? 0}`;
+  }
+
+  _showDojoModal(html) {
+    const body = this.root?.querySelector('#bd-dojo-body');
+    const modal = this.root?.querySelector('#bd-dojo-modal');
+    if (!body || !modal) return;
+    body.innerHTML = html;
+    modal.classList.remove('hidden');
+  }
+
+  _hideDojoModal() {
+    this.root?.querySelector('#bd-dojo-modal')?.classList.add('hidden');
+  }
+
+  _esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /** Handle lab reports: spar / gauntlet / breed / evolve / records. */
+  _renderDojoReport(detail = {}) {
+    if (detail.records) this._renderRecords(detail.records);
+    const kind = detail.kind;
+    if (kind === 'records') return; // records strip updated above
+    if (kind === 'spar') return this._showDojoModal(this._sparHtml(detail));
+    if (kind === 'gauntlet') return this._showDojoModal(this._gauntletHtml(detail));
+    if (kind === 'breed') return this._showDojoModal(this._breedHtml(detail));
+    if (kind === 'evolve') return this._showDojoModal(this._evolveHtml(detail));
+  }
+
+  _vsCard(snap, align = 'left') {
+    const syn = (snap.synergies || []).map(t => `<div>✨ ${this._esc(t)}</div>`).join('');
+    return `<div class="bd-vs-card" style="text-align:${align}">
+      <div class="bd-vs-name">${this._esc(snap.name)}</div>
+      <div>RATING ${snap.rating} · TIER ${snap.tier}</div>${syn}
+    </div>`;
+  }
+
+  _sparHtml({ player, opponent, bout }) {
+    const cls = bout.winner === 0 ? 'win' : bout.winner === 1 ? 'loss' : 'draw';
+    const title = bout.winner === 0 ? '🏆 YOU WIN THE SPAR' : bout.winner === 1 ? '💀 SPAR LOST' : '🤝 DRAW';
+    const lastDuel = bout.duels[bout.duels.length - 1];
+    const logLines = (lastDuel?.log || []).slice(-10).map(l => `<div>▸ ${this._esc(l)}</div>`).join('');
+    return `
+      <h2>🥋 DOJO SPAR <span style="font-size:13px; opacity:0.7;">(simulated bout)</span></h2>
+      <div class="bd-result-banner ${cls}">${title} — ${bout.winsA} : ${bout.winsB}${bout.draws ? ` (${bout.draws} draw${bout.draws > 1 ? 's' : ''})` : ''}</div>
+      <div class="bd-vs-row">
+        ${this._vsCard(player)}
+        <div style="font-family:'Lilita One',sans-serif; font-size:20px;">VS</div>
+        ${this._vsCard(opponent, 'right')}
+      </div>
+      <div style="font-size:12px; font-weight:800; opacity:0.85;">
+        AVG ROUNDS ${bout.avgRounds} · DMG DEALT ${bout.totalDmgA} · DMG TAKEN ${bout.totalDmgB}
+      </div>
+      <div class="bd-fight-log">${logLines || '<div>No highlights logged.</div>'}</div>
+      <div style="font-size:11px; opacity:0.6; margin-top:8px;">Simulated — the live arena (SEND TO ARENA) runs the real physics fight.</div>
+    `;
+  }
+
+  _gauntletHtml({ mode, rounds, cleared, total, champion, records }) {
+    const endless = mode === 'endless';
+    const bannerCls = (endless ? cleared > 0 : champion) ? 'win' : (cleared > 0 ? 'draw' : 'loss');
+    const banner = endless
+      ? (cleared > 0 ? `🔥 ${cleared} ROUNDS CLEARED` : '💀 KNOCKED OUT')
+      : (champion ? '👑 GAUNTLET CHAMPION!' : `🛡️ CLEARED ${cleared}/${total}`);
+    const rows = rounds.map(r => {
+      const label = endless ? `R${r.round} — ${this._esc(r.opponent)} (×${r.scale})` : `${this._esc(r.tier)} — ${this._esc(r.opponent)}`;
+      const score = r.bout ? `${r.bout.winsA}:${r.bout.winsB}` : `${r.duel.winner === 0 ? 'W' : 'L'} · ${r.duel.rounds}r`;
+      return `<div class="bd-gauntlet-round ${r.won ? 'won' : 'lost'}"><span>${label}</span><span>${r.won ? '✅' : '❌'} ${score}</span></div>`;
+    }).join('');
+    return `
+      <h2>${endless ? '∞ ENDLESS GAUNTLET' : '🏆 DOJO GAUNTLET'} <span style="font-size:13px; opacity:0.7;">(simulated)</span></h2>
+      <div class="bd-result-banner ${bannerCls}">${banner}</div>
+      ${rows}
+      <div style="font-size:12px; font-weight:800; margin-top:8px; opacity:0.85;">
+        BEST LADDER ${records?.bestLadder ?? 0}/6 · BEST ENDLESS ${records?.bestEndless ?? 0} · 👑 ${records?.ladderClears ?? 0}
+      </div>
+    `;
+  }
+
+  _breedHtml({ parentA, partnerName, ratingBefore, ratingAfter }) {
+    const delta = ratingAfter - ratingBefore;
+    const cls = delta >= 0 ? 'win' : 'loss';
+    return `
+      <h2>🧬 BREEDING COMPLETE</h2>
+      <div class="bd-result-banner ${cls}">${this._esc(parentA)}</div>
+      <div style="font-size:13px; font-weight:800;">
+        ${this._esc(partnerName)} × your build → child<br>
+        FIGHT RATING ${ratingBefore} → ${ratingAfter} (${delta >= 0 ? '+' : ''}${delta})
+      </div>
+      <div style="font-size:11px; opacity:0.6; margin-top:8px;">Genes blended 50/50 with a small jitter. Undo (⟲) restores the parent.</div>
+    `;
+  }
+
+  _evolveHtml({ ratingBefore, ratingAfter, roundsRun, history }) {
+    const delta = ratingAfter - ratingBefore;
+    const spark = (history || []).map(h => {
+      const bars = '▁▂▃▄▅▆▇█';
+      const idx = Math.max(0, Math.min(7, Math.floor(h.rating / 100 * 8)));
+      return bars[idx];
+    }).join('');
+    return `
+      <h2>🧬 EVOLUTION COMPLETE</h2>
+      <div class="bd-result-banner ${delta >= 0 ? 'win' : 'loss'}">
+        RATING ${ratingBefore} → ${ratingAfter} (${delta >= 0 ? '+' : ''}${delta})
+      </div>
+      <div style="font-size:13px; font-weight:800;">${roundsRun} evolution rounds · hill-climb kept the best build seen</div>
+      <div class="bd-evo-spark" title="Rating per round">${this._esc(spark)}</div>
+      <div style="font-size:11px; opacity:0.6; margin-top:8px;">Undo (⟲) restores the pre-evolution build.</div>
+    `;
   }
 
   /** Render the glanceable battle-profile telemetry from a build config. */
@@ -329,7 +699,8 @@ export class BuildADweebHud {
     const dnaEl = $('#bd-prof-dna');
     if (dnaEl) {
       const tags = [p.stance, p.aim, p.agility, p.scavenge];
-      dnaEl.innerHTML = tags.map(t => `<span class="bd-dna-tag">${t}</span>`).join('');
+      const synergyTags = (p.synergies || []).map(s => `<span class="bd-synergy-tag">${s}</span>`);
+      dnaEl.innerHTML = tags.map(t => `<span class="bd-dna-tag">${t}</span>`).join('') + synergyTags.join('');
     }
   }
 
@@ -352,15 +723,16 @@ export class BuildADweebHud {
           <input type="text" class="bd-name-input" id="bd-name" value="Robo-Brawler" maxlength="18">
         </div>
         <div class="bd-presets-row" id="bd-presets-row">
-          <button class="bd-preset-btn" data-preset="titan_chonk" title="Titan Chonk">🦏 TITAN CHONK</button>
-          <button class="bd-preset-btn" data-preset="speed_gremlin" title="Speed Gremlin">⚡ SPEED GREMLIN</button>
-          <button class="bd-preset-btn" data-preset="sniper_bean" title="Sniper Bean">🎯 SNIPER BEAN</button>
-          <button class="bd-preset-btn" data-preset="pugilist_champ" title="Pugilist Champ">🥊 PUGILIST CHAMP</button>
+          ${Object.entries(ARCHETYPE_PRESETS).map(([key, p]) =>
+            `<button class="bd-preset-btn" data-preset="${key}" title="${p.name}">${p.badge}</button>`
+          ).join('')}
         </div>
         <div class="bd-top-actions">
           <button class="bd-btn icon alt" id="bd-btn-undo" title="Undo (Ctrl+Z)" disabled>⟲</button>
           <button class="bd-btn icon alt" id="bd-btn-redo" title="Redo (Ctrl+Shift+Z)" disabled>⟳</button>
           <button class="bd-btn pink" id="bd-btn-soft">🧪 SOFT MUTATE</button>
+          <button class="bd-btn green" id="bd-btn-breed" title="Breed your build with the selected opponent">🧬 BREED</button>
+          <button class="bd-btn alt" id="bd-btn-evolve" title="Evolve toward a higher fight rating">🧬 EVOLVE</button>
           <button class="bd-btn yellow" id="bd-btn-random">🎲 RANDOM MUTANT</button>
           <button class="bd-btn alt" id="bd-btn-exit">◀ DWEEB MALL</button>
         </div>
@@ -434,6 +806,16 @@ export class BuildADweebHud {
               ${FEET_TYPES.map(f => `<button class="bd-seg-btn" data-v="${f}">${f.toUpperCase()}</button>`).join('')}
             </div>
           </div>
+
+          <div class="bd-row">
+            <div class="bd-label">💾 BUILD SLOTS <span style="opacity:0.6; font-weight:400;">click = load · 💾 = save current</span></div>
+            <div class="bd-slots" id="bd-slots">
+              ${[1, 2, 3].map(i => `
+                <button class="bd-slot-btn empty" data-slot="${i}" title="Load slot ${i}">SLOT ${i}: EMPTY</button>
+                <button class="bd-slot-save" data-save-slot="${i}" title="Save current build to slot ${i}">💾${i}</button>
+              `).join('')}
+            </div>
+          </div>
         </div>
 
         <!-- Center: Send to Arena Trigger -->
@@ -451,6 +833,12 @@ export class BuildADweebHud {
           </div>
           <button class="bd-launch-btn" id="bd-btn-launch">⚔️ SEND TO ARENA</button>
           <span style="font-size:12px; font-weight:800; background:rgba(20,16,28,0.8); border-radius:8px; padding:3px 10px;">100% AUTONOMOUS AI BATTLE · ZERO USER INPUT</span>
+          <div class="bd-dojo-row" title="Simulated dojo bouts — instant, no arena load">
+            <button class="bd-dojo-btn" id="bd-btn-dojo-spar">🥋 DOJO SPAR</button>
+            <button class="bd-dojo-btn" id="bd-btn-dojo-ladder">🏆 GAUNTLET</button>
+            <button class="bd-dojo-btn" id="bd-btn-dojo-endless">∞ ENDLESS</button>
+          </div>
+          <span class="bd-records" id="bd-dojo-records">🥋 DOJO RECORDS —</span>
         </div>
 
         <!-- Right Panel: Combat Stats & AI DNA -->
@@ -522,6 +910,13 @@ export class BuildADweebHud {
               ${MOUTH_STYLES.map(m => `<button class="bd-seg-btn" data-v="${m}">${m.toUpperCase()}</button>`).join('')}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="bd-modal-backdrop hidden" id="bd-dojo-modal">
+        <div class="bd-modal">
+          <button class="bd-modal-close" id="bd-dojo-close">✕ CLOSE</button>
+          <div id="bd-dojo-body"></div>
         </div>
       </div>
     `;
@@ -646,6 +1041,38 @@ export class BuildADweebHud {
     // Soft mutate (evolve current build) vs full random mutant
     $('#bd-btn-soft').addEventListener('click', () => this.requestSoftMutate());
 
+    // Breed with the selected opponent, or guided evolution toward a rating target
+    $('#bd-btn-breed').addEventListener('click', () => {
+      const partner = $('#bd-select-opp')?.value || 'random';
+      this.requestBreed(partner);
+    });
+    $('#bd-btn-evolve').addEventListener('click', () => this.requestEvolve(12, 80));
+
+    // Dojo: simulated bouts (instant, no arena load)
+    $('#bd-btn-dojo-spar').addEventListener('click', () => {
+      const opp = $('#bd-select-opp')?.value || 'random';
+      this.requestDojoSpar(opp, 3);
+    });
+    $('#bd-btn-dojo-ladder').addEventListener('click', () => this.requestDojoGauntlet('ladder'));
+    $('#bd-btn-dojo-endless').addEventListener('click', () => this.requestDojoGauntlet('endless'));
+
+    // Build slots
+    const slotsEl = $('#bd-slots');
+    if (slotsEl) {
+      slotsEl.addEventListener('click', e => {
+        const loadBtn = e.target.closest('[data-slot]');
+        const saveBtn = e.target.closest('[data-save-slot]');
+        if (loadBtn) this.requestSlotLoad(Number(loadBtn.dataset.slot));
+        else if (saveBtn) this.requestSlotSave(Number(saveBtn.dataset.saveSlot));
+      });
+    }
+
+    // Dojo modal close
+    $('#bd-dojo-close').addEventListener('click', () => this._hideDojoModal());
+    $('#bd-dojo-modal').addEventListener('click', e => {
+      if (e.target.id === 'bd-dojo-modal') this._hideDojoModal();
+    });
+
     // Random button
     $('#bd-btn-random').addEventListener('click', () => {
       this.handlers.onRandomMutant?.();
@@ -750,6 +1177,8 @@ export class BuildADweebHud {
     if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
       document.removeEventListener('bd-config-sync', this._onConfigSync);
       document.removeEventListener('bd-history-sync', this._onHistorySync);
+      document.removeEventListener('bd-dojo-report', this._onDojoReport);
+      document.removeEventListener('bd-slots-sync', this._onSlotsSync);
       document.removeEventListener('keydown', this._onKeyDown);
     }
     this.root?.remove();

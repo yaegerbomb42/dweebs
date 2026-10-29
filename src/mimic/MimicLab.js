@@ -12,6 +12,9 @@ export const MUTATION_TYPES = [
   { id: 'clumsy', name: 'CLUMSY SLAPSTICK', blurb: 'Stumbles on air, drops the prop on their foot, and squashes flat!' },
   { id: 'substitute', name: 'MAD SCIENTIST', blurb: 'Substituted the item with an explosive barrel or anvil!' },
   { id: 'swarm', name: 'CHAOS SWARM', blurb: 'Multiple Dweebs try to do it simultaneously and yeet each other!' },
+  { id: 'backfire', name: 'BACKFIRE', blurb: 'The prop detonates right in their face. Oops.' },
+  { id: 'slowmo', name: 'SLO-MO SAGE', blurb: 'Attempts the move in dramatic slow motion. Very artsy. Very slow.' },
+  { id: 'prodigy', name: 'PRODIGY', blurb: 'Nails it PERFECTLY on the first try. Show-off!' },
 ];
 
 export class MimicLab {
@@ -201,19 +204,27 @@ export class MimicLab {
     }
   }
 
-  triggerDemonstration(actionName, dweebs) {
+  triggerDemonstration(actionName, dweebs, forceMutationId = null) {
+    // Encore escalation: repeating the same demo back-to-back hypes the
+    // pupils up — impulses scale up to +75% by the 4th consecutive encore.
+    if (actionName === this.lastAction) this.encoreCount = (this.encoreCount || 1) + 1;
+    else this.encoreCount = 1;
     this.lastAction = actionName;
     this.mutationCooldown = 6.0;
+    const boost = 1 + 0.25 * Math.min(3, this.encoreCount - 1);
 
-    // Pick random mutation archetype
-    const mut = MUTATION_TYPES[Math.floor(Math.random() * MUTATION_TYPES.length)];
+    // Pick random mutation archetype (tests can force one deterministically)
+    const mut = forceMutationId
+      ? (MUTATION_TYPES.find(m => m.id === forceMutationId) || MUTATION_TYPES[0])
+      : MUTATION_TYPES[Math.floor(Math.random() * MUTATION_TYPES.length)];
     this.activeMutation = mut;
 
     // Show on Announcer HUD
     const announcer = document.getElementById('announcer');
     if (announcer) {
+      const encoreTag = this.encoreCount > 1 ? ` <small>ENCORE x${this.encoreCount}!</small>` : '';
       announcer.className = 'show trick';
-      announcer.innerHTML = `MIMIC: ${mut.name}!<small>${mut.blurb}</small>`;
+      announcer.innerHTML = `MIMIC: ${mut.name}!<small>${mut.blurb}</small>${encoreTag}`;
     }
 
     // Choose 1 or 2 Dweeb pupils to execute the mutated copycat action
@@ -223,29 +234,57 @@ export class MimicLab {
     const pupil = pupils[Math.floor(Math.random() * pupils.length)];
     if (!pupil.body) return;
 
+    // The rest of the crowd cheers the performer with a little hop.
+    const cheer = () => {
+      for (const p of pupils) {
+        if (p !== pupil && p.body) {
+          p.body.setLinvel({ x: (Math.random() - 0.5) * 2, y: 3.0, z: (Math.random() - 0.5) * 2 }, true);
+        }
+      }
+    };
+
     if (mut.id === 'overachiever') {
       // Wind up and blast upward into the stratosphere!
-      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 8, y: 28.0, z: (Math.random() - 0.5) * 8 }, true);
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 8, y: 28.0 * boost, z: (Math.random() - 0.5) * 8 }, true);
       if (pupil.onBounce) pupil.onBounce();
+      cheer();
     } else if (mut.id === 'clumsy') {
       // Trip, tumble, and ragdoll
       pupil.body.setLinvel({ x: 0, y: 4.0, z: 0 }, true);
       pupil.ragdolling = true;
       pupil.hitstun = 2.5;
+      cheer();
     } else if (mut.id === 'substitute') {
       // Blast forward carrying an explosive
-      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 16, y: 8.0, z: (Math.random() - 0.5) * 16 }, true);
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 16, y: 8.0 * boost, z: (Math.random() - 0.5) * 16 }, true);
+      cheer();
     } else if (mut.id === 'swarm') {
       // Launch all pupils in a comedic fountain burst!
       for (const p of pupils) {
         if (p.body) {
           p.body.setLinvel({
             x: (Math.random() - 0.5) * 12,
-            y: 16 + Math.random() * 8,
+            y: (16 + Math.random() * 8) * boost,
             z: (Math.random() - 0.5) * 12,
           }, true);
         }
       }
+    } else if (mut.id === 'backfire') {
+      // Prop detonates in their face: launched, ragdolled, dazed.
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 6, y: 14.0 * boost, z: (Math.random() - 0.5) * 6 }, true);
+      pupil.ragdolling = true;
+      pupil.hitstun = 2.0;
+      cheer();
+    } else if (mut.id === 'slowmo') {
+      // Dramatic slow-motion attempt: gentle float, maximum gravitas.
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 2, y: 6.0, z: (Math.random() - 0.5) * 2 }, true);
+      pupil.slowmoT = 3.0;
+      cheer();
+    } else if (mut.id === 'prodigy') {
+      // Nails it perfectly: clean vertical pop with a victory bounce.
+      pupil.body.setLinvel({ x: 0, y: 12.0 * boost, z: 0 }, true);
+      if (pupil.onBounce) pupil.onBounce();
+      cheer();
     }
   }
 

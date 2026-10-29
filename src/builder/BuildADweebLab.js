@@ -16,22 +16,51 @@ import {
   FEET_TYPES,
   BROW_STYLES,
   MOUTH_STYLES,
+  randomizeConfig,
+  breedConfigs,
+  evolveBuild,
+  computeBattleProfile,
 } from './CustomDweebModel.js';
+import {
+  createRng,
+  simulateBout,
+  runGauntlet,
+  runEndlessGauntlet,
+  dojoSparOpponent,
+  buildSnapshot,
+} from './BattleSim.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
+const SLOTS_KEY = 'dweebs-build-slots-v1';
+const DOJO_RECORDS_KEY = 'dweebs-dojo-records-v1';
+const MAX_SLOTS = 3;
 
 /**
  * HUD <-> Lab event protocol (keeps the lab self-wiring: the app shell only
  * passes the original handler set, so the HUD talks to the lab over document
  * CustomEvents and the lab answers back the same way).
  *   HUD -> Lab : 'bd-undo' | 'bd-redo' | 'bd-soft-mutate'
+ *              | 'bd-breed' { partner } | 'bd-evolve' { rounds, target }
+ *              | 'bd-dojo-spar' { opp, seed, bestOf } | 'bd-dojo-gauntlet' { mode, seed }
+ *              | 'bd-slot-save' { slot } | 'bd-slot-load' { slot }
  *   Lab -> HUD : 'bd-config-sync' { config } | 'bd-history-sync' { canUndo, canRedo }
+ *              | 'bd-dojo-report' { kind, ... } | 'bd-slots-sync' { slots }
  */
 const EVT_UNDO = 'bd-undo';
 const EVT_REDO = 'bd-redo';
 const EVT_SOFT_MUTATE = 'bd-soft-mutate';
+const EVT_BREED = 'bd-breed';
+const EVT_EVOLVE = 'bd-evolve';
+const EVT_DOJO_SPAR = 'bd-dojo-spar';
+const EVT_DOJO_GAUNTLET = 'bd-dojo-gauntlet';
+const EVT_SLOT_SAVE = 'bd-slot-save';
+const EVT_SLOT_LOAD = 'bd-slot-load';
 const EVT_CONFIG_SYNC = 'bd-config-sync';
 const EVT_HISTORY_SYNC = 'bd-history-sync';
+const EVT_DOJO_REPORT = 'bd-dojo-report';
+const EVT_SLOTS_SYNC = 'bd-slots-sync';
+const EVT_SLOTS_REQ = 'bd-slots-request';
+const EVT_DOJO_RECORDS_REQ = 'bd-dojo-records-request';
 
 function deepClone(obj) {
   if (typeof structuredClone === 'function') return structuredClone(obj);
@@ -92,10 +121,26 @@ export class BuildADweebLab {
     this._onUndoReq = () => this.undo();
     this._onRedoReq = () => this.redo();
     this._onSoftMutateReq = () => this.softMutate();
+    this._onBreedReq = e => this.breedWithPartner(e?.detail?.partner);
+    this._onEvolveReq = e => this.evolve(e?.detail || {});
+    this._onDojoSparReq = e => this.dojoSpar(e?.detail?.opp, e?.detail || {});
+    this._onDojoGauntletReq = e => this.dojoGauntlet(e?.detail?.mode, e?.detail || {});
+    this._onSlotSaveReq = e => this.saveSlot(e?.detail?.slot);
+    this._onSlotLoadReq = e => this.loadSlot(e?.detail?.slot);
+    this._onSlotsReq = () => this._emit(EVT_SLOTS_SYNC, { slots: this.getSlots() });
+    this._onDojoRecordsReq = () => this._emit(EVT_DOJO_REPORT, { kind: 'records', records: this.getDojoRecords() });
     if (docEventsAvailable()) {
       document.addEventListener(EVT_UNDO, this._onUndoReq);
       document.addEventListener(EVT_REDO, this._onRedoReq);
       document.addEventListener(EVT_SOFT_MUTATE, this._onSoftMutateReq);
+      document.addEventListener(EVT_BREED, this._onBreedReq);
+      document.addEventListener(EVT_EVOLVE, this._onEvolveReq);
+      document.addEventListener(EVT_DOJO_SPAR, this._onDojoSparReq);
+      document.addEventListener(EVT_DOJO_GAUNTLET, this._onDojoGauntletReq);
+      document.addEventListener(EVT_SLOT_SAVE, this._onSlotSaveReq);
+      document.addEventListener(EVT_SLOT_LOAD, this._onSlotLoadReq);
+      document.addEventListener(EVT_SLOTS_REQ, this._onSlotsReq);
+      document.addEventListener(EVT_DOJO_RECORDS_REQ, this._onDojoRecordsReq);
     }
   }
 
@@ -186,6 +231,51 @@ export class BuildADweebLab {
     const fill = new THREE.AmbientLight(0xfff5ea, 1.4);
     this.lights.add(spot, rim, fill);
     this.group.add(this.lights);
+
+    // 2. Lab atmosphere: drifting dust motes in the spotlight cone.
+    const DUST_N = 90;
+    const dustPos = new Float32Array(DUST_N * 3);
+    this._dustSpeed = new Float32Array(DUST_N);
+    for (let i = 0; i < DUST_N; i++) {
+      const r = Math.sqrt(Math.random()) * 2.6;
+      const a = Math.random() * Math.PI * 2;
+      dustPos[i * 3] = Math.cos(a) * r;
+      dustPos[i * 3 + 1] = Math.random() * 3.2;
+      dustPos[i * 3 + 2] = Math.sin(a) * r;
+      this._dustSpeed[i] = 0.08 + Math.random() * 0.22;
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    this._dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+      color: 0xffe9a3, size: 0.035, transparent: true, opacity: 0.65,
+      depthWrite: false,
+    }));
+    noOutline(this._dust);
+    this.group.add(this._dust);
+
+    // 3. Hologram ring: slow-spinning accent ring under the pedestal.
+    const holoGeo = new THREE.TorusGeometry(2.05, 0.025, 8, 48);
+    this._holo = new THREE.Mesh(holoGeo, new THREE.MeshBasicMaterial({
+      color: 0x3fa9ff, transparent: true, opacity: 0.5,
+    }));
+    this._holo.rotation.x = Math.PI / 2;
+    this._holo.position.set(0, -0.26, 0);
+    noOutline(this._holo);
+    this.group.add(this._holo);
+
+    // 4. Mutation scan beam: a translucent plane that sweeps upward over the
+    // model on every discrete rebuild (presets / mutations / breed / evolve).
+    this._scanT = 0; // 1 -> 0 sweep progress
+    this._scan = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.6, 2.6),
+      new THREE.MeshBasicMaterial({
+        color: 0x7df9ff, transparent: true, opacity: 0,
+        side: THREE.DoubleSide, depthWrite: false,
+      })
+    );
+    this._scan.rotation.x = -Math.PI / 2; // horizontal sweep plane
+    noOutline(this._scan);
+    this.group.add(this._scan);
   }
 
   /**
@@ -207,9 +297,10 @@ export class BuildADweebLab {
     this.group.add(this.currentModelRoot);
 
     if (juice) {
-      // Juice: spawn-pop + rim flash so mutations feel impactful.
+      // Juice: spawn-pop + rim flash + scan-beam sweep so mutations feel impactful.
       this._popT = 0;
       this._flashT = 1;
+      this._scanT = 1;
     }
   }
 
@@ -254,46 +345,9 @@ export class BuildADweebLab {
     return this.config;
   }
 
-  mutateRandom() {
+  mutateRandom(rng = Math.random) {
     this._recordChange(true);
-    const randomHex = () => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
-    const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-    const randRange = (min, max) => Number((min + Math.random() * (max - min)).toFixed(2));
-
-    const titles = ['Mecha', 'Giga', 'Hyper', 'Turbo', 'Shadow', 'Cosmic', 'Pixel', 'Savage', 'Bouncy', 'Dr.'];
-    const names = ['Goblin', 'Brawler', 'Pugilist', 'Titan', 'Gremlin', 'Crusher', 'Slugger', 'Menace', 'Bean'];
-
-    const newConfig = {
-      name: `${pick(titles)} ${pick(names)}`,
-      shape: pick(BODY_SHAPES),
-      width: randRange(0.6, 1.6),
-      height: randRange(0.6, 1.5),
-      depth: randRange(0.7, 1.4),
-      primaryColor: randomHex(),
-      accentColor: randomHex(),
-      eyeColor: '#14101c',
-      eyeCount: pick([1, 2, 2, 2, 3, 4]),
-      eyeSize: randRange(0.6, 1.5),
-      eyeSpacing: randRange(0.7, 1.4),
-      brows: pick(BROW_STYLES),
-      mouth: pick(MOUTH_STYLES),
-      appendage: pick(APPENDAGES),
-      feet: pick(FEET_TYPES),
-      stats: {
-        speed: randRange(0.7, 1.3),
-        mass: randRange(2.0, 4.2),
-        jump: randRange(0.8, 1.3),
-        armor: randRange(0.8, 1.2),
-      },
-      dna: {
-        confidence: randRange(0.2, 1.0),
-        aimAccuracy: randRange(0.2, 0.95),
-        scavenge: randRange(0.1, 0.9),
-        agility: randRange(0.4, 0.95),
-      },
-    };
-
-    this.config = newConfig;
+    this.config = randomizeConfig(rng);
     this.rebuildModel();
     this.saveConfig();
     this._emitConfig();
@@ -357,6 +411,172 @@ export class BuildADweebLab {
     return this.config;
   }
 
+  /**
+   * Breed the current build with a partner (opponent-select key or a raw
+   * config). The child blends both parents' genes. Recorded as one undo step.
+   */
+  breedWithPartner(partnerKey = 'random', rng = Math.random) {
+    const partner = (partnerKey && typeof partnerKey === 'object')
+      ? partnerKey
+      : dojoSparOpponent(partnerKey, this.config, rng);
+    const before = computeBattleProfile(this.config).rating;
+    this._recordChange(true);
+    this.config = breedConfigs(this.config, partner, rng);
+    const after = computeBattleProfile(this.config).rating;
+    this.rebuildModel();
+    this.saveConfig();
+    this._emitConfig();
+    this._emit(EVT_DOJO_REPORT, {
+      kind: 'breed',
+      parentA: this.config.name,
+      partnerName: partner.name || 'Partner',
+      ratingBefore: before,
+      ratingAfter: after,
+      records: this.getDojoRecords(),
+    });
+    return this.config;
+  }
+
+  /**
+   * Guided evolution: hill-climb the current build toward a fight-rating
+   * target. Recorded as one undo step.
+   */
+  evolve({ rounds = 12, target = 80, rng = Math.random } = {}) {
+    const before = computeBattleProfile(this.config).rating;
+    this._recordChange(true);
+    const result = evolveBuild(this.config, { rounds, target, rng });
+    this.config = result.config;
+    this.rebuildModel();
+    this.saveConfig();
+    this._emitConfig();
+    this._emit(EVT_DOJO_REPORT, {
+      kind: 'evolve',
+      ratingBefore: before,
+      ratingAfter: result.rating,
+      roundsRun: result.roundsRun,
+      history: result.history,
+      records: this.getDojoRecords(),
+    });
+    return result;
+  }
+
+  // ─── Dojo (simulated bouts) ──────────────────────────────────────────────
+
+  _seededRng(seed) {
+    return seed === undefined || seed === null || seed === '' ? Math.random : createRng(Number(seed));
+  }
+
+  _recordSparOutcome(bout) {
+    const rec = this.getDojoRecords();
+    rec.sparWins += bout.winsA;
+    rec.sparLosses += bout.winsB;
+    rec.sparDraws += bout.draws;
+    this._saveDojoRecords(rec);
+    return rec;
+  }
+
+  /** Simulated best-of-N spar vs an opponent key from the HUD picker. */
+  dojoSpar(oppKey = 'random', { seed = null, bestOf = 3 } = {}) {
+    const rng = this._seededRng(seed);
+    const opp = dojoSparOpponent(oppKey, this.config, rng);
+    const bout = simulateBout(this.config, opp, { bestOf, rng });
+    const records = this._recordSparOutcome(bout);
+    this._emit(EVT_DOJO_REPORT, {
+      kind: 'spar',
+      oppKey,
+      player: buildSnapshot(this.config),
+      opponent: buildSnapshot(opp),
+      bout,
+      records,
+    });
+    return { opp, bout, records };
+  }
+
+  /** Simulated gauntlet: 'ladder' (6 tiers) or 'endless' (scaling mutants). */
+  dojoGauntlet(mode = 'ladder', { seed = null, maxRounds = 25 } = {}) {
+    const rng = this._seededRng(seed);
+    const rec = this.getDojoRecords();
+    let result;
+    if (mode === 'endless') {
+      result = runEndlessGauntlet(this.config, { rng, maxRounds });
+      rec.bestEndless = Math.max(rec.bestEndless, result.cleared);
+    } else {
+      result = runGauntlet(this.config, { rng });
+      rec.bestLadder = Math.max(rec.bestLadder, result.cleared);
+      if (result.champion) rec.ladderClears += 1;
+    }
+    this._saveDojoRecords(rec);
+    this._emit(EVT_DOJO_REPORT, { kind: 'gauntlet', mode, ...result, records: rec });
+    return { ...result, records: rec };
+  }
+
+  getDojoRecords() {
+    const fallback = { sparWins: 0, sparLosses: 0, sparDraws: 0, bestLadder: 0, bestEndless: 0, ladderClears: 0 };
+    try {
+      const raw = localStorage.getItem(DOJO_RECORDS_KEY);
+      if (raw) return { ...fallback, ...JSON.parse(raw) };
+    } catch { /* private mode */ }
+    return fallback;
+  }
+
+  _saveDojoRecords(rec) {
+    try {
+      localStorage.setItem(DOJO_RECORDS_KEY, JSON.stringify(rec));
+    } catch { /* private mode */ }
+  }
+
+  // ─── Build slots ─────────────────────────────────────────────────────────
+
+  getSlots() {
+    const slots = {};
+    try {
+      const raw = localStorage.getItem(SLOTS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (let i = 1; i <= MAX_SLOTS; i++) {
+          if (parsed[i]?.config) slots[i] = { name: parsed[i].name || 'Saved build', savedAt: parsed[i].savedAt || 0 };
+        }
+      }
+    } catch { /* private mode */ }
+    return slots;
+  }
+
+  _readSlotsRaw() {
+    try {
+      const raw = localStorage.getItem(SLOTS_KEY);
+      if (raw) return JSON.parse(raw) || {};
+    } catch { /* private mode */ }
+    return {};
+  }
+
+  saveSlot(slot) {
+    const i = Number(slot);
+    if (!Number.isInteger(i) || i < 1 || i > MAX_SLOTS) return null;
+    const all = this._readSlotsRaw();
+    all[i] = { name: this.config.name || 'Saved build', savedAt: Date.now(), config: deepClone(this.config) };
+    try { localStorage.setItem(SLOTS_KEY, JSON.stringify(all)); } catch { /* private mode */ }
+    this._emit(EVT_SLOTS_SYNC, { slots: this.getSlots() });
+    return all[i];
+  }
+
+  loadSlot(slot) {
+    const i = Number(slot);
+    if (!Number.isInteger(i) || i < 1 || i > MAX_SLOTS) return null;
+    const entry = this._readSlotsRaw()[i];
+    if (!entry?.config) return null;
+    this._recordChange(true);
+    this.config = {
+      ...deepClone(DEFAULT_BUILD_CONFIG),
+      ...deepClone(entry.config),
+      stats: { ...DEFAULT_BUILD_CONFIG.stats, ...(entry.config.stats || {}) },
+      dna: { ...DEFAULT_BUILD_CONFIG.dna, ...(entry.config.dna || {}) },
+    };
+    this.rebuildModel();
+    this.saveConfig();
+    this._emitConfig();
+    return this.config;
+  }
+
   update(dt) {
     this.clock += dt;
     if (this.autoRotate && this.currentModelRoot) {
@@ -377,6 +597,32 @@ export class BuildADweebLab {
     if (this.ring && this._flashT > 0) {
       this._flashT = Math.max(0, this._flashT - dt * 2.2);
       this.ring.material.color.copy(this._ringBaseColor).lerp(this._ringFlashColor, this._flashT);
+    }
+
+    // Scan-beam sweep: plane rises 0 -> 2.6 while fading out.
+    if (this._scan && this._scanT > 0) {
+      this._scanT = Math.max(0, this._scanT - dt * 1.6);
+      const p = 1 - this._scanT;
+      this._scan.position.y = 0.1 + p * 2.5;
+      this._scan.material.opacity = 0.35 * Math.sin(p * Math.PI);
+      this._scan.rotation.z += dt * 1.2;
+    } else if (this._scan) {
+      this._scan.material.opacity = 0;
+    }
+
+    // Dust motes drift upward and wrap; holo ring spins + breathes.
+    if (this._dust) {
+      const pos = this._dust.geometry.attributes.position;
+      for (let i = 0; i < this._dustSpeed.length; i++) {
+        let y = pos.getY(i) + this._dustSpeed[i] * dt;
+        if (y > 3.2) y = 0;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
+    }
+    if (this._holo) {
+      this._holo.rotation.z += dt * 0.5;
+      this._holo.material.opacity = 0.35 + 0.2 * Math.sin(this.clock * 2.2);
     }
 
     if (this.modelInstance) {
@@ -412,6 +658,14 @@ export class BuildADweebLab {
       document.removeEventListener(EVT_UNDO, this._onUndoReq);
       document.removeEventListener(EVT_REDO, this._onRedoReq);
       document.removeEventListener(EVT_SOFT_MUTATE, this._onSoftMutateReq);
+      document.removeEventListener(EVT_BREED, this._onBreedReq);
+      document.removeEventListener(EVT_EVOLVE, this._onEvolveReq);
+      document.removeEventListener(EVT_DOJO_SPAR, this._onDojoSparReq);
+      document.removeEventListener(EVT_DOJO_GAUNTLET, this._onDojoGauntletReq);
+      document.removeEventListener(EVT_SLOT_SAVE, this._onSlotSaveReq);
+      document.removeEventListener(EVT_SLOT_LOAD, this._onSlotLoadReq);
+      document.removeEventListener(EVT_SLOTS_REQ, this._onSlotsReq);
+      document.removeEventListener(EVT_DOJO_RECORDS_REQ, this._onDojoRecordsReq);
     }
     // Free all GPU buffers held by the stage + model.
     disposeObjectTree(this.group);
