@@ -61,6 +61,15 @@ describe('warfare lobby (unit)', () => {
     expect(sanitizeCmd({ type: 'rally', x: 'NaN', z: 1 }, 'red')).toBeNull();
     expect(sanitizeCmd({ type: 'rally', x: 3.14159, z: -2 }, 'red')).toEqual({ type: 'rally', team: 'red', x: 3.14, z: -2 });
     expect(sanitizeCmd({ type: 'nuke' }, 'red')).toBeNull();
+    // W5: commander powers must survive the allowlist or they fizzle online (the
+    // client burns the local cooldown when the button is pressed).
+    expect(sanitizeCmd({ type: 'artillery', team: 'blue', x: 12.345, z: -3.1 }, 'red'))
+      .toEqual({ type: 'artillery', team: 'red', x: 12.35, z: -3.1 });
+    expect(sanitizeCmd({ type: 'artillery', x: 'NaN', z: 1 }, 'red')).toBeNull();
+    expect(sanitizeCmd({ type: 'supply', team: 'blue' }, 'red')).toEqual({ type: 'supply', team: 'red' });
+    expect(sanitizeCmd({ type: 'stance', team: 'blue', stance: 'defense' }, 'red'))
+      .toEqual({ type: 'stance', team: 'red', stance: 'defense' });
+    expect(sanitizeCmd({ type: 'stance', stance: 'nuke' }, 'red')).toBeNull();
   });
 
   it('pairs by mode, by code, and a finished player does not trigger peerLeft', () => {
@@ -103,7 +112,7 @@ describe('warfare online (real server)', () => {
 
     // b lies about its team: the server must rewrite it to red
     a.send({ wf: 'cmd', cmds: [{ type: 'recruit', team: 'blue', unit: 'rocket' }] });
-    b.send({ wf: 'cmd', cmds: [{ type: 'recruit', team: 'blue', unit: 'shield' }, { type: 'rally', team: 'blue', x: 5, z: 2 }] });
+    b.send({ wf: 'cmd', cmds: [{ type: 'recruit', team: 'blue', unit: 'shield' }, { type: 'rally', team: 'blue', x: 5, z: 2 }, { type: 'artillery', team: 'blue', x: 12.345, z: -3.1 }, { type: 'supply', team: 'blue' }, { type: 'stance', team: 'blue', stance: 'defense' }] });
     await wait(600);
     a.send({ wf: 'cmd', cmds: [{ type: 'startWave' }] });
     await wait(500);
@@ -116,6 +125,11 @@ describe('warfare online (real server)', () => {
     expect(all.find(c => c.unit === 'shield').team).toBe('red');
     expect(all.find(c => c.type === 'rally').team).toBe('red');
     expect(all.find(c => c.unit === 'rocket').team).toBe('blue');
+    // commander powers relay with the team forced and coordinates rounded
+    const art = all.find(c => c.type === 'artillery');
+    expect(art).toMatchObject({ team: 'red', x: 12.35, z: -3.1 });
+    expect(all.find(c => c.type === 'supply')).toMatchObject({ team: 'red' });
+    expect(all.find(c => c.type === 'stance')).toMatchObject({ team: 'red', stance: 'defense' });
     for (let i = 0; i < n; i++) {
       expect(turnsA[i].n).toBe(i);
       expect(turnsB[i]).toEqual(turnsA[i]);

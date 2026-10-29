@@ -30,6 +30,20 @@ export function sanitizeCmd(c, team) {
   }
   if (c.type === 'recruit') return RECRUITABLE.has(c.unit) ? { type: 'recruit', team, unit: c.unit } : null;
   if (c.type === 'startWave') return { type: 'startWave', team };
+  // Commander powers (Q/E/R): the client burns the local cooldown when the button is
+  // pressed, so a dropped command is a power that fizzles online but works offline.
+  // Artillery carries an aim point like rally (rounded the same way, so both sims see
+  // identical floats); supply needs no coordinates (the sim heals around the rally
+  // point); stance is allowlisted to the two real formations.
+  if (c.type === 'artillery') {
+    const x = Number(c.x), z = Number(c.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+    return { type: 'artillery', team, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100 };
+  }
+  if (c.type === 'supply') return { type: 'supply', team };
+  if (c.type === 'stance') {
+    return c.stance === 'charge' || c.stance === 'defense' ? { type: 'stance', team, stance: c.stance } : null;
+  }
   return null;
 }
 

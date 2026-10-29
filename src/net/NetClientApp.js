@@ -17,7 +17,7 @@
 
 /* global CustomEvent, localStorage, setTimeout, clearTimeout */
 
-import { PROTOCOL_VERSION, MAX_PLAYERS, RECONNECT_HOLD_MS } from './protocol.js';
+import { PROTOCOL_VERSION, MAX_PLAYERS, RECONNECT_HOLD_MS, ROOM_ALPHABET, isRoomCode } from './protocol.js';
 import { NetClient, defaultUrl } from './NetClient.js';
 import { SimAdapter } from '../sim/simAdapter.js';
 
@@ -142,16 +142,21 @@ export class NetClientApp {
   /** Join a friend's room by its code. */
   async joinRoom(code, profile = {}) {
     const wanted = String(code || '').toUpperCase();
-    if (!/^[A-Z0-9]{4}$/.test(wanted)) throw err('ROOM_NOT_FOUND', 'Room not found');
+    // The server only accepts the protocol's alphabet (letters, no I/L/O, no
+    // digits): validate with isRoomCode, not a looser regex, so a code the app
+    // accepts is a code the server will take.
+    if (!isRoomCode(wanted)) throw err('ROOM_NOT_FOUND', 'Room not found');
     return this._joinOnce('join', wanted, profile);
   }
   /** PLAY NOW: the server picks the room, never the player. */
   async quickPlay(profile = {}) { return this._joinOnce('quick', '', profile); }
 
   _newCode() {
-    const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    // Draw from the protocol's room alphabet: the old hand-rolled alphabet included
+    // digits, which the server's isRoomCode rejects — ~70% of app-created rooms
+    // failed to create with a confusing "room not found".
     let s = '';
-    for (let i = 0; i < 4; i++) s += abc[Math.floor(Math.random() * abc.length)];
+    for (let i = 0; i < 4; i++) s += ROOM_ALPHABET[Math.floor(Math.random() * ROOM_ALPHABET.length)];
     return s;
   }
 
