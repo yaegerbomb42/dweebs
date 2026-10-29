@@ -571,3 +571,239 @@
 :root[data-reduced-motion="on"] .hero-icon,
 :root[data-reduced-motion="on"] .hero-main-badge,
 :root[data-reduced-motion="on"] .btn.is-launching::after { animation: none; }
+
+/* ─── Page transitions: every shell screen fades/slides in when shown ───────
+ * Removing .hidden re-triggers the animation, so hub ↔ online ↔ settings
+ * feels like moving between rooms instead of swapping divs. */
+.app-screen:not(.hidden) { animation: screenIn .3s ease both; }
+@keyframes screenIn { from { opacity: 0; transform: translateY(14px) scale(.995); } }
+
+/* ─── Living hub background: slow-drifting sparkles behind everything ─────── */
+#app-title { position: relative; }
+.hub-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.hub-bg i {
+  position: absolute;
+  font-style: normal;
+  font-size: clamp(18px, 3vw, 34px);
+  opacity: .35;
+  animation: blobDrift 12s ease-in-out infinite;
+}
+.hub-bg i:nth-child(1) { left: 6%; top: 12%; animation-delay: 0s; }
+.hub-bg i:nth-child(2) { left: 88%; top: 8%; animation-delay: -3s; }
+.hub-bg i:nth-child(3) { left: 12%; top: 78%; animation-delay: -6s; }
+.hub-bg i:nth-child(4) { left: 82%; top: 72%; animation-delay: -2s; }
+.hub-bg i:nth-child(5) { left: 45%; top: 4%; animation-delay: -8s; }
+.hub-bg i:nth-child(6) { left: 60%; top: 88%; animation-delay: -5s; }
+@keyframes blobDrift {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-26px) rotate(14deg); }
+}
+.hub-container { position: relative; }
+
+/* ─── Profile chip: who you are, which dweeb, which colour ────────────────── */
+.hub-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  background: rgba(27, 16, 48, .55);
+  border: 3px solid var(--ink);
+  border-radius: 99px;
+  padding: 5px 16px 5px 8px;
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--cream);
+  box-shadow: 0 4px 0 var(--ink);
+  animation: hubFade .45s .1s ease both;
+}
+.hub-profile-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--ink);
+  flex: none;
+}
+.hub-profile-text { letter-spacing: .4px; }
+
+/* ─── Hero spotlight: the rotating featured dweeb ─────────────────────────── */
+.hero-spotlight {
+  position: relative;
+  margin-top: 16px;
+  background: rgba(255, 255, 255, .08);
+  border: 3px solid rgba(255, 255, 255, .25);
+  border-radius: 18px;
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.hero-spot-label {
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--yellow);
+  white-space: nowrap;
+}
+.hero-spot-body {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 28px;
+  flex-wrap: wrap;
+}
+.hero-spot-body.hero-spot-swap { animation: spotSwap .45s ease both; }
+@keyframes spotSwap {
+  from { opacity: 0; transform: translateX(16px); }
+}
+.hero-spot-emoji { font-size: 30px; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, .35)); }
+.hero-spot-name {
+  font-family: var(--display);
+  font-size: 20px;
+  color: #fff;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, .35);
+}
+.hero-spot-quip { font-weight: 700; font-size: 14px; color: #d9d1f5; }
+
+/* ─── Section titles shared by the new hub sections ───────────────────────── */
+.hub-section-title {
+  font-family: var(--display);
+  font-size: clamp(20px, 2.6vw, 30px);
+  color: var(--cream);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 5px 0 var(--ink);
+  letter-spacing: 2px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+/* ─── Trophy wall: real stats from the games' own saves ───────────────────── */
+.hub-trophies { width: 100%; animation: hubFade .45s .2s ease both; }
+.hub-trophy-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.hub-trophy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--cream);
+  border: 4px solid var(--ink);
+  border-radius: 20px;
+  box-shadow: 0 6px 0 var(--ink);
+  padding: 12px 8px;
+  animation: cardIn .5s cubic-bezier(.2, 1.3, .4, 1) both;
+  animation-delay: calc(var(--i) * 90ms + 250ms);
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.hub-trophy:hover { transform: translateY(-4px) rotate(-1deg); box-shadow: 0 10px 0 var(--ink); }
+.hub-trophy-icon { font-size: 34px; filter: drop-shadow(0 3px 0 rgba(27, 16, 48, .2)); }
+.hub-trophy-value {
+  font-family: var(--display);
+  font-size: 24px;
+  color: var(--ink);
+  line-height: 1;
+}
+.hub-trophy-label {
+  font-weight: 900;
+  font-size: 11.5px;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+/* ─── Daily challenge: one card, one CTA, straight into the arcade ────────── */
+.hub-daily {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background:
+    radial-gradient(120% 140% at 50% -30%, rgba(255, 210, 63, .28), transparent 55%),
+    linear-gradient(160deg, #3a2a10 0%, #241a0c 70%, #1c1409 100%);
+  border: 4px solid var(--ink);
+  border-radius: 24px;
+  box-shadow: 0 8px 0 var(--ink), 0 20px 50px rgba(0, 0, 0, .4);
+  padding: clamp(16px, 2.6vw, 26px) clamp(18px, 3vw, 32px);
+  color: var(--cream);
+  animation: hubFade .45s .25s ease both;
+}
+.hub-daily-kicker {
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 2.4px;
+  color: var(--yellow);
+}
+.hub-daily-title {
+  font-family: var(--display);
+  font-size: clamp(22px, 3vw, 34px);
+  color: #fff;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, .35);
+  margin: 4px 0;
+}
+.hub-daily-desc { font-weight: 700; font-size: 14.5px; color: #f3e9c8; max-width: 52ch; }
+.hub-daily-cta { flex: none; font-size: 20px; padding: 10px 30px; }
+
+/* ─── What's new: the hub's patch notes ───────────────────────────────────── */
+.hub-news {
+  width: 100%;
+  background: rgba(27, 16, 48, .55);
+  border: 4px solid var(--ink);
+  border-radius: 24px;
+  box-shadow: 0 8px 0 var(--ink);
+  padding: clamp(16px, 2.6vw, 24px) clamp(18px, 3vw, 30px);
+  animation: hubFade .45s .3s ease both;
+}
+.hub-news-list { list-style: none; display: grid; gap: 8px; }
+.hub-news-list li {
+  font-weight: 700;
+  font-size: 14.5px;
+  color: #e8e2ff;
+  padding-left: 26px;
+  position: relative;
+}
+.hub-news-list li::before {
+  content: '✦';
+  position: absolute;
+  left: 2px;
+  color: var(--yellow);
+}
+.hub-news-list strong { color: #fff; }
+
+/* ─── Arcade stat snippets: one honest line per cabinet ───────────────────── */
+.arcade-stat {
+  font-weight: 900;
+  font-size: 11.5px;
+  letter-spacing: .4px;
+  color: #6b5f8f;
+  background: rgba(27, 16, 48, .07);
+  border-radius: 99px;
+  padding: 3px 12px;
+  min-height: 20px;
+}
+.arcade-stat:empty { display: none; }
+
+/* The bigger hub honours reduced motion too (and the Settings toggle). */
+@media (prefers-reduced-motion: reduce) {
+  .app-screen:not(.hidden),
+  .hub-bg i, .hub-profile, .hero-spotlight, .hero-spot-body.hero-spot-swap,
+  .hub-trophies, .hub-trophy, .hub-daily, .hub-news { animation: none; }
+}
+:root[data-reduced-motion="on"] .app-screen:not(.hidden),
+:root[data-reduced-motion="on"] .hub-bg i,
+:root[data-reduced-motion="on"] .hub-profile,
+:root[data-reduced-motion="on"] .hero-spotlight,
+:root[data-reduced-motion="on"] .hero-spot-body.hero-spot-swap,
+:root[data-reduced-motion="on"] .hub-trophies,
+:root[data-reduced-motion="on"] .hub-trophy,
+:root[data-reduced-motion="on"] .hub-daily,
+:root[data-reduced-motion="on"] .hub-news { animation: none; }

@@ -20,13 +20,20 @@ export function buildScreens() {
   // live below it in THE ARCADE: compact cabinets, each with a difficulty
   // badge. Every game-launch button carries data-launch so boot.js can show a
   // launch shimmer; every id here must stay wired in wireTitle() (see
-  // test/app-hub.test.js, which cross-checks both files).
+  // test/app-hub.test.js and test/app-hub2.test.js, which cross-check both
+  // files).
+  //
+  // The hub's living parts (featured-dweeb spotlight, trophy-wall stats,
+  // daily challenge, profile chip) are painted by src/app/hub-extras.js on
+  // the title route — this template only carries their slots.
   const title = el(`
     <section id="app-title" class="app-screen hidden" aria-label="Dweebs hub">
+      <div class="hub-bg" aria-hidden="true"><i>🫧</i><i>✨</i><i>🫧</i><i>💫</i><i>🫧</i><i>✨</i></div>
       <div class="hub-container">
         <header class="hub-header">
           <h1 class="hub-wordmark" aria-label="DWEEBS"><span style="--c:#f47a3a;--i:0">D</span><span style="--c:#ffc53d;--i:1">W</span><span style="--c:#ffd84a;--i:2">E</span><span style="--c:#6cc35a;--i:3">E</span><span style="--c:#56aee8;--i:4">B</span><span style="--c:#a98be0;--i:5">S</span></h1>
           <p class="hub-tagline">emotionally unstable. Collectibly adorable.</p>
+          <div class="hub-profile" id="hub-profile" aria-label="Your dweeb profile"></div>
         </header>
 
         <!-- HERO: Build-A-Dweeb is the main experience -->
@@ -49,6 +56,10 @@ export function buildScreens() {
             </div>
           </div>
           <button class="btn big purple hero-cta" id="app-btn-builder" data-launch>ENTER THE 3D LAB</button>
+          <aside class="hero-spotlight" aria-label="Featured dweeb">
+            <span class="hero-spot-label">🌟 FEATURED DWEEB</span>
+            <div class="hero-spot-body" id="hero-spotlight"></div>
+          </aside>
         </article>
 
         <!-- THE ARCADE: the mini-games, secondary row -->
@@ -65,6 +76,7 @@ export function buildScreens() {
               </div>
               <h3 class="arcade-card-title">Knockout Arena</h3>
               <p class="arcade-card-desc">The original stadium brawler. Dumb ways to die, wild physics weapons, sudden death.</p>
+              <p class="arcade-stat" data-stat-for="arena"></p>
               <div class="arcade-subgames">
                 <button class="btn arcade-sub-btn yellow" id="app-btn-derby" data-launch title="Dumb Ways to Die">☠️ Derby</button>
                 <button class="btn arcade-sub-btn yellow" id="app-btn-walldrop" data-launch title="Wall Drop PVP">🧱 Wall Drop</button>
@@ -80,6 +92,7 @@ export function buildScreens() {
               </div>
               <h3 class="arcade-card-title">Expedition &amp; Dynasty</h3>
               <p class="arcade-card-desc">Open-world colony in The Meadowlands. Citizen roles, toy contraptions, ruin vaults.</p>
+              <p class="arcade-stat" data-stat-for="dynasty"></p>
               <button class="btn arcade-btn green" id="app-btn-dynasty" data-launch>ENTER EXPEDITION</button>
             </article>
 
@@ -90,6 +103,7 @@ export function buildScreens() {
               </div>
               <h3 class="arcade-card-title">Dweeb Warfare</h3>
               <p class="arcade-card-desc">Mass physics army combat. Commander abilities, artillery, supply drops, 100v100.</p>
+              <p class="arcade-stat" data-stat-for="warfare"></p>
               <div class="arcade-subgames">
                 <button class="btn arcade-sub-btn pink" id="app-btn-warfare-defense" data-launch title="Defend the Fort: 20 waves">🛡️ Defend</button>
                 <button class="btn arcade-sub-btn blue" id="app-btn-warfare-versus" data-launch title="100v100 versus AI">⚔️ Versus</button>
@@ -104,6 +118,7 @@ export function buildScreens() {
               </div>
               <h3 class="arcade-card-title">Dweebscape Island</h3>
               <p class="arcade-card-desc">Combatless co-op escape. Parkour, haul heavy batteries, flip gate switches, power the portal.</p>
+              <p class="arcade-stat" data-stat-for="escape"></p>
               <button class="btn arcade-btn blue" id="app-btn-escape" data-launch>START ESCAPE</button>
             </article>
 
@@ -114,9 +129,58 @@ export function buildScreens() {
               </div>
               <h3 class="arcade-card-title">Mimic &amp; Mutate Lab</h3>
               <p class="arcade-card-desc">First-person toy lab. Show off physical antics — crowds of Dweebs copy and mutate them.</p>
+              <p class="arcade-stat" data-stat-for="mimic"></p>
               <button class="btn arcade-btn" id="app-btn-mimic" data-launch>ENTER THE LAB</button>
             </article>
           </div>
+        </section>
+
+        <!-- TROPHY WALL: real stats, read from the games' own saves -->
+        <section class="hub-trophies" aria-label="Trophy wall">
+          <h2 class="hub-section-title">🏆 TROPHY WALL</h2>
+          <div class="hub-trophy-row">
+            <div class="hub-trophy" style="--i:0">
+              <span class="hub-trophy-icon" aria-hidden="true">🛡️</span>
+              <span class="hub-trophy-value" data-trophy="warfare">—</span>
+              <span class="hub-trophy-label">best defense wave</span>
+            </div>
+            <div class="hub-trophy" style="--i:1">
+              <span class="hub-trophy-icon" aria-hidden="true">🌱</span>
+              <span class="hub-trophy-value" data-trophy="village">—</span>
+              <span class="hub-trophy-label">village structures</span>
+            </div>
+            <div class="hub-trophy" style="--i:2">
+              <span class="hub-trophy-icon" aria-hidden="true">🧬</span>
+              <span class="hub-trophy-value" data-trophy="build">—</span>
+              <span class="hub-trophy-label">custom dweeb</span>
+            </div>
+            <div class="hub-trophy" style="--i:3">
+              <span class="hub-trophy-icon" aria-hidden="true">🕹️</span>
+              <span class="hub-trophy-value">6</span>
+              <span class="hub-trophy-label">ways to play</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- DAILY CHALLENGE: one per calendar day, wired into the arcade -->
+        <section class="hub-daily" id="hub-daily" aria-label="Daily challenge">
+          <div class="hub-daily-copy">
+            <span class="hub-daily-kicker">🎯 DAILY CHALLENGE</span>
+            <h3 class="hub-daily-title" id="daily-title">…</h3>
+            <p class="hub-daily-desc" id="daily-desc">…</p>
+          </div>
+          <button class="btn big yellow hub-daily-cta" id="app-btn-daily" data-launch data-target="">TAKE THE CHALLENGE</button>
+        </section>
+
+        <!-- WHAT'S NEW: the hub's patch notes -->
+        <section class="hub-news" aria-label="What's new">
+          <h2 class="hub-section-title">📰 WHAT'S NEW</h2>
+          <ul class="hub-news-list">
+            <li><strong>Builder-first hub</strong> — the 3D creature lab is now the main event.</li>
+            <li><strong>Autonomous colosseum</strong> — breed AI combat DNA, watch zero-input battles.</li>
+            <li><strong>5-game arcade</strong> — derby, wall drop, brawl, defense, versus: pick your chaos.</li>
+            <li><strong>Warfare command</strong> — abilities, artillery and supply drops in 100v100.</li>
+          </ul>
         </section>
 
         <footer class="hub-footer">

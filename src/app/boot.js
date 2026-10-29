@@ -18,6 +18,7 @@ import { MockNetClient } from './MockNetClient.js';
 import { buildScreens } from './screens.js';
 import { createToasts } from './toasts.js';
 import { createLoading } from './loading.js';
+import { refreshHub, HUB_TIPS } from './hub-extras.js';
 import { setMsg } from './dom.js';
 import { renderLobby, wireLobby, updatePing } from './lobby.js';
 import { mountSettings } from './settings-screen.js';
@@ -34,6 +35,9 @@ import {
 export function bootApp() {
   const toast = createToasts();
   const loading = createLoading();
+  // Loading tips rotate while the bar is under 100% — real mechanics, one line
+  // each. They stop the moment progress hits 100 (see loading.js).
+  loading.startTips(HUB_TIPS);
   const settings = loadSettings();
 
   // ─── the shell root ───
@@ -176,6 +180,16 @@ function wireTitle({ nodes, router, toast }) {
   });
   nodes.title.querySelector('#app-btn-warfare-versus')?.addEventListener('click', () => {
     launchGameMode('warfare', 'stadium', 'versus');
+  });
+
+  // The daily challenge: hub-extras.js paints the card and stores the target
+  // game button id on data-target; pressing it presses that game button, so
+  // the challenge takes the exact same launch path (shimmer included) as
+  // tapping the cabinet directly. Keyboard/gamepad activation comes through
+  // the same click path.
+  nodes.title.querySelector('#app-btn-daily')?.addEventListener('click', e => {
+    const target = e.currentTarget?.dataset?.target;
+    if (target) document.getElementById(target)?.click();
   });
 
   // Footer Navigation
@@ -456,6 +470,11 @@ function beginMatch(ctx, opts) {
 
 // ─── routing ───
 
+// The hub's living parts (spotlight rotation) run on an interval. It starts
+// when the title route shows and stops on every other route, so it never
+// paints a hidden screen or leaks across visits.
+let hubStop = null;
+
 function onRoute(route, ctx) {
   const { nodes, shell, router } = ctx;
   const path = route.path;
@@ -465,6 +484,7 @@ function onRoute(route, ctx) {
   for (const n of nodes.all) n.classList.add('hidden');
   shell.classList.toggle('app-in-match', inGame);
   shell.classList.toggle('hidden', inGame);
+  if (hubStop) { hubStop(); hubStop = null; }
 
   if (inGame) {
     hideOfflineMenu();
@@ -519,6 +539,9 @@ function onRoute(route, ctx) {
       setTimeout(() => hideOfflineMenu(), 250);
       nodes.title.classList.remove('hidden');
       document.getElementById('how-to-play')?.classList.add('hidden');
+      // The hub is alive: stats may have changed while a game was running, and
+      // the spotlight/daily/profile repaint from the games' own saves.
+      hubStop = refreshHub(nodes.title).stop;
   }
 }
 
