@@ -244,6 +244,9 @@ export class BuildingManager {
   confirmPlacement(colony, world) {
     if (!this.activeBlueprint || !this.isValidPlacement) return null;
     const bp = this.activeBlueprint;
+    // Remember the world so destroyStructure() can unregister the structure's
+    // hooks (ziplines, spring pads) when it is demolished.
+    if (world) this._world = world;
 
     // Check colony resource costs
     if (colony) {
@@ -281,6 +284,7 @@ export class BuildingManager {
   /** Place a structure without charging costs (save restore). */
   placeSaved(data, world, colony = null) {
     if (!data || !data.id) return null;
+    if (world) this._world = world;
     const pos = new THREE.Vector3(data.x || 0, data.y || 0, data.z || 0);
     const structure = this._instantiateStructure(data.id, pos, world);
     if (data.stored && structure.stored) {
@@ -304,6 +308,20 @@ export class BuildingManager {
     const idx = this.placedStructures.indexOf(structure);
     if (idx === -1) return false;
     this.placedStructures.splice(idx, 1);
+    // Unregister the structure's world hooks so a demolished springboard
+    // doesn't bounce Dweebs off thin air and a demolished tower doesn't
+    // leave a ghost zipline wire behind.
+    const w = this._world;
+    if (w) {
+      if (structure.zipline && Array.isArray(w.ziplines)) {
+        const zi = w.ziplines.indexOf(structure.zipline);
+        if (zi !== -1) w.ziplines.splice(zi, 1);
+      }
+      if (structure.springPad && Array.isArray(w.springPads)) {
+        const pi = w.springPads.indexOf(structure.springPad);
+        if (pi !== -1) w.springPads.splice(pi, 1);
+      }
+    }
     if (structure.toy) structure.toy.dispose?.();
     if (structure.group && this.scene) this.scene.remove(structure.group);
     if (structure.projectiles) {
@@ -406,6 +424,8 @@ export class BuildingManager {
   }
 
   _instantiateStructure(id, pos, world) {
+    // Remember the world for destroyStructure() hook cleanup (any entry path).
+    if (world) this._world = world;
     // Handcrafted toy-set landmarks are built by the ToyBuildings engine.
     const structureDef = getStructureDef(id);
     if (structureDef) {
@@ -448,13 +468,15 @@ export class BuildingManager {
 
       // Register with world springpads so any Dweeb stepping on it bounces high!
       if (world && world.springPads) {
-        world.springPads.push({
+        const padEntry = {
           x: pos.x, y: pos.y, z: pos.z,
           radius: 1.6,
           boostVelocity: 18.0,
           mesh: pad,
           rebound: 0,
-        });
+        };
+        world.springPads.push(padEntry);
+        result.springPad = padEntry; // destroyStructure() unregisters this
       }
 
       if (this.physicsWorld) {
@@ -557,14 +579,16 @@ export class BuildingManager {
       group.add(ring);
 
       if (world && world.springPads) {
-        world.springPads.push({
+        const padEntry = {
           x: pos.x, y: pos.y, z: pos.z,
           radius: 2.0,
           boostVelocity: 22.0,
           mesh: pad,
           rebound: 0,
           launchesItems: true,
-        });
+        };
+        world.springPads.push(padEntry);
+        result.springPad = padEntry; // destroyStructure() unregisters this
       }
 
       if (this.physicsWorld) {
@@ -707,10 +731,12 @@ export class BuildingManager {
       result.gatherTimer = 0;
       result.gatheredTotal = 0;
       result.update = (dt, ctx) => {
-        if (result.blades) result.blades.rotation.z += dt * 1.5;
         const { world, colony } = ctx || {};
+        // Wind spins the blades twice as fast — and doubles the gather rate.
+        const windy = !!(world && world.weather === 'wind');
+        if (result.blades) result.blades.rotation.z += dt * (windy ? 3.0 : 1.5);
         if (!world || !world.berryBushes) return;
-        result.gatherTimer += dt;
+        result.gatherTimer += dt * (windy ? 2 : 1);
         if (result.gatherTimer < 4) return;
         result.gatherTimer = 0;
         let took = 0;

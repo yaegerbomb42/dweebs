@@ -95,6 +95,10 @@ export class Citizen {
     this._buildAcc = 0;
     this._bonkAcc = 0;
     this._lastStuntAt = -1;
+    // Forage give-up: consecutive bare bushes, and a cooldown that stops the
+    // citizen ping-ponging between picked-clean bushes forever.
+    this._emptyBushStreak = 0;
+    this._forageCooldown = 0;
 
     // Toy-hammer repair duty (landmarks from the ToyTown district).
     this._repairSwing = 0;
@@ -215,6 +219,10 @@ export class Citizen {
       this.friends.set(name, Math.max(0, bond - dt * 0.05));
     }
 
+    // A citizen that found every bush picked clean takes a break from
+    // foraging so the bushes get a regrowth cycle to recover.
+    if (this._forageCooldown > 0) this._forageCooldown -= dt;
+
     // Mood follows needs, unless something exciting just happened.
     if (this.moodTimer > 0) {
       this.moodTimer -= dt;
@@ -241,14 +249,22 @@ export class Citizen {
 
     this.stateTimer -= dt;
 
-    // Check stuck detection. Citizens working, eating, chatting or singing in
-    // place are not stuck — only movers get re-evaluated.
-    const stationaryStates = [
-      CITIZEN_STATES.REST, CITIZEN_STATES.FORAGE, CITIZEN_STATES.SOCIALIZE,
-      CITIZEN_STATES.BUILD, CITIZEN_STATES.SING, CITIZEN_STATES.REPAIR,
-    ];
+    // Check stuck detection. Citizens resting in place are never stuck; citizens
+    // working (foraging, chatting, hammering, singing, repairing) are only
+    // stuck while still travelling to their work site — a repair worker whose
+    // landmark is unreachable must eventually give up, not hammer thin air
+    // forever. Pure movers always get re-evaluated.
     const currentPos = this.dweeb.body.translation();
-    if (this.lastPos.distanceTo(currentPos) < 0.1 && !stationaryStates.includes(this.state)) {
+    const distToWork = Math.hypot(
+      this.targetPos.x - currentPos.x, this.targetPos.z - currentPos.z,
+    );
+    const workStates = [
+      CITIZEN_STATES.FORAGE, CITIZEN_STATES.SOCIALIZE, CITIZEN_STATES.BUILD,
+      CITIZEN_STATES.SING, CITIZEN_STATES.REPAIR,
+    ];
+    const stationary = this.state === CITIZEN_STATES.REST ||
+      (workStates.includes(this.state) && distToWork <= this.arrivalDist + 0.4);
+    if (this.lastPos.distanceTo(currentPos) < 0.1 && !stationary) {
       this.stuckTimer += dt;
       if (this.stuckTimer > 2.5) {
         this.stateTimer = 0; // force re-evaluate
@@ -269,9 +285,17 @@ export class Citizen {
   }
 
   _selectNextGoal(world, otherCitizens, colony = null) {
-    // Priority 1: High Hunger -> Find Berry Bush (foragers go earlier)
+    const raining = !!(world && world.weather === 'rain');
+
+    // A Builder heading off to eat/sleep/rest frees their blueprint claim so
+    // another Builder can pick it up; they re-claim when they come back.
+    if (this.role === 'builder' && colony) colony.releaseBuild(this);
+
+    // Priority 1: High Hunger -> Find Berry Bush (foragers go earlier).
+    // Skipped while the citizen is taking a break after finding every bush bare.
     const hungerLine = this.role === 'forager' ? 55 : 70;
-    if (this.hunger > hungerLine && world.berryBushes && world.berryBushes.length > 0) {
+    if (this.hunger > hungerLine && this._forageCooldown <= 0 &&
+        world.berryBushes && world.berryBushes.length > 0) {
       const bush = world.berryBushes[Math.floor(Math.random() * world.berryBushes.length)];
       this.state = CITIZEN_STATES.FORAGE;
       this.targetEntity = bush;
@@ -295,6 +319,19 @@ export class Citizen {
         this.activityText = 'Sitting cozily by the central fire, recharging energy';
       }
       this.stateTimer = 6 + Math.random() * 5;
+      return;
+    }
+
+    // Priority 2b: a pending expedition haul resumes after needs are handled —
+    // the citizen keeps marching to the point of interest until arrival pays out.
+    if (this._expeditionHaul && this._expeditionHaul.dest) {
+      const dest = this._expeditionHaul.dest;
+      this.state = CITIZEN_STATES.EXPEDITION;
+      this.targetPos.set(
+        dest.x + (Math.random() - 0.5) * 4, dest.y, dest.z + (Math.random() - 0.5) * 4,
+      );
+      this.stateTimer = 25;
+      this.activityText = `Trekking on to ${this._expeditionHaul.poi} with an empty pack 🎒`;
       return;
     }
 
@@ -331,16 +368,43 @@ export class Citizen {
       }
     }
 
-    // Role: Builder -> construct the next queued blueprint.
-    if (this.role === 'builder' && colony && colony.buildQueue && colony.buildQueue.length > 0) {
-      this.state = CITIZEN_STATES.BUILD;
-      this.targetEntity = colony.buildQueue[0];
-      // Build site: a clearing just off the campfire.
-      this.targetPos.set(6 + (Math.random() - 0.5) * 3, 0.5, 6 + (Math.random() - 0.5) * 3);
-      this._buildAcc = 0;
-      this.stateTimer = 12;
-      this.activityText = `Marching off to build the ${colony.buildQueue[0]}! 🔨`;
+    // Rain: cozy dweebs hate getting wet — they nap by the fire instead.
+    if (raining && this.personality.id === 'cozy' && this.energy < 70) {
+      this.state = CITIZEN_STATES.REST;
+      const placedTents = world.buildingManager ? world.buildingManager.placedStructures.filter(s => s.id === 'tent' || s.id === 'firepit') : [];
+      if (placedTents.length > 0) {
+        const target = placedTents[Math.floor(Math.random() * placedTents.length)];
+        this.targetPos.set(target.pos.x, target.pos.y, target.pos.z);
+        this.activityText = `Waiting out the rain under the ${target.id === 'tent' ? 'Play Tent' : 'Firepit'} 🌧️`;
+      } else {
+        this.targetPos.set((Math.random() - 0.5) * 3, 0.5, (Math.random() - 0.5) * 3);
+        this.activityText = 'Waiting out the rain by the fire 🌧️';
+      }
+      this.stateTimer = 6 + Math.random() * 4;
       return;
+    }
+
+    // Role: Builder -> claim and construct the next queued blueprint.
+    // claimBuild() hands each Builder a different affordable blueprint, so two
+    // Builders never raise (and charge for) the same blueprint twice.
+    if (this.role === 'builder' && colony) {
+      const id = colony.claimBuild(this);
+      if (id) {
+        this.state = CITIZEN_STATES.BUILD;
+        this.targetEntity = id;
+        // Build site: a clearing just off the campfire; the structure rises
+        // exactly where the Builder hammers (see _completeBuild sitePos).
+        const bx = 6 + (Math.random() - 0.5) * 3;
+        const bz = 6 + (Math.random() - 0.5) * 3;
+        const by = world && world._getHeight ? world._getHeight(bx, bz) : 0.5;
+        this.targetPos.set(bx, by, bz);
+        this._buildAcc = 0;
+        this.stateTimer = 12;
+        this.activityText = `Marching off to build the ${id}! 🔨`;
+        return;
+      }
+      // Nothing claimable (empty queue / all claimed / unaffordable) — the
+      // Builder just acts like a regular villager this round.
     }
 
     // Role: Defender -> patrol the barricades, or the village edge.
@@ -375,8 +439,9 @@ export class Citizen {
       return;
     }
 
-    // Priority 4: High Curiosity -> Explore Ruins or Lookout Bluff
-    if (this.curiosity > 65) {
+    // Priority 4: High Curiosity -> Explore Ruins or Lookout Bluff.
+    // In the rain only the brave (adventurers) head out; everyone else stays dry.
+    if (this.curiosity > 65 && !(raining && (this.personality.bravery || 1) < 1.2)) {
       this.state = CITIZEN_STATES.EXPEDITION;
       if (Math.random() > 0.4) {
         // Head towards the Ancient Meadowland Ruin
@@ -501,6 +566,7 @@ export class Citizen {
           this._eatAcc -= 1;
           if (bush && bush.available > 0) {
             bush.available -= 1;
+            this._emptyBushStreak = 0;
             if (this.role === 'forager' && colony) {
               this.hunger = Math.max(0, this.hunger - 8);
               const silos = world.buildingManager
@@ -513,9 +579,19 @@ export class Citizen {
               this.activityText = 'Happily munching on sweet berries';
             }
           } else {
-            // Bush is picked clean — move on.
+            // Bush is picked clean — move on. After several bare bushes in a
+            // row, take a break instead of ping-ponging between empty bushes
+            // forever; the streak resets on the next successful bite.
+            this._emptyBushStreak += 1;
+            if (this._emptyBushStreak >= 3) {
+              this._emptyBushStreak = 0;
+              this._forageCooldown = 20;
+              this.say('All picked clean… 🍂', '🍂', 2);
+              this.activityText = 'The bushes are all picked clean — taking a break';
+            } else {
+              this.activityText = 'This bush is picked clean!';
+            }
             this.stateTimer = 0;
-            this.activityText = 'This bush is picked clean!';
           }
         }
       } else if (this.state === CITIZEN_STATES.SOCIALIZE && this.targetEntity) {
@@ -534,6 +610,21 @@ export class Citizen {
         }
       } else if (this.state === CITIZEN_STATES.EXPEDITION) {
         this.curiosity = Math.max(0, this.curiosity - dt * 20);
+        // A launched expedition pays out its haul on arrival — the one-shot
+        // grant that makes expeditions feel earned, routed through silos.
+        if (this._expeditionHaul && colony) {
+          const haul = this._expeditionHaul;
+          this._expeditionHaul = null;
+          const silos = colony._silosFrom ? colony._silosFrom(world) : [];
+          const gained = [];
+          for (const [res, n] of Object.entries(haul.items)) {
+            colony.addResource(res, n, silos);
+            gained.push(`+${n} ${res}`);
+          }
+          this.say('What a haul! 🎒', '🎒', 3);
+          this.moodTimer = 2;
+          colony._addLog(`🧭 ${this.name} returned from ${haul.poi}: ${gained.join(', ')}!`);
+        }
       } else if (this.state === CITIZEN_STATES.SING) {
         this.social = Math.max(0, this.social - dt * 10);
         this.energy = Math.min(100, this.energy + dt * 2);
@@ -580,14 +671,18 @@ export class Citizen {
       }
     }
 
-    // Feed movement input to Dweeb
+    // Feed movement input to Dweeb. moveInput is applied in world frame by the
+    // Dweeb (tx = x * speed, tz = y * speed), so the direction is NOT negated:
+    // negating dirZ here used to send citizens mirrored in Z, away from every
+    // target they were ever given (they could never arrive to eat, build,
+    // chat, sing or deliver expeditions).
     this.dweeb.controllerInput = {
       moveX: dirX,
-      moveY: -dirZ, // Three.js forward is -Z
+      moveY: dirZ,
       jump,
     };
     if (this.dweeb.moveInput) {
-      this.dweeb.moveInput.set(dirX, -dirZ);
+      this.dweeb.moveInput.set(dirX, dirZ);
     }
     if (jump && typeof this.dweeb.jump === 'function') {
       this.dweeb.jump();

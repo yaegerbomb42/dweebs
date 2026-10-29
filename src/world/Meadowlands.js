@@ -57,6 +57,11 @@ export class Meadowlands {
     this.dayLength = 240;     // seconds per full day
     this.lightLevel = 1;      // 0 (midnight) .. 1 (noon)
     this.isNight = false;
+    // ── Weather: clear | rain | wind. Rain regrows berries 2x and hurries
+    // critters (1.5x); wind spins windmill blades 2x (2x gather rate).
+    this.weather = 'clear';
+    this.weatherTimer = 60 + Math.random() * 40;
+    this.rainPoints = null;   // falling-rain particle cloud, visible in rain
     this.dayLight = null;     // directional sun/moon owned by this world
     this.fireflies = null;    // night firefly point cloud
     this.fx = options.fx || null;
@@ -96,6 +101,7 @@ export class Meadowlands {
     this._createResourceNodes();
     this._createToyRuins();
     this._createDayNight();
+    this._createRain();
   }
 
   _getHeight(x, z) {
@@ -1059,11 +1065,66 @@ export class Meadowlands {
     }
   }
 
+  /** Falling-rain particle cloud; opacity fades in only while it rains. */
+  _createRain() {
+    const count = 350;
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 70;
+      positions[i * 3 + 1] = Math.random() * 18;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 70;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0x93c5fd, size: 0.18, transparent: true, opacity: 0,
+    });
+    const pts = new THREE.Points(geo, mat);
+    this.group.add(pts);
+    this.rainPoints = pts;
+  }
+
+  /** Weather state machine: clear spells break into rain or wind, then clear. */
+  _updateWeather(dt, colony = null) {
+    this.weatherTimer -= dt;
+    if (this.weatherTimer <= 0) {
+      const next = this.weather === 'clear'
+        ? (Math.random() < 0.5 ? 'rain' : 'wind')
+        : 'clear';
+      this.weather = next;
+      this.weatherTimer = next === 'clear' ? 75 + Math.random() * 60 : 35 + Math.random() * 30;
+      if (colony) {
+        const msg = {
+          rain: '🌧️ Rain sweeps across the Meadowlands — berries regrow faster, but critters love the wet…',
+          wind: '💨 A brisk wind picks up — windmill blades spin twice as fast!',
+          clear: '☀️ The skies clear over New Dweebtopia.',
+        }[next];
+        colony._addLog(msg);
+      }
+    }
+    if (this.rainPoints) {
+      const raining = this.weather === 'rain';
+      const mat = this.rainPoints.material;
+      mat.opacity = THREE.MathUtils.lerp(mat.opacity, raining ? 0.85 : 0, Math.min(1, dt * 2));
+      if (raining && mat.opacity > 0.05) {
+        const pos = this.rainPoints.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          let y = pos.getY(i) - dt * 22;
+          if (y < 0) y = 16 + Math.random() * 3;
+          pos.setY(i, y);
+        }
+        pos.needsUpdate = true;
+      }
+    }
+  }
+
   _updateBushRegrowth(dt) {
+    // Rain doubles the regrowth rate.
+    const interval = this.weather === 'rain' ? 10 : 20;
     for (const bush of this.berryBushes) {
       if (bush.available >= 5) continue;
       bush.regenTimer = (bush.regenTimer || 0) + dt;
-      if (bush.regenTimer >= 20) {
+      if (bush.regenTimer >= interval) {
         bush.regenTimer = 0;
         bush.available = Math.min(5, bush.available + 1);
         if (bush.berries && bush.berries[bush.available - 1]) {
@@ -1113,7 +1174,8 @@ export class Meadowlands {
   }
 
   _updateCritters(dt, dweebs, colony) {
-    this.critterTimer -= dt;
+    // Critters love the wet — they wander in 1.5x as often while it rains.
+    this.critterTimer -= dt * (this.weather === 'rain' ? 1.5 : 1);
     if (this.critterTimer <= 0) {
       this.critterTimer = 45;
       this.spawnCritter();
@@ -1179,6 +1241,7 @@ export class Meadowlands {
     return {
       timeOfDay: this.timeOfDay,
       ruinsOpened: this.ruins.filter(r => r.opened).map(r => r.id),
+      weather: this.weather,
     };
   }
 
@@ -1186,6 +1249,9 @@ export class Meadowlands {
   restore(data) {
     if (!data) return;
     if (typeof data.timeOfDay === 'number') this.timeOfDay = data.timeOfDay;
+    if (data.weather === 'clear' || data.weather === 'rain' || data.weather === 'wind') {
+      this.weather = data.weather;
+    }
     if (Array.isArray(data.ruinsOpened)) {
       for (const ruin of this.ruins) {
         if (data.ruinsOpened.includes(ruin.id)) {
@@ -1203,8 +1269,9 @@ export class Meadowlands {
   update(dt, dweebs = [], colony = null) {
     this.clock += dt;
 
-    // Day/night cycle, berry regrowth, vault puzzles and critters.
+    // Day/night cycle, weather, berry regrowth, vault puzzles and critters.
     this._updateDayNight(dt);
+    this._updateWeather(dt, colony);
     this._updateBushRegrowth(dt);
     this._updateCritters(dt, dweebs, colony);
 
