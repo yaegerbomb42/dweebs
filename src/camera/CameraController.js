@@ -62,6 +62,14 @@ export class CameraController {
     document.addEventListener('pointerlockchange', this._onPointerLockChange);
   }
 
+  /** Detach all listeners (call when the controller is retired). */
+  dispose() {
+    this.canvas.removeEventListener('wheel', this._onWheel);
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    document.removeEventListener('mousemove', this._onMouseMove);
+    this.isLocked = false;
+  }
+
   lock() {
     this.canvas.requestPointerLock();
   }
@@ -170,6 +178,7 @@ export class CameraController {
   /** Ease toward a KO point (victim → blast direction) for `dur` seconds. */
   killCam(pos, dur = 0.75) {
     if (this.multiFraming) return;
+    if (!(dur > 0)) return; // guard: dur <= 0 would make kcT/kcDur divide by zero
     this.kc.set(pos.x, Math.max(pos.y, this.minCameraY + 1), pos.z);
     this.kcT = dur;
     this.kcDur = dur;

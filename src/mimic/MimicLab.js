@@ -27,9 +27,18 @@ export class MimicLab {
     this.lastAction = null;
     this.activeMutation = null;
     this.mutationCooldown = 0;
+    // PhysicsWorld body ids created by this lab — removed on dispose so
+    // re-entering the lab doesn't stack invisible phantom colliders.
+    this._physIds = [];
 
     this._buildAmphitheater();
     this._spawnToyTrunk();
+  }
+
+  /** Register a PhysicsWorld creation result for cleanup on dispose. */
+  _trackPhysics(entry) {
+    if (entry && entry.id) this._physIds.push(entry.id);
+    return entry;
   }
 
   _buildAmphitheater() {
@@ -41,7 +50,7 @@ export class MimicLab {
     floor.position.y = -0.4;
     this.group.add(floor);
     if (this.physicsWorld) {
-      this.physicsWorld.createFixedCylinder(0, -0.4, 0, 18, 0.4, 'toy');
+      this._trackPhysics(this.physicsWorld.createFixedCylinder(0, -0.4, 0, 18, 0.4, 'toy'));
     }
 
     // Checkered center testing rug
@@ -67,7 +76,7 @@ export class MimicLab {
       this.group.add(bleacher);
 
       if (this.physicsWorld) {
-        this.physicsWorld.createFixedCylinder(0, height, 0, radius, 0.35, 'wood');
+        this._trackPhysics(this.physicsWorld.createFixedCylinder(0, height, 0, radius, 0.35, 'wood'));
       }
     }
 
@@ -87,7 +96,7 @@ export class MimicLab {
     trunk.position.set(trunkX, 0.7, trunkZ);
     this.group.add(trunk);
     if (this.physicsWorld) {
-      this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood');
+      this._trackPhysics(this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood'));
     }
 
     // Spawn starting fun physics sandbox props
@@ -97,6 +106,15 @@ export class MimicLab {
     this._spawnProp('rubberChicken', -1.2, 1.5, -6, 'rubber', 0.8);
     this._spawnProp('explosiveBarrel', 1.5, 1.5, -6, 'toy', 2.5, true);
     this._spawnProp('giantDie', -3.5, 1.5, -5, 'toy', 2.0);
+  }
+
+  /** Collider shape matched to the prop's visual so boxes don't roll like balls. */
+  _propCollider(name) {
+    if (name === 'crate' || name === 'giantDie') return { shape: 'box', dims: { hx: 0.6, hy: 0.6, hz: 0.6 } };
+    if (name === 'watermelon') return { shape: 'sphere', dims: { radius: 0.65 } };
+    if (name === 'bowlingBall') return { shape: 'sphere', dims: { radius: 0.6 } };
+    if (name === 'rubberChicken') return { shape: 'capsule', dims: { halfHeight: 0.45, radius: 0.28 } };
+    return { shape: 'cylinder', dims: { halfHeight: 0.65, radius: 0.55 } }; // explosiveBarrel
   }
 
   _spawnProp(name, x, y, z, material, mass, isExplosive = false) {
@@ -125,7 +143,10 @@ export class MimicLab {
 
     let body = null;
     if (this.physicsWorld) {
-      const b = this.physicsWorld.createDynamicBody(x, y, z, 'sphere', { radius: 0.6 }, { material, mass });
+      const { shape, dims } = this._propCollider(name);
+      const b = this._trackPhysics(
+        this.physicsWorld.createDynamicBody(x, y, z, shape, dims, { material, mass })
+      );
       body = b.body;
     }
 
@@ -229,11 +250,25 @@ export class MimicLab {
   }
 
   dispose() {
-    this.scene.remove(this.group);
-    for (const c of this.colliders) {
-      if (this.physicsWorld && c.body) {
-        this.physicsWorld.world.removeRigidBody(c.body);
+    // Remove every physics body this lab created (floor, bleachers, trunk,
+    // props) through the world's bookkeeping so nothing lingers invisibly.
+    if (this.physicsWorld) {
+      for (const id of this._physIds) {
+        try { this.physicsWorld.removeBody(id); } catch { /* already gone */ }
       }
     }
+    this._physIds = [];
+    this.props = [];
+    this.colliders = [];
+
+    // Free GPU buffers for the amphitheater + prop meshes.
+    this.group.traverse(child => {
+      if (child.isMesh) {
+        if (child.geometry) child.geometry.dispose();
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        for (const m of mats) if (m && typeof m.dispose === 'function') m.dispose();
+      }
+    });
+    this.scene.remove(this.group);
   }
 }

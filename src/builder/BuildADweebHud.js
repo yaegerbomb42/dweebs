@@ -3,6 +3,8 @@
 // Provides interactive sliders, color pickers, trait buttons, combat DNA meters,
 // name editor, random mutant generator, and "SEND TO ARENA" trigger.
 
+/* global CustomEvent:readonly */
+
 import {
   BODY_SHAPES,
   APPENDAGES,
@@ -10,6 +12,11 @@ import {
   BROW_STYLES,
   MOUTH_STYLES,
   ARCHETYPE_PRESETS,
+  computeBattleProfile,
+  dnaStanceLabel,
+  dnaAimLabel,
+  dnaAgilityLabel,
+  dnaScavengeLabel,
 } from './CustomDweebModel.js';
 
 const CSS = `
@@ -162,6 +169,47 @@ const CSS = `
   background: none;
 }
 
+/* Battle profile telemetry */
+.bd-profile {
+  background: #14101c;
+  border: 2px solid #ffd23f;
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+.bd-profile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.bd-tier {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 22px;
+  background: #ffd23f;
+  color: #14101c;
+  border-radius: 8px;
+  padding: 0 10px;
+  line-height: 1.4;
+}
+.bd-rating { font-size: 12px; font-weight: 800; opacity: 0.9; }
+.bd-meter { margin-bottom: 5px; }
+.bd-meter-top { display: flex; justify-content: space-between; font-size: 11px; font-weight: 800; margin-bottom: 2px; }
+.bd-meter-track { height: 8px; background: #332357; border-radius: 5px; overflow: hidden; }
+.bd-meter-fill { height: 100%; background: linear-gradient(90deg, #ff4d5e, #ffd23f); border-radius: 5px; transition: width 0.15s; }
+.bd-dna-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.bd-dna-tag {
+  font-size: 10px;
+  font-weight: 800;
+  background: #332357;
+  border-radius: 6px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.bd-btn.icon { padding: 8px 12px; font-size: 15px; }
+.bd-btn:disabled { opacity: 0.35; cursor: default; transform: none !important; }
+
 .bd-center-action {
   pointer-events: auto;
   display: flex;
@@ -197,10 +245,92 @@ export class BuildADweebHud {
     }
     this.root = null;
     this._createDom();
+
+    // Lab event bridge: the lab announces config/history changes over document
+    // CustomEvents so the HUD stays in sync without the app shell wiring anything.
+    this._onConfigSync = e => this.syncForm(e.detail?.config);
+    this._onHistorySync = e => this._syncHistoryButtons(e.detail || {});
+
+    // Undo/redo keyboard shortcuts (skipped while typing in a field).
+    this._onKeyDown = e => {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.key.toLowerCase() !== 'z') {
+        if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); this.requestRedo(); }
+        return;
+      }
+      e.preventDefault();
+      if (e.shiftKey) this.requestRedo();
+      else this.requestUndo();
+    };
+    if (
+      typeof document !== 'undefined'
+      && typeof document.addEventListener === 'function'
+      && typeof document.removeEventListener === 'function'
+    ) {
+      document.addEventListener('bd-config-sync', this._onConfigSync);
+      document.addEventListener('bd-history-sync', this._onHistorySync);
+      document.addEventListener('keydown', this._onKeyDown);
+    }
   }
 
   _notifyChange(patch) {
     (this.handlers.onConfigChange || this.handlers.onChange)?.(patch);
+    // A manual tweak voids the preset badge: clear preset actives.
+    // (Inlined — not a method call — so _notifyChange stays safe when invoked
+    // on a bare { handlers } object, as the dedup tests do.)
+    this.root?.querySelectorAll('#bd-presets-row .bd-preset-btn.active')
+      ?.forEach(b => b.classList.remove('active'));
+  }
+
+  /** Ask the lab to do something: prefer an explicit handler, else the event bridge. */
+  _askLab(handlerName, eventName) {
+    const fn = this.handlers[handlerName];
+    if (typeof fn === 'function') {
+      fn();
+    } else if (
+      typeof document !== 'undefined'
+      && typeof document.dispatchEvent === 'function'
+      && typeof CustomEvent === 'function'
+    ) {
+      document.dispatchEvent(new CustomEvent(eventName));
+    }
+  }
+
+  requestUndo() { this._askLab('onUndo', 'bd-undo'); }
+  requestRedo() { this._askLab('onRedo', 'bd-redo'); }
+  requestSoftMutate() { this._askLab('onSoftMutate', 'bd-soft-mutate'); }
+
+  _syncHistoryButtons({ canUndo, canRedo }) {
+    const undo = this.root?.querySelector('#bd-btn-undo');
+    const redo = this.root?.querySelector('#bd-btn-redo');
+    if (undo) undo.disabled = !canUndo;
+    if (redo) redo.disabled = !canRedo;
+  }
+
+  /** Render the glanceable battle-profile telemetry from a build config. */
+  syncProfile(config) {
+    if (!this.root || !config) return;
+    const $ = s => this.root.querySelector(s);
+    const p = computeBattleProfile(config);
+    const stats = config.stats || {};
+    const setMeter = (barId, valId, norm, raw) => {
+      const bar = $(barId), val = $(valId);
+      if (bar) bar.style.width = `${Math.round(norm * 100)}%`;
+      if (val) val.textContent = Number.isFinite(raw) ? raw.toFixed(2) : '—';
+    };
+    if ($('#bd-prof-tier')) $('#bd-prof-tier').textContent = p.tier;
+    if ($('#bd-prof-rating')) $('#bd-prof-rating').textContent = `FIGHT RATING ${p.rating}`;
+    setMeter('#bd-prof-mass', '#bd-prof-mass-v', p.mass, stats.mass);
+    setMeter('#bd-prof-speed', '#bd-prof-speed-v', p.speed, stats.speed);
+    setMeter('#bd-prof-jump', '#bd-prof-jump-v', p.jump, stats.jump);
+    setMeter('#bd-prof-armor', '#bd-prof-armor-v', p.armor, stats.armor);
+    const dnaEl = $('#bd-prof-dna');
+    if (dnaEl) {
+      const tags = [p.stance, p.aim, p.agility, p.scavenge];
+      dnaEl.innerHTML = tags.map(t => `<span class="bd-dna-tag">${t}</span>`).join('');
+    }
   }
 
   _createDom() {
@@ -228,6 +358,9 @@ export class BuildADweebHud {
           <button class="bd-preset-btn" data-preset="pugilist_champ" title="Pugilist Champ">🥊 PUGILIST CHAMP</button>
         </div>
         <div class="bd-top-actions">
+          <button class="bd-btn icon alt" id="bd-btn-undo" title="Undo (Ctrl+Z)" disabled>⟲</button>
+          <button class="bd-btn icon alt" id="bd-btn-redo" title="Redo (Ctrl+Shift+Z)" disabled>⟳</button>
+          <button class="bd-btn pink" id="bd-btn-soft">🧪 SOFT MUTATE</button>
           <button class="bd-btn yellow" id="bd-btn-random">🎲 RANDOM MUTANT</button>
           <button class="bd-btn alt" id="bd-btn-exit">◀ DWEEB MALL</button>
         </div>
@@ -256,6 +389,11 @@ export class BuildADweebHud {
           </div>
 
           <div class="bd-row">
+            <div class="bd-label">BODY DEPTH <span id="bd-lbl-d">1.0x</span></div>
+            <input type="range" class="bd-slider" id="bd-slider-d" min="0.5" max="1.8" step="0.05" value="1.0">
+          </div>
+
+          <div class="bd-row">
             <div class="bd-label">COLORS</div>
             <div style="display:flex; gap:12px; align-items:center;">
               <label style="font-size:12px; font-weight:800;">Primary: <input type="color" class="bd-color-picker" id="bd-col-primary" value="#ff4d5e"></label>
@@ -264,14 +402,23 @@ export class BuildADweebHud {
           </div>
 
           <div class="bd-row">
-            <div class="bd-label">EYE COUNT &amp; SIZE</div>
+            <div class="bd-label">EYE COUNT</div>
             <div class="bd-seg" id="bd-seg-eyes" style="margin-bottom:6px;">
               <button class="bd-seg-btn" data-v="1">1 CYCLOPS</button>
               <button class="bd-seg-btn active" data-v="2">2 EYES</button>
               <button class="bd-seg-btn" data-v="3">3 ALIEN</button>
               <button class="bd-seg-btn" data-v="4">4 SPIDER</button>
             </div>
+          </div>
+
+          <div class="bd-row">
+            <div class="bd-label">EYE SIZE <span id="bd-lbl-eyesize">1.0x</span></div>
             <input type="range" class="bd-slider" id="bd-slider-eyesize" min="0.5" max="1.8" step="0.05" value="1.0">
+          </div>
+
+          <div class="bd-row">
+            <div class="bd-label">EYE SPACING <span id="bd-lbl-eyespacing">1.0x</span></div>
+            <input type="range" class="bd-slider" id="bd-slider-eyespacing" min="0.4" max="2.0" step="0.05" value="1.0">
           </div>
 
           <div class="bd-row">
@@ -309,6 +456,20 @@ export class BuildADweebHud {
         <!-- Right Panel: Combat Stats & AI DNA -->
         <div class="bd-panel">
           <div class="bd-sec-title">🧠 COMBAT STATS &amp; AI DNA</div>
+
+          <div class="bd-profile" id="bd-profile">
+            <div class="bd-profile-head">
+              <span style="font-family:'Lilita One',sans-serif; font-size:16px; color:#ffd23f;">⚔️ BATTLE PROFILE</span>
+              <span class="bd-tier" id="bd-prof-tier">B</span>
+            </div>
+            <div class="bd-rating" id="bd-prof-rating">FIGHT RATING 50</div>
+            <div style="height:6px"></div>
+            <div class="bd-meter"><div class="bd-meter-top"><span>💪 MASS</span><span id="bd-prof-mass-v">—</span></div><div class="bd-meter-track"><div class="bd-meter-fill" id="bd-prof-mass"></div></div></div>
+            <div class="bd-meter"><div class="bd-meter-top"><span>💨 SPEED</span><span id="bd-prof-speed-v">—</span></div><div class="bd-meter-track"><div class="bd-meter-fill" id="bd-prof-speed"></div></div></div>
+            <div class="bd-meter"><div class="bd-meter-top"><span>🦘 JUMP</span><span id="bd-prof-jump-v">—</span></div><div class="bd-meter-track"><div class="bd-meter-fill" id="bd-prof-jump"></div></div></div>
+            <div class="bd-meter"><div class="bd-meter-top"><span>🛡️ ARMOR</span><span id="bd-prof-armor-v">—</span></div><div class="bd-meter-track"><div class="bd-meter-fill" id="bd-prof-armor"></div></div></div>
+            <div class="bd-dna-tags" id="bd-prof-dna"></div>
+          </div>
 
           <div class="bd-row">
             <div class="bd-label">CONFIDENCE (STANCE) <span id="bd-lbl-conf">Rushdown</span></div>
@@ -387,11 +548,14 @@ export class BuildADweebHud {
         const key = btn.dataset.preset;
         const preset = ARCHETYPE_PRESETS[key];
         presetRow.querySelectorAll('.bd-preset-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
 
         if (preset) {
           this.syncForm(preset);
+          // _notifyChange clears preset actives (a manual tweak voids the
+          // preset badge), so re-mark AFTER it — and the lab's config-sync
+          // echo re-marks again via syncForm when wired.
           this._notifyChange(preset);
+          btn.classList.add('active');
         }
         if (this.handlers.onPresetSelect) {
           this.handlers.onPresetSelect(key);
@@ -420,30 +584,32 @@ export class BuildADweebHud {
 
     wireSlider('#bd-slider-w', '#bd-lbl-w', 'width', v => `${v.toFixed(2)}x`);
     wireSlider('#bd-slider-h', '#bd-lbl-h', 'height', v => `${v.toFixed(2)}x`);
-    wireSlider('#bd-slider-eyesize', null, 'eyeSize');
+    wireSlider('#bd-slider-d', '#bd-lbl-d', 'depth', v => `${v.toFixed(2)}x`);
+    wireSlider('#bd-slider-eyesize', '#bd-lbl-eyesize', 'eyeSize', v => `${v.toFixed(2)}x`);
+    wireSlider('#bd-slider-eyespacing', '#bd-lbl-eyespacing', 'eyeSpacing', v => `${v.toFixed(2)}x`);
 
     // DNA Sliders
     $('#bd-slider-conf').addEventListener('input', e => {
       const v = parseFloat(e.target.value);
-      $('#bd-lbl-conf').textContent = v > 0.65 ? 'Berserk Rushdown' : v < 0.4 ? 'Elusive Kiter' : 'Balanced';
+      $('#bd-lbl-conf').textContent = dnaStanceLabel(v);
       this._notifyChange({ dna: { confidence: v } });
     });
 
     $('#bd-slider-aim').addEventListener('input', e => {
       const v = parseFloat(e.target.value);
-      $('#bd-lbl-aim').textContent = v > 0.6 ? 'Sniper / Calculated' : 'Rapid Chaos Spam';
+      $('#bd-lbl-aim').textContent = dnaAimLabel(v);
       this._notifyChange({ dna: { aimAccuracy: v } });
     });
 
     $('#bd-slider-agi').addEventListener('input', e => {
       const v = parseFloat(e.target.value);
-      $('#bd-lbl-agi').textContent = v > 0.7 ? 'Hyper-Agile' : 'Steady';
+      $('#bd-lbl-agi').textContent = dnaAgilityLabel(v);
       this._notifyChange({ dna: { agility: v }, stats: { speed: 0.7 + v * 0.6 } });
     });
 
     $('#bd-slider-scav').addEventListener('input', e => {
       const v = parseFloat(e.target.value);
-      $('#bd-lbl-scav').textContent = v > 0.5 ? 'Toy / Bomb Hunter' : 'Fists & Kicks';
+      $('#bd-lbl-scav').textContent = dnaScavengeLabel(v);
       this._notifyChange({ dna: { scavenge: v } });
     });
 
@@ -473,6 +639,13 @@ export class BuildADweebHud {
     wireSeg('#bd-seg-brows', 'brows');
     wireSeg('#bd-seg-mouth', 'mouth');
 
+    // Undo / redo
+    $('#bd-btn-undo').addEventListener('click', () => this.requestUndo());
+    $('#bd-btn-redo').addEventListener('click', () => this.requestRedo());
+
+    // Soft mutate (evolve current build) vs full random mutant
+    $('#bd-btn-soft').addEventListener('click', () => this.requestSoftMutate());
+
     // Random button
     $('#bd-btn-random').addEventListener('click', () => {
       this.handlers.onRandomMutant?.();
@@ -497,10 +670,17 @@ export class BuildADweebHud {
     if ($('#bd-name')) $('#bd-name').value = config.name || 'Robo-Brawler';
     if ($('#bd-col-primary')) $('#bd-col-primary').value = config.primaryColor || '#ff4d5e';
     if ($('#bd-col-accent')) $('#bd-col-accent').value = config.accentColor || '#ffd23f';
-    if ($('#bd-slider-w')) $('#bd-slider-w').value = config.width || 1.0;
-    if ($('#bd-slider-h')) $('#bd-slider-h').value = config.height || 1.0;
-    if ($('#bd-lbl-w')) $('#bd-lbl-w').textContent = `${(config.width || 1.0).toFixed(2)}x`;
-    if ($('#bd-lbl-h')) $('#bd-lbl-h').textContent = `${(config.height || 1.0).toFixed(2)}x`;
+    if ($('#bd-slider-w')) $('#bd-slider-w').value = config.width ?? 1.0;
+    if ($('#bd-slider-h')) $('#bd-slider-h').value = config.height ?? 1.0;
+    if ($('#bd-slider-d')) $('#bd-slider-d').value = config.depth ?? 1.0;
+    if ($('#bd-lbl-w')) $('#bd-lbl-w').textContent = `${(config.width ?? 1.0).toFixed(2)}x`;
+    if ($('#bd-lbl-h')) $('#bd-lbl-h').textContent = `${(config.height ?? 1.0).toFixed(2)}x`;
+    if ($('#bd-lbl-d')) $('#bd-lbl-d').textContent = `${(config.depth ?? 1.0).toFixed(2)}x`;
+
+    if ($('#bd-slider-eyesize')) $('#bd-slider-eyesize').value = config.eyeSize ?? 1.0;
+    if ($('#bd-lbl-eyesize')) $('#bd-lbl-eyesize').textContent = `${(config.eyeSize ?? 1.0).toFixed(2)}x`;
+    if ($('#bd-slider-eyespacing')) $('#bd-slider-eyespacing').value = config.eyeSpacing ?? 1.0;
+    if ($('#bd-lbl-eyespacing')) $('#bd-lbl-eyespacing').textContent = `${(config.eyeSpacing ?? 1.0).toFixed(2)}x`;
 
     const setSeg = (containerId, val) => {
       const c = $(containerId);
@@ -520,22 +700,22 @@ export class BuildADweebHud {
       if ($('#bd-slider-conf')) {
         const c = dna.confidence ?? 0.8;
         $('#bd-slider-conf').value = c;
-        if ($('#bd-lbl-conf')) $('#bd-lbl-conf').textContent = c > 0.65 ? 'Berserk Rushdown' : c < 0.4 ? 'Elusive Kiter' : 'Balanced';
+        if ($('#bd-lbl-conf')) $('#bd-lbl-conf').textContent = dnaStanceLabel(c);
       }
       if ($('#bd-slider-aim')) {
         const a = dna.aimAccuracy ?? 0.7;
         $('#bd-slider-aim').value = a;
-        if ($('#bd-lbl-aim')) $('#bd-lbl-aim').textContent = a > 0.6 ? 'Sniper / Calculated' : 'Rapid Chaos Spam';
+        if ($('#bd-lbl-aim')) $('#bd-lbl-aim').textContent = dnaAimLabel(a);
       }
       if ($('#bd-slider-agi')) {
         const ag = dna.agility ?? 0.75;
         $('#bd-slider-agi').value = ag;
-        if ($('#bd-lbl-agi')) $('#bd-lbl-agi').textContent = ag > 0.7 ? 'Hyper-Agile' : 'Steady';
+        if ($('#bd-lbl-agi')) $('#bd-lbl-agi').textContent = dnaAgilityLabel(ag);
       }
       if ($('#bd-slider-scav')) {
         const sc = dna.scavenge ?? 0.6;
         $('#bd-slider-scav').value = sc;
-        if ($('#bd-lbl-scav')) $('#bd-lbl-scav').textContent = sc > 0.5 ? 'Toy / Bomb Hunter' : 'Fists & Kicks';
+        if ($('#bd-lbl-scav')) $('#bd-lbl-scav').textContent = dnaScavengeLabel(sc);
       }
     }
 
@@ -554,6 +734,8 @@ export class BuildADweebHud {
         b.classList.toggle('active', !!match);
       });
     }
+
+    this.syncProfile(config);
   }
 
   show() {
@@ -565,6 +747,11 @@ export class BuildADweebHud {
   }
 
   dispose() {
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('bd-config-sync', this._onConfigSync);
+      document.removeEventListener('bd-history-sync', this._onHistorySync);
+      document.removeEventListener('keydown', this._onKeyDown);
+    }
     this.root?.remove();
   }
 }

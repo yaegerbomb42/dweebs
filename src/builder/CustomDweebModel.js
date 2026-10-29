@@ -157,6 +157,53 @@ export const DEFAULT_BUILD_CONFIG = {
 const INK = 0x14101c;
 const WHITE = 0xffffff;
 
+/** Human-readable DNA trait labels shared by the lab HUD and telemetry. */
+export function dnaStanceLabel(v) {
+  return v > 0.65 ? 'Berserk Rushdown' : v < 0.4 ? 'Elusive Kiter' : 'Balanced';
+}
+export function dnaAimLabel(v) {
+  return v > 0.6 ? 'Sniper / Calculated' : 'Rapid Chaos Spam';
+}
+export function dnaAgilityLabel(v) {
+  return v > 0.7 ? 'Hyper-Agile' : 'Steady';
+}
+export function dnaScavengeLabel(v) {
+  return v > 0.5 ? 'Toy / Bomb Hunter' : 'Fists & Kicks';
+}
+
+/**
+ * Derive a glanceable battle profile from a build config.
+ * Normalizes each combat stat to 0..1 and rolls them into an overall rating + tier.
+ * Pure function — safe to call from the HUD or tests with partial configs.
+ */
+export function computeBattleProfile(config = {}) {
+  const stats = config.stats || {};
+  const clamp01 = v => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  const norm = (v, min, max, fb) => clamp01(((Number.isFinite(v) ? v : fb) - min) / (max - min));
+
+  const mass = norm(stats.mass, 1.8, 4.5, 3.0);
+  const speed = norm(stats.speed, 0.7, 1.4, 1.0);
+  const jump = norm(stats.jump, 0.8, 1.4, 1.0);
+  const armor = norm(stats.armor, 0.8, 1.4, 1.0);
+
+  const rating = Math.round(100 * (0.32 * mass + 0.26 * speed + 0.18 * jump + 0.24 * armor));
+  const tier = rating >= 80 ? 'S' : rating >= 65 ? 'A' : rating >= 50 ? 'B' : rating >= 35 ? 'C' : 'D';
+
+  const dna = config.dna || {};
+  return {
+    mass,
+    speed,
+    jump,
+    armor,
+    rating,
+    tier,
+    stance: dnaStanceLabel(dna.confidence ?? 0.8),
+    aim: dnaAimLabel(dna.aimAccuracy ?? 0.7),
+    agility: dnaAgilityLabel(dna.agility ?? 0.7),
+    scavenge: dnaScavengeLabel(dna.scavenge ?? 0.6),
+  };
+}
+
 function hexNumber(val, fallback = 0xff4d5e) {
   if (typeof val === 'number') return val;
   if (typeof val === 'string') {
