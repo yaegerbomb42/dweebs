@@ -134,6 +134,62 @@ export function applyCommand(st, c) {
     st.prepTicks = 0;
     return true;
   }
+  if (c.type === 'artillery') {
+    const cost = 25;
+    if (st.coins[c.team] < cost) return false;
+    st.coins[c.team] -= cost;
+    const tx = clamp(+c.x || 0, -FIELD.halfX + 2, FIELD.halfX - 2);
+    const tz = clamp(+c.z || 0, -FIELD.halfZ + 2, FIELD.halfZ - 2);
+    const splashR = 8.5;
+    const splashDmg = 160;
+    st.events.push({ type: 'artillery', team: c.team, x: tx, z: tz, radius: splashR });
+    for (const u of st.units) {
+      if (!u.alive || u.team === c.team) continue;
+      const dist = Math.hypot(u.x - tx, u.z - tz);
+      if (dist < splashR) {
+        const falloff = 1 - (dist / splashR);
+        const dmg = Math.round(splashDmg * falloff);
+        u.hp -= dmg;
+        const kdirX = (u.x - tx) / Math.max(0.1, dist);
+        const kdirZ = (u.z - tz) / Math.max(0.1, dist);
+        u.kx += kdirX * 2.2 * falloff;
+        u.kz += kdirZ * 2.2 * falloff;
+        st.events.push({ type: 'hit', id: u.id, dmg, crit: true, x: u.x, z: u.z });
+        if (u.hp <= 0) kill(st, u, c.team, kdirX * 3, kdirZ * 3);
+      }
+    }
+    return true;
+  }
+  if (c.type === 'supply') {
+    const cost = 15;
+    if (st.coins[c.team] < cost) return false;
+    st.coins[c.team] -= cost;
+    const rally = st.rally[c.team] || st.forts[c.team];
+    const tx = rally.x;
+    const tz = rally.z;
+    st.events.push({ type: 'supply', team: c.team, x: tx, z: tz });
+    for (const u of st.units) {
+      if (!u.alive || u.team !== c.team) continue;
+      if (Math.hypot(u.x - tx, u.z - tz) < 14) {
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.45);
+        u.speedMul = 1.35;
+      }
+    }
+    return true;
+  }
+  if (c.type === 'stance') {
+    const stance = c.stance || 'charge';
+    st.stance = st.stance || {};
+    st.stance[c.team] = stance;
+    st.events.push({ type: 'stance', team: c.team, stance });
+    const mul = stance === 'charge' ? 1.35 : 0.8;
+    for (const u of st.units) {
+      if (u.alive && u.team === c.team) {
+        u.speedMul = mul;
+      }
+    }
+    return true;
+  }
   return false;
 }
 

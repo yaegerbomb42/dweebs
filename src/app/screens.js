@@ -20,13 +20,13 @@ export function buildScreens() {
       <div class="mall-container">
         <header class="mall-header">
           <h1 class="mall-title">THE DWEEB MALL</h1>
-          <p class="mall-subtitle">Pick your physics playground — 5 games in one living universe</p>
+          <p class="mall-subtitle">4 massive physics experiences — one living universe</p>
         </header>
 
-        <div class="mall-grid">
+        <div class="mall-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 1040px; margin: 0 auto;">
           <!-- Game 1: Classic Brawler -->
           <article class="mall-card card-classic" id="mall-card-1">
-            <div class="mall-badge">CLASSIC BRAWLER</div>
+            <div class="mall-badge">STADIUM BRAWLER</div>
             <div class="mall-icon">🥊</div>
             <h3 class="mall-card-title">Knockout Arena</h3>
             <p class="mall-card-desc">The original 4-player stadium brawler. Dumb ways to die, crazy physics weapons & sudden death.</p>
@@ -40,42 +40,33 @@ export function buildScreens() {
 
           <!-- Game 2: Expedition & Dynasty -->
           <article class="mall-card card-dynasty" id="mall-card-2">
-            <div class="mall-badge badge-green">OPEN WORLD SIM</div>
+            <div class="mall-badge badge-green">LIVING CIVILIZATION</div>
             <div class="mall-icon">🌱</div>
             <h3 class="mall-card-title">Expedition &amp; Dynasty</h3>
-            <p class="mall-card-desc">Build a living civilization in The Meadowlands. Watch autonomous Dweebs learn skills and conquer ruins.</p>
+            <p class="mall-card-desc">Open-world colony in The Meadowlands. Assign citizen roles, build toy contraptions, solve ruin vaults, and guide your dynasty.</p>
             <button class="btn mall-btn green" id="app-btn-dynasty">ENTER EXPEDITION</button>
           </article>
 
-          <!-- Game 3: Escape Sandbox -->
-          <article class="mall-card card-escape" id="mall-card-3">
-            <div class="mall-badge badge-blue">PHYSICAL PUZZLES</div>
-            <div class="mall-icon">🧩</div>
-            <h3 class="mall-card-title">Escape Rooms</h3>
-            <p class="mall-card-desc">Puzzles without one solution. Blow hinges off, stack squishy bodies, dig tunnels, or break the roof.</p>
-            <button class="btn mall-btn blue" id="app-btn-escape">PLAY ESCAPE</button>
-          </article>
-
-          <!-- Game 4: Mimic & Mutate -->
-          <article class="mall-card card-mimic" id="mall-card-4">
-            <div class="mall-badge badge-purple">1ST PERSON CHAOS</div>
-            <div class="mall-icon">🐒</div>
-            <h3 class="mall-card-title">Mimic &amp; Mutate</h3>
-            <p class="mall-card-desc">First-person toy lab. Do an action and watch crowds of wide-eyed Dweebs copy and hilariously mutate it.</p>
-            <button class="btn mall-btn purple" id="app-btn-mimic">ENTER LAB</button>
-          </article>
-
-          <!-- Game 5: Dweeb Warfare -->
+          <!-- Game 3: Dweeb Warfare -->
           <article class="mall-card card-warfare" id="mall-card-5">
-            <div class="mall-badge badge-red">100 VS 100</div>
+            <div class="mall-badge badge-red">PHYSICS BATTLE SIM</div>
             <div class="mall-icon">⚔️</div>
             <h3 class="mall-card-title">Dweeb Warfare</h3>
-            <p class="mall-card-desc">Mass physics battle sim. Stealers, rocket launchers, kamis, and giant catapults clashing in pure chaos.</p>
+            <p class="mall-card-desc">Massive army combat. Tactical commander abilities, artillery barrages, supply drops, unit counters, and 100v100 warfare.</p>
             <div class="mall-subgames">
-              <button class="btn mall-sub-btn pink" id="app-btn-warfare-defense" title="Defend Fort 20 Waves">🛡️ Defend</button>
+              <button class="btn mall-sub-btn pink" id="app-btn-warfare-defense" title="Defend Fort 20 Waves">🛡️ Defend Fort</button>
               <button class="btn mall-sub-btn blue" id="app-btn-warfare-versus" title="100v100 Duel vs AI">⚔️ Versus AI</button>
             </div>
             <button class="btn mall-btn pink" id="app-btn-warfare">START WARFARE</button>
+          </article>
+
+          <!-- Game 4: Build-A-Dweeb -->
+          <article class="mall-card card-builder" id="mall-card-builder">
+            <div class="mall-badge badge-purple">CREATURE LAB &amp; AI ARENA</div>
+            <div class="mall-icon">🧬</div>
+            <h3 class="mall-card-title">Build-A-Dweeb</h3>
+            <p class="mall-card-desc">Sculpt a custom 3D creature with body shapes, eyes, appendages, colors, and AI combat DNA. Watch them clash in autonomous colosseum battles!</p>
+            <button class="btn mall-btn purple" id="app-btn-builder">ENTER 3D LAB</button>
           </article>
         </div>
 

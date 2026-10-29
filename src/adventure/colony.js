@@ -4,7 +4,7 @@
 // through queued blueprints), capped resource stores with silo overflow, and the
 // vault loot that citizens bring home — gold coins, cosmetic hats, special tools.
 
-import { Citizen, PERSONALITIES, ROLES } from './citizen.js';
+import { Citizen, PERSONALITIES, ROLES, CITIZEN_STATES } from './citizen.js';
 import { BLUEPRINTS, SILO_CAP_BONUS } from './building.js';
 
 export class Colony {
@@ -167,6 +167,19 @@ export class Colony {
       }
     }
     return true;
+  }
+
+  launchExpedition(world) {
+    if (!this.citizens.length) return;
+    const actor = this.citizens[Math.floor(Math.random() * this.citizens.length)];
+    actor.state = CITIZEN_STATES.EXPEDITION;
+    actor.say?.('Heading out on an expedition! 🧭', '🧭', 3);
+    const silos = this._silosFrom(world);
+    this.addResource('berries', 4, silos);
+    this.addResource('wood', 2, silos);
+    this.addResource('stone', 2, silos);
+    this.addResource('gold', 1, silos);
+    this._addLog(`🧭 Expedition launched! ${actor.name} explored the wilderness: +4 🍓, +2 🪵, +2 🪨, +1 🪙!`);
   }
 
   update(dt, world) {

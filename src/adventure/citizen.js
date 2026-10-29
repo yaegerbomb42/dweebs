@@ -424,11 +424,13 @@ export class Citizen {
       if (!target || !target.repairStep) {
         this.stateTimer = 0;
         this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+      if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
         return;
       }
       this._ensureHammer();
       if (distToTarget <= this.arrivalDist + 0.4) {
         this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+      if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
         const stillDamaged = target.repairStep(dt);
         this._repairSwing += dt * 9;
         this.repairHammer.rotation.z = -0.35 + Math.abs(Math.sin(this._repairSwing)) * 0.95;
@@ -451,6 +453,7 @@ export class Citizen {
       const nightBonus = tod !== undefined && (tod >= 20 || tod < 6) ? 2 : 1;
       this.energy = Math.min(100, this.energy + dt * 15 * nightBonus);
       this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+      if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
       return;
     }
 
@@ -482,6 +485,7 @@ export class Citizen {
             }
           }
           this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+      if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
           return;
         }
       }
@@ -549,6 +553,7 @@ export class Citizen {
         }
       }
       this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+      if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
       return;
     }
 
@@ -581,5 +586,11 @@ export class Citizen {
       moveY: -dirZ, // Three.js forward is -Z
       jump,
     };
+    if (this.dweeb.moveInput) {
+      this.dweeb.moveInput.set(dirX, -dirZ);
+    }
+    if (jump && typeof this.dweeb.jump === 'function') {
+      this.dweeb.jump();
+    }
   }
 }

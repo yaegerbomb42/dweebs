@@ -209,6 +209,8 @@ export class DeathCinema {
 
   stop() {
     this.isPlaying = false;
+    this.currentClip = null;
+    this.savedClips = [];
     this.overlay?.classList.add('hidden');
     this.tracks.clear();
   }

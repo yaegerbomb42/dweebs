@@ -28,6 +28,7 @@ export class Match {
     this.timer = 0;
     this.countdown = 0;
     this.phaseTimer = 0;
+    this.pausedForCinema = false;
     this.time = 0;
     this.suddenDeath = false;
     this.roundWinner = null;
@@ -88,6 +89,7 @@ export class Match {
     }
 
     if (this.phase === Phase.ROUND_END) {
+      if (this.pausedForCinema) return;
       this.phaseTimer -= dt;
       if (this.phaseTimer <= 0) {
         if (this.matchWinner) {
@@ -101,6 +103,7 @@ export class Match {
     }
 
     if (this.phase !== Phase.PLAYING) return;
+    if (this.settings.mode === 'adventure') return;
 
     this.timer -= dt;
     if (!this.suddenDeath && this.timer <= this.settings.suddenDeathAt) {

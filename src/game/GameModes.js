@@ -78,6 +78,26 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: false,
   },
+  build: {
+    id: 'build',
+    name: 'Build-A-Dweeb',
+    tagline: '3D Creature Workshop & Autonomous AI Battler.',
+    stocks: 3,
+    hasWeapons: true,
+    hasWallDrop: false,
+    hasContraptions: true,
+    hasEscapePuzzles: false,
+  },
+  build_arena: {
+    id: 'build_arena',
+    name: 'Build-A-Dweeb Colosseum',
+    tagline: 'Zero-input autonomous AI creature showdown!',
+    stocks: 3,
+    hasWeapons: true,
+    hasWallDrop: false,
+    hasContraptions: true,
+    hasEscapePuzzles: false,
+  },
 };
 
 export const DEFAULT_MODE = 'derby';

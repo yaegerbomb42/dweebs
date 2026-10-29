@@ -163,6 +163,10 @@ function wireTitle({ nodes, router, toast }) {
     launchGameMode('mimic', 'stadium');
   });
 
+  nodes.title.querySelector('#app-btn-builder')?.addEventListener('click', () => {
+    launchGameMode('build', 'stadium');
+  });
+
   // Game 5 (Dweeb Warfare) and submodes
   nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
     launchGameMode('warfare', 'stadium', 'defense');
@@ -402,16 +406,24 @@ function wireGameEvents({ router, nodes, toast }) {
     onResults: () => router.go('/results', { replace: true }),
     onMenu: () => {
       router.setMatchLock(false);
+      if (router.path === '/' || location.hash === '#/' || location.hash === '') return;
       if (router.path === '/results' || router.path === '/match') router.go('/play', { replace: true });
     },
   });
 
   // The game's own QUIT / MENU buttons must release the route lock.
-  for (const id of ['btn-quit', 'btn-main-menu', 'btn-play-again']) {
+  for (const id of ['btn-quit', 'btn-main-menu', 'btn-play-again', 'btn-pause-mall', 'btn-results-mall']) {
     document.getElementById(id)?.addEventListener('click', () => {
       queueMicrotask(() => {
         if (!isMatchLive()) router.setMatchLock(false);
       });
+    });
+  }
+
+  for (const id of ['btn-pause-mall', 'btn-results-mall']) {
+    document.getElementById(id)?.addEventListener('click', () => {
+      router.setMatchLock(false);
+      router.go('/');
     });
   }
   document.getElementById('btn-play')?.addEventListener('click', () => {

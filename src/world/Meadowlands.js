@@ -44,6 +44,8 @@ export class Meadowlands {
     this.clock = 0;
 
     // ── Expedition & Dynasty: day/night, ruins, critters, torchlight ──
+    this.trees = [];          // exposed tree coordinates for lumber gathering
+    this.rockNodes = [];      // exposed stone/rock coordinates for mining
     this.ziplines = [];       // registered by watchtower structures
     this.looseProps = [];     // { body } physics props launchpads can fling
     this.stuntFeed = [];      // recent physics stunts citizens react to
@@ -727,6 +729,43 @@ export class Meadowlands {
     for (const pos of bushPositions) {
       this._createBerryBush(pos.x, this._getHeight(pos.x, pos.z), pos.z);
     }
+
+    // Rock / Stone Nodes scattered around meadow
+    const rockCoords = [
+      { x: -18, z: -10, s: 1.2 },
+      { x: 18, z: 12, s: 1.4 },
+      { x: 15, z: -16, s: 1.3 },
+      { x: -8, z: 24, s: 1.2 },
+      { x: -11.5, z: 2, s: 1.0 }, // stepping stone
+      { x: -9.5, z: 2.3, s: 1.1 }, // stepping stone
+      { x: -7.5, z: 1.8, s: 1.0 }, // stepping stone
+    ];
+    this.rockNodes = [];
+    for (const rc of rockCoords) {
+      const y = this._getHeight(rc.x, rc.z);
+      this.rockNodes.push({ x: rc.x, y, z: rc.z, s: rc.s });
+      if (Math.abs(rc.z - 2) > 0.6) {
+        this._createRockNode(rc.x, y, rc.z, rc.s);
+      }
+    }
+  }
+
+  _createRockNode(x, y, z, scale = 1) {
+    const rock = new THREE.Group();
+    rock.position.set(x, y, z);
+    rock.scale.setScalar(scale);
+
+    const geo = new THREE.DodecahedronGeometry(0.9, 1);
+    const mat = toonMat({ color: 0x64748b, flatShading: true });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = 0.6;
+    mesh.rotation.set(0.3, Math.PI / 4, 0.2);
+    rock.add(mesh);
+
+    this.group.add(rock);
+    if (this.physicsWorld) {
+      this.physicsWorld.createFixedCylinder(x, y + 0.6 * scale, z, 0.8 * scale, 0.6 * scale, 'stone');
+    }
   }
 
   _createBerryBush(x, y, z) {
@@ -776,8 +815,10 @@ export class Meadowlands {
       { x: 8, z: -25, type: 'broad', s: 1.2 },
     ];
 
+    this.trees = [];
     for (const tc of treeCoords) {
       const y = this._getHeight(tc.x, tc.z);
+      this.trees.push({ x: tc.x, y, z: tc.z, type: tc.type, s: tc.s });
       if (tc.type === 'pine') {
         this._createPineTree(tc.x, y, tc.z, tc.s);
       } else {
@@ -1025,6 +1066,9 @@ export class Meadowlands {
       if (bush.regenTimer >= 20) {
         bush.regenTimer = 0;
         bush.available = Math.min(5, bush.available + 1);
+        if (bush.berries && bush.berries[bush.available - 1]) {
+          bush.berries[bush.available - 1].visible = true;
+        }
       }
     }
   }

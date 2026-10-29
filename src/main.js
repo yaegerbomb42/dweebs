@@ -41,11 +41,18 @@ import { saveVillage, loadVillage, applySave } from './adventure/persistence.js'
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
+import { BuildADweebLab } from './builder/BuildADweebLab.js';
+import { BuildADweebHud } from './builder/BuildADweebHud.js';
+import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebModel.js';
+import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
 import { defaultUrl } from './net/NetClient.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
+
+let lastBuilderPlayerConfig = null;
+let lastBuilderOppType = 'random';
 
 let currentMeadowlands = null;
 let colony = null;
@@ -53,9 +60,21 @@ let buildingManager = null;
 let currentEscapeSandbox = null;
 let currentMimicLab = null;
 let currentWarfare = null;
+let currentBuildLab = null;
+let currentBuildHud = null;
+let builderBots = [];
 let activeCitizenIdx = 0;
 let isBuildToolbarOpen = false;
 let villageSaveTimer = 0;
+let currentGatherTarget = null;
+
+function updateCitizenRoleBadges(cit) {
+  const curRole = cit?.role || '';
+  document.querySelectorAll('.role-badge-btn').forEach(btn => {
+    const r = btn.dataset.role || '';
+    btn.classList.toggle('active', r === curRole);
+  });
+}
 
 const ROSTER = [
   { name: 'Blorp', type: 'blob', color: PALETTE.pink },
@@ -209,7 +228,7 @@ async function init() {
   document.addEventListener('pointerlockchange', onPointerLockChange);
   canvas.addEventListener('click', (e) => {
     if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) {
-      if (!currentWarfare) cam.lock();
+      if (!currentWarfare && currentMode !== 'build_arena' && !currentBuildLab) cam.lock();
     }
   });
 
@@ -358,28 +377,44 @@ function setupMenu() {
   $('btn-pause-switcher')?.addEventListener('click', () => {
     toggleSwitcher();
   });
-  $('btn-pause-mall')?.addEventListener('click', () => {
+  const returnToMall = () => {
     audio.playUIClick();
     setPaused(false);
+    clearRematch();
+    hideSpectatorOverlay();
     toMenu();
-    location.hash = '#/';
+    $('main-menu')?.classList.add('hidden');
+    $('game-switcher-modal')?.classList.add('hidden');
+    if (window.__dweebsApp?.router) {
+      window.__dweebsApp.router.setMatchLock(false);
+      window.__dweebsApp.router.go('/');
+    } else {
+      location.hash = '#/';
+    }
+  };
+
+  $('btn-pause-mall')?.addEventListener('click', returnToMall);
+  $('btn-results-mall')?.addEventListener('click', returnToMall);
+  $('btn-build-rematch')?.addEventListener('click', () => {
+    audio.playUIClick();
+    $('results-screen')?.classList.add('hidden');
+    if (lastBuilderPlayerConfig) {
+      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType);
+    } else {
+      startBuildLab();
+    }
+  });
+  $('btn-build-workshop')?.addEventListener('click', () => {
+    audio.playUIClick();
+    $('results-screen')?.classList.add('hidden');
+    startBuildLab();
   });
   $('btn-close-switcher')?.addEventListener('click', () => {
     audio.playUIClick();
     $('game-switcher-modal')?.classList.add('hidden');
   });
-  $('btn-switcher-to-mall')?.addEventListener('click', () => {
-    audio.playUIClick();
-    $('game-switcher-modal')?.classList.add('hidden');
-    setPaused(false);
-    toMenu();
-    location.hash = '#/';
-  });
-  $('btn-back-to-mall')?.addEventListener('click', () => {
-    audio.playUIClick();
-    toMenu();
-    location.hash = '#/';
-  });
+  $('btn-switcher-to-mall')?.addEventListener('click', returnToMall);
+  $('btn-back-to-mall')?.addEventListener('click', returnToMall);
   $('hud-switcher-btn')?.addEventListener('click', () => {
     toggleSwitcher();
   });
@@ -429,7 +464,20 @@ function applyAudioSettings() {
 }
 
 function toMenu() {
+  if (currentMeadowlands) {
+    if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
+    currentMeadowlands.dispose();
+    currentMeadowlands = null;
+  }
+  if (buildingManager) {
+    buildingManager.cancelPlacing();
+    buildingManager = null;
+  }
+  colony = null;
+  audio.stopAmbience?.();
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
+  if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
+  if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
   match.phase = Phase.MENU;
   clearRematch();
   spectateTarget = null;
@@ -440,7 +488,8 @@ function toMenu() {
   audio.stopMusic();
   audio.setCharge(0);
   hud.setSpectator('');
-  for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud']) $(id)?.classList.add('hidden');
+  hideSpectatorOverlay();
+  for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud', 'spectator-duel-overlay']) $(id)?.classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
 
@@ -452,6 +501,7 @@ function clearDweebs() {
   for (const d of dweebs) d.destroy();
   dweebs = [];
   bots = [];
+  builderBots = [];
   player = null;
 }
 
@@ -491,18 +541,301 @@ function exitWarfare() {
   setTimeout(() => { location.hash = '#/'; }, 0);
 }
 
+function applyCustomDweebToBrawler(dweeb, config) {
+  const custom = buildCustomDweebModel(config);
+  dweeb.customModel = custom;
+  for (const c of dweeb.rig.children) {
+    if (c !== dweeb.playerRing && c !== dweeb.bubbleMesh && c !== dweeb.freezeMesh && c !== dweeb.parryMesh) {
+      c.visible = false;
+    }
+  }
+  dweeb.rig.add(custom.root);
+  custom.root.traverse(child => {
+    if (child.isMesh && child.material && !dweeb.flashMats.includes(child.material)) {
+      dweeb.flashMats.push(child.material);
+    }
+  });
+  if (config.stats) {
+    if (config.stats.speed) dweeb.stats.speed *= config.stats.speed;
+    if (config.stats.jump) dweeb.stats.jump *= config.stats.jump;
+    if (config.stats.mass) {
+      dweeb.stats.mass = config.stats.mass;
+      dweeb.collider?.setMass?.(config.stats.mass);
+    }
+  }
+  if (config.name) dweeb.name = config.name;
+  return custom;
+}
+
+function getArchetypeBadge(config = {}) {
+  if (config.badge) return config.badge.startsWith('[') ? config.badge : `[${config.badge}]`;
+  for (const preset of Object.values(ARCHETYPE_PRESETS || {})) {
+    if (preset.name && preset.name.toLowerCase() === (config.name || '').toLowerCase()) {
+      return `[${preset.badge}]`;
+    }
+  }
+  if (config.shape === 'chonk') return '[🦏 TITAN CHONK]';
+  if (config.shape === 'spiky') return '[⚡ SPEED GREMLIN]';
+  if (config.shape === 'capsule') return '[🎯 SNIPER BEAN]';
+  if (config.appendage === 'boxing_gloves' || config.appendages === 'boxing_gloves') return '[🥊 PUGILIST CHAMP]';
+  return '[🧬 CUSTOM DWEEB]';
+}
+
+function formatDnaTags(dna = {}) {
+  const conf = dna.confidence ?? 0.8;
+  const stance = conf > 0.65 ? 'Stance: Rushdown 🔥' : conf < 0.4 ? 'Stance: Kiter 🌀' : 'Stance: Balanced ⚔️';
+
+  const aim = dna.aimAccuracy ?? 0.7;
+  const aimStr = aim > 0.6 ? 'Aim: Sniper 🎯' : 'Aim: Chaos 🎯';
+
+  const agi = dna.agility ?? 0.7;
+  const agiStr = agi > 0.7 ? 'Agility: Hyper ⚡' : 'Agility: Heavy ⚡';
+
+  const scav = dna.scavenge ?? 0.6;
+  const scavStr = scav > 0.5 ? 'Scavenge: Toy Hunter 🎁' : 'Scavenge: Fists 🎁';
+
+  return [stance, aimStr, agiStr, scavStr];
+}
+
+function showSpectatorOverlay(playerConfig, oppConfig) {
+  const overlay = $('spectator-duel-overlay');
+  if (!overlay) return;
+
+  const p1Name = $('sdo-p1-name');
+  if (p1Name) p1Name.textContent = playerConfig.name || 'Your Dweeb';
+
+  const p1Badge = $('sdo-p1-badge');
+  if (p1Badge) p1Badge.textContent = getArchetypeBadge(playerConfig);
+
+  const p1Tags = $('sdo-p1-tags');
+  if (p1Tags) {
+    const tags = formatDnaTags(playerConfig.dna || playerConfig.DNA || {});
+    p1Tags.innerHTML = tags.map(t => `<span class="sdo-tag">${t}</span>`).join('');
+  }
+
+  const p2Name = $('sdo-p2-name');
+  if (p2Name) p2Name.textContent = oppConfig.name || 'Rival Bot';
+
+  const p2Badge = $('sdo-p2-badge');
+  if (p2Badge) p2Badge.textContent = getArchetypeBadge(oppConfig);
+
+  const p2Tags = $('sdo-p2-tags');
+  if (p2Tags) {
+    const tags = formatDnaTags(oppConfig.dna || oppConfig.DNA || {});
+    p2Tags.innerHTML = tags.map(t => `<span class="sdo-tag">${t}</span>`).join('');
+  }
+
+  overlay.classList.remove('hidden');
+}
+
+function hideSpectatorOverlay() {
+  const overlay = $('spectator-duel-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+function generateOpponentConfig(playerConfig, oppType = 'random') {
+  if (oppType === 'mirror') {
+    return {
+      ...playerConfig,
+      name: `Anti-${playerConfig.name || 'Dweeb'}`,
+      badge: '🤖 MIRROR RIVAL',
+      primaryColor: '#2b1b3d',
+      accentColor: '#ff2a5f',
+      dna: {
+        confidence: 0.9,
+        aimAccuracy: playerConfig.dna?.aimAccuracy ?? 0.75,
+        scavenge: playerConfig.dna?.scavenge ?? 0.6,
+        agility: playerConfig.dna?.agility ?? 0.8,
+      },
+    };
+  }
+  if (oppType === 'juggernaut' && ARCHETYPE_PRESETS?.titan_chonk) {
+    return { ...ARCHETYPE_PRESETS.titan_chonk };
+  }
+  if (oppType === 'gremlin' && ARCHETYPE_PRESETS?.speed_gremlin) {
+    return { ...ARCHETYPE_PRESETS.speed_gremlin };
+  }
+  if (oppType === 'sniper' && ARCHETYPE_PRESETS?.sniper_bean) {
+    return { ...ARCHETYPE_PRESETS.sniper_bean };
+  }
+  if (oppType === 'pugilist' && ARCHETYPE_PRESETS?.pugilist_champ) {
+    return { ...ARCHETYPE_PRESETS.pugilist_champ };
+  }
+  // 'random' (mutant)
+  const dummyScene = new THREE.Scene();
+  const lab = new BuildADweebLab(dummyScene, null, null);
+  const cfg = lab.mutateRandom();
+  lab.dispose();
+  cfg.badge = '👾 RANDOM MUTANT';
+  return cfg;
+}
+
+function startBuildLab() {
+  hideSpectatorOverlay();
+  clearRematch();
+  clearDweebs();
+  match.phase = Phase.MENU;
+  arena.hazardsActive = false;
+  spectateTarget = null;
+  if (arena.setStadiumVisible) arena.setStadiumVisible(false);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
+  if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+  if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+  if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
+  colony = null;
+  if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+  if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
+  if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+
+  cam.unlock();
+  currentMode = 'build';
+
+  for (const id of ['main-menu', 'results-screen', 'how-to-play', 'round-screen', 'pause-screen', 'civ-hud', 'game-switcher-modal', 'hud', 'spectator-duel-overlay']) {
+    $(id)?.classList.add('hidden');
+  }
+
+  currentBuildLab = new BuildADweebLab(scene, camera, renderer);
+  currentBuildHud = new BuildADweebHud(document.body, {
+    onChange: patch => currentBuildLab?.updateConfig(patch),
+    onConfigChange: patch => currentBuildLab?.updateConfig(patch),
+    onPresetSelect: presetKey => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const cfg = currentBuildLab.applyPreset(presetKey);
+      if (cfg) currentBuildHud.syncForm(cfg);
+    },
+    onRandomMutant: () => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const cfg = currentBuildLab.mutateRandom();
+      currentBuildHud.syncForm(cfg);
+    },
+    onExit: exitBuildLab,
+    onLaunchArena: oppType => {
+      if (!currentBuildLab) return;
+      launchBuilderArena(currentBuildLab.config, oppType);
+    },
+  });
+
+  currentBuildHud.syncForm(currentBuildLab.config);
+  currentBuildHud.show();
+
+  camera.position.set(0, 1.1, 2.8);
+  camera.lookAt(0, 0.45, 0);
+
+  audio.init();
+  audio.resume();
+  applyAudioSettings();
+  audio.stopMusic();
+}
+
+function exitBuildLab() {
+  hideSpectatorOverlay();
+  if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
+  if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+  toMenu();
+  if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = true;
+  setTimeout(() => { location.hash = '#/'; }, 0);
+}
+
+function launchBuilderArena(playerConfig, oppType = 'random') {
+  lastBuilderPlayerConfig = playerConfig;
+  lastBuilderOppType = oppType;
+
+  if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
+  if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+
+  clearRematch();
+  clearDweebs();
+
+  arena.setArena('stadium');
+  arena.reset();
+  if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = true;
+  arena.hazardsActive = true;
+  spectateTarget = null;
+  currentMode = 'build_arena';
+
+  for (const id of ['game-switcher-modal', 'pause-screen', 'main-menu', 'results-screen']) $(id)?.classList.add('hidden');
+  $('hud').classList.remove('hidden');
+
+  const spawn0 = arena.getSpawnPoint(0, 2);
+  player = new Dweeb(scene, physics, {
+    isPlayer: true,
+    name: playerConfig.name || 'Your Dweeb',
+    type: playerConfig.shape || 'blob',
+    color: 0xffffff,
+    index: 0,
+    position: spawn0,
+  });
+  dweebs.push(player);
+  wireDweeb(player);
+  applyCustomDweebToBrawler(player, playerConfig);
+
+  const oppConfig = generateOpponentConfig(playerConfig, oppType);
+  const spawn1 = arena.getSpawnPoint(1, 2);
+  const oppDweeb = new Dweeb(scene, physics, {
+    isPlayer: false,
+    name: oppConfig.name || 'Rival Bot',
+    type: oppConfig.shape || 'cube',
+    color: 0xffffff,
+    index: 1,
+    position: spawn1,
+  });
+  dweebs.push(oppDweeb);
+  wireDweeb(oppDweeb);
+  applyCustomDweebToBrawler(oppDweeb, oppConfig);
+
+  builderBots = [
+    new BuilderBot(player, arena, combat, playerConfig.dna),
+    new BuilderBot(oppDweeb, arena, combat, oppConfig.dna),
+  ];
+
+  controller = new Controller(player, cam, combat);
+  controller.enabled = false;
+
+  combat.setDweebs(dweebs);
+  arena.dweebs = dweebs;
+  hud.setup(dweebs);
+
+  match.settings.stocks = 3;
+  match.settings.mode = 'build_arena';
+  match.startMatch(dweebs);
+
+  cam.unlock();
+  cam.snapTo(0, 2, 9);
+  hud.setSuddenDeath('🤖 100% AUTONOMOUS AI ARENA DUEL 🤖');
+  setTimeout(() => { if (match.running) hud.setSuddenDeath(''); }, 3500);
+
+  showSpectatorOverlay(playerConfig, oppConfig);
+
+  audio.init();
+  audio.resume();
+  applyAudioSettings();
+}
+
 function startMatch() {
   const launch = window.__dweebsLaunch;
   window.__dweebsLaunch = null;
   if (launch?.mode && GAME_MODES[launch.mode]) settings.mode = launch.mode;
   if (launch?.arena && ARENAS.some(a => a.id === launch.arena)) settings.arena = launch.arena;
   for (const id of ['game-switcher-modal', 'pause-screen']) $(id)?.classList.add('hidden');
+  if ((settings.mode || 'derby') === 'build') return startBuildLab();
   if ((settings.mode || 'derby') === 'warfare') return startWarfare(launch?.submode || 'defense');
   if (currentWarfare) {
     currentWarfare.dispose();
     currentWarfare = null;
     document.body.classList.remove('warfare-active');
   }
+  if (currentBuildLab) {
+    currentBuildLab.dispose();
+    currentBuildLab = null;
+  }
+  if (currentBuildHud) {
+    currentBuildHud.dispose();
+    currentBuildHud = null;
+  }
+  hideSpectatorOverlay();
   clearRematch();
   clearDweebs();
   arena.setArena(settings.arena);
@@ -536,80 +869,36 @@ function startMatch() {
   fx.player = player;
   hud.setup(dweebs);
 
-  match.settings.stocks = +settings.stocks;
   currentMode = settings.mode || 'derby';
+  match.settings.stocks = (GAME_MODES[currentMode]?.stocks ?? +settings.stocks);
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
 
-  // ── Mode Initialization (Game 1, Game 2, Game 3, Game 4, Game 5) ──
+  // ── Mode Initialization (Knockout Arena vs Expedition & Dynasty) ──
   const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
-  const isEscape = (currentMode === 'escape');
-  const isMimic = (currentMode === 'mimic');
 
-  if (isMimic) {
+  if (isAdventure) {
     if (arena.setStadiumVisible) arena.setStadiumVisible(false);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
-    if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
-    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
-    if (currentMimicLab) currentMimicLab.dispose();
-    currentMimicLab = new MimicLab(physics, scene);
-    if (player && player.body) {
-      player.body.setTranslation({ x: 0, y: 1.2, z: 0 }, true);
-    }
-    for (let i = 0; i < dweebs.length; i++) {
-      const d = dweebs[i];
-      if (!d.isPlayer && d.body) {
-        const ang = (i / dweebs.length) * Math.PI * 2;
-        d.body.setTranslation({ x: Math.cos(ang) * 8.5, y: 1.2, z: Math.sin(ang) * 8.5 }, true);
-      }
-    }
-    cam.setMode('first_person');
-    $('civ-hud')?.classList.add('hidden');
-    $('hud-top')?.classList.remove('hidden');
-    $('hud-cards')?.classList.remove('hidden');
-    const timer = $('hud-timer');
-    if (timer) timer.textContent = 'MIMIC LAB';
-  } else if (isEscape) {
-    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
-    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
-    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
-    if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
-    if (currentEscapeSandbox) currentEscapeSandbox.dispose();
-    currentEscapeSandbox = new EscapeSandbox(physics, scene);
-    if (player && player.body) {
-      player.body.setTranslation({ x: 0, y: 1.2, z: 6 }, true);
-    }
-    // Spawn companion bot inside chamber
-    if (dweebs.length > 1 && dweebs[1].body) {
-      dweebs[1].body.setTranslation({ x: 2, y: 1.2, z: 6 }, true);
-    }
-    cam.setMode('explorer');
-    $('civ-hud')?.classList.add('hidden');
-    $('hud-top')?.classList.remove('hidden');
-    $('hud-cards')?.classList.remove('hidden');
-    const timer = $('hud-timer');
-    if (timer) timer.textContent = 'ESCAPE!';
-  } else if (isAdventure) {
-    if (arena.setStadiumVisible) arena.setStadiumVisible(false);
-    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
-    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
-    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
     if (currentMeadowlands) currentMeadowlands.dispose();
     currentMeadowlands = new Meadowlands(physics, scene, { fx });
     colony = new Colony();
+    bots = []; // Citizens are autonomous and peaceful; no brawler AI in adventure
     for (const d of dweebs) {
       if (!d.isPlayer) colony.addCitizen(d);
     }
-    // Spawn player in village clearing at y = 1.2
+    // Spawn player in village clearing at campfire
     if (player && player.body) {
       player.body.setTranslation({ x: 0, y: 1.2, z: 2 }, true);
+      player.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     }
     // Spawn citizens near campfire
     for (let i = 0; i < colony.citizens.length; i++) {
       const c = colony.citizens[i];
-      const ang = (i / colony.citizens.length) * Math.PI * 2;
+      const ang = (i / Math.max(1, colony.citizens.length)) * Math.PI * 2;
       if (c.dweeb && c.dweeb.body) {
         c.dweeb.body.setTranslation({ x: Math.cos(ang) * 4, y: 1.2, z: Math.sin(ang) * 4 }, true);
+        c.dweeb.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       }
     }
     cam.setMode('explorer');
@@ -626,11 +915,25 @@ function startMatch() {
       const restored = applySave(savedVillage, { colony, buildingManager, world: currentMeadowlands });
       colony._addLog(`📂 Welcome back! Restored ${restored.citizens} citizens and ${restored.structures} structures.`);
     }
+
+    for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
+    $('hud')?.classList.remove('hidden');
+    audio.init();
+    audio.resume();
+    applyAudioSettings();
+    audio.startAmbience();
+    audio.startMusic(false);
+    controller.enabled = true;
+    match.phase = Phase.PLAYING;
+    match.running = false; // Prevents brawler stocks, sudden death, countdowns, and blast zone KOs
+    hud.clearTransient();
+    trails.clear();
+    bursts.clear();
+    decals.clear();
+    return;
   } else {
     if (arena.setStadiumVisible) arena.setStadiumVisible(true);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
-    if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
-    if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
     if (currentMeadowlands) {
       // Save the village before tearing it down.
       if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
@@ -647,7 +950,7 @@ function startMatch() {
     $('hud-cards')?.classList.remove('hidden');
   }
 
-  for (const id of ['main-menu', 'results-screen', 'how-to-play']) $(id).classList.add('hidden');
+  for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden');
   audio.init();
   audio.resume();
@@ -753,7 +1056,9 @@ const matchEvents = {
     audio.playCountdown(true);
     audio.playCheer(0.8);
     arena.excite(0.8);
-    controller.enabled = true;
+    if (currentMode !== 'build_arena') {
+      controller.enabled = true;
+    }
   },
   onSuddenDeath() {
     arena.startSuddenDeath(match.settings.suddenDeathAt);
@@ -807,11 +1112,6 @@ const matchEvents = {
     if (d.isPlayer) { const p = d.getPosition(); cam.snapTo(p.x, p.y, p.z); }
   },
   onRoundEnd(winner, ranked) {
-    if (deathCinema && deathCinema.savedClips.length > 0) {
-      deathCinema.playCinema(deathCinema.savedClips, () => {
-        // Continue to standings after replay cinema
-      });
-    }
     controller.enabled = false;
     arena.hazardsActive = false;
     audio.setHeartbeat(0);
@@ -821,7 +1121,9 @@ const matchEvents = {
     hud.announce(you ? 'YOU WIN THE ROUND!' : `${winner.name.toUpperCase()} WINS!`, you ? 'go small' : 'small', 2.5);
     if (you) audio.playVictory(); else audio.playCheer(1);
     arena.excite(1.5);
-    setTimeout(() => {
+
+    const showRoundSummary = () => {
+      match.pausedForCinema = false;
       if (match.phase !== Phase.ROUND_END) return;
       hud.announcerEl.className = 'hide';
       $('round-title').textContent = match.matchWinner ? 'MATCH POINT!' : `ROUND ${match.round} DONE!`;
@@ -829,7 +1131,16 @@ const matchEvents = {
       if (banners.length) { audio.playBanner(you); hud.confetti(40); }
       $('round-podium').innerHTML = podium(ranked.slice(0, 3), d => `${plural(d.eliminated ? 0 : d.stocks, 'stock')} · ${Math.floor(d.percent)}%`);
       $('round-screen').classList.remove('hidden');
-    }, 1300);
+    };
+
+    if (deathCinema && deathCinema.savedClips.length > 0 && currentMode !== 'adventure') {
+      match.pausedForCinema = true;
+      deathCinema.playCinema(deathCinema.savedClips, () => {
+        showRoundSummary();
+      });
+    } else {
+      setTimeout(showRoundSummary, 1300);
+    }
   },
   onNextRound() {
     startRound();
@@ -837,6 +1148,7 @@ const matchEvents = {
   onMatchEnd(winner, standings) {
     $('round-screen').classList.add('hidden');
     $('hud').classList.add('hidden');
+    hideSpectatorOverlay();
     resetSuddenDeathFx();
     cam.unlock();
     audio.stopMusic();
@@ -845,18 +1157,39 @@ const matchEvents = {
     spectateTarget = null;
     hud.setSpectator('');
     const you = winner.isPlayer;
-    $('result-title').textContent = you ? 'YOU WIN!' : `${winner.name.toUpperCase()} WINS!`;
+    if (currentMode === 'build_arena') {
+      $('result-title').textContent = `${winner.name.toUpperCase()} WINS!`;
+    } else {
+      $('result-title').textContent = you ? 'YOU WIN!' : `${winner.name.toUpperCase()} WINS!`;
+    }
     $('results-podium').innerHTML = podium(standings.slice(0, 3), d => `${plural(match.roundWins.get(d), 'round')} · ${plural(d.totalKos || 0, 'KO')}`,
       d => `${statsFor(d.type).label} · style peak ${Math.round(d.stylePeak)} · ${d.trickshots || 0} trickshots`);
     $('result-banners').innerHTML = bannersHtml(winBanners({ winner, match, isMatch: true }));
     $('result-reel').innerHTML = highlightReel();
     const a = arenaById(arena.arenaId);
     $('result-arena').textContent = `${a.icon} ${a.name}`;
+
+    if (currentMode === 'build_arena') {
+      $('rematch-vote')?.classList.add('hidden');
+      $('btn-play-again')?.classList.add('hidden');
+      $('btn-main-menu')?.classList.add('hidden');
+      $('btn-build-rematch')?.classList.remove('hidden');
+      $('btn-build-workshop')?.classList.remove('hidden');
+      $('btn-results-mall')?.classList.remove('hidden');
+    } else {
+      $('rematch-vote')?.classList.remove('hidden');
+      $('btn-play-again')?.classList.remove('hidden');
+      $('btn-main-menu')?.classList.remove('hidden');
+      $('btn-build-rematch')?.classList.add('hidden');
+      $('btn-build-workshop')?.classList.add('hidden');
+      $('btn-results-mall')?.classList.remove('hidden');
+      startRematchVote();
+    }
+
     $('results-screen').classList.remove('hidden');
     hud.confetti();
     audio.playBanner(you);
     if (you) audio.playVictory(); else audio.playDefeat();
-    startRematchVote();
   },
 };
 
@@ -1014,41 +1347,61 @@ function loop() {
     return;
   }
 
+  // Build-A-Dweeb workshop turntable
+  if (currentBuildLab) {
+    currentBuildLab.update(rawDt);
+    sky.update(rawDt);
+    water.update(rawDt);
+    effect.render(scene, camera);
+    return;
+  }
+
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
   const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
 
   if (inGame && dweebs.length) {
-    controller.update(dt);
-    if (match.running) for (const b of bots) b.update(dt, dweebs);
-    else for (const d of dweebs) d.moveInput.set(0, 0);
+    if (currentMode !== 'build_arena') {
+      controller.update(dt);
+    }
+    if (currentMeadowlands && colony) {
+      colony.update(dt, currentMeadowlands);
+    }
+    if (match.running) {
+      for (const b of bots) b.update(dt, dweebs);
+      for (const b of builderBots) b.update(dt, dweebs);
+    }
+    else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
     for (const d of dweebs) d.preStep(dt);
   }
 
   physics.step(dt);
 
   if (inGame && dweebs.length) {
-    for (const d of dweebs) d.postStep(dt, match.time);
+    for (const d of dweebs) {
+      d.postStep(dt, match.time);
+      if (d.customModel) d.customModel.animate(match.time, d.mood);
+    }
     handleImpacts();
     combat.update(dt, match.time);
     updateDrops(dt);
     match.update(dt);
-  if (deathCinema && !deathCinema.isPlaying) {
-    for (const d of dweebs) deathCinema.recordFrame(d, match.time);
-  }
-  if (deathCinema && deathCinema.isPlaying) {
-    deathCinema.update(dt, cam);
-    return;
-  }
-    hud.update(rawDt, match, camera, player);
-    const charging = player.active && controller.live ? player.charging : 0;
-    audio.setCharge(player.charging > 0 ? charging : 0);
-    haptics?.charge(charging);
-    haptics?.heartbeat(match.running && player.active ? player.percent : 0, match.suddenDeath);
-    updateAim(rawDt);
-    updateFocus(rawDt);
-    updateNearMiss();
-    followCamera();
+    if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
+      for (const d of dweebs) deathCinema.recordFrame(d, match.time);
+    }
+    if (deathCinema && deathCinema.isPlaying) {
+      deathCinema.update(dt, cam);
+    } else {
+      hud.update(rawDt, match, camera, player);
+      const charging = player.active && controller.live ? player.charging : 0;
+      audio.setCharge(player.charging > 0 ? charging : 0);
+      haptics?.charge(charging);
+      haptics?.heartbeat(match.running && player.active ? player.percent : 0, match.suddenDeath);
+      updateAim(rawDt);
+      updateFocus(rawDt);
+      updateNearMiss();
+      followCamera();
+    }
   } else {
     // Menu: slow orbit around the stage
     aimGuide.hide();
@@ -1063,19 +1416,21 @@ function loop() {
     cam.setTarget(0, -1, 0);
   }
   arena.update(dt);
-  if (currentMimicLab) {
-    currentMimicLab.update(dt, player, dweebs, combat);
-  }
-  if (currentEscapeSandbox) {
-    currentEscapeSandbox.update(dt, dweebs, combat);
-  }
   if (currentMeadowlands) {
     if (buildingManager && player) {
       buildingManager.update(rawDt, player, currentMeadowlands.terrainMesh, { dweebs, colony, world: currentMeadowlands });
       buildingManager.updatePlaced(rawDt, dweebs);
     }
     currentMeadowlands.update(dt, dweebs, colony);
-    if (colony) colony.update(dt, currentMeadowlands);
+
+    // Gently rescue any dweeb that falls below the map
+    for (const d of dweebs) {
+      const p = d.getPosition?.() || d.body?.translation?.();
+      if (p && p.y < -3) {
+        d.respawn?.({ x: 0, y: 1.2, z: 2 }, 0);
+        fx?.respawn?.(d);
+      }
+    }
 
     // Autosave the village every 30 seconds.
     villageSaveTimer += rawDt;
@@ -1096,6 +1451,25 @@ function loop() {
       if (genEl) genEl.textContent = colony.generation;
     }
 
+    // Dynasty Objective Banner
+    const objBanner = $('dynasty-objective-banner');
+    if (objBanner && colony && currentMeadowlands) {
+      const placed = buildingManager?.placedStructures || [];
+      const hasSilo = placed.some(s => s.id === 'silo');
+      const openedVaults = (currentMeadowlands.ruins || []).filter(r => r.opened).length;
+      const totalVaults = (currentMeadowlands.ruins || []).length || 2;
+      const wood = colony.resources.wood || 0;
+      const stone = colony.resources.stone || 0;
+
+      if (!hasSilo) {
+        objBanner.textContent = `Goal: Gather Wood & Stone to build a Silo (🪵 ${Math.min(3, wood)}/3 · 🪨 ${Math.min(3, stone)}/3) or step on 3 Ancient Plates to unlock the Toy Vault (${openedVaults}/${totalVaults})`;
+      } else if (openedVaults < totalVaults) {
+        objBanner.textContent = `Goal: Step on 3 Ancient Plates to unlock the Toy Vault! (${openedVaults}/${totalVaults} Unlocked)`;
+      } else {
+        objBanner.textContent = `Goal: Expand New Dweebtopia! Build Watchtowers & Barricades to defend against Critters (Gen ${colony.generation})`;
+      }
+    }
+
     // Citizen Observation Card in Observer mode
     const banner = $('citizen-banner');
     if (cam.mode === 'observer' && colony && colony.citizens.length > 0) {
@@ -1109,9 +1483,93 @@ function loop() {
           nameEl.textContent = `${activeCit.moodIcon} ${activeCit.name} (${activeCit.personality.name}${roleName})`;
         }
         if (actEl) actEl.textContent = activeCit.activityText;
+        updateCitizenRoleBadges(activeCit);
       }
     } else if (banner) {
       banner.classList.add('hidden');
+    }
+
+    // Proximity Detection & Prompt
+    const proxPrompt = $('civ-proximity-prompt');
+    const promptAction = $('civ-prompt-action');
+    currentGatherTarget = null;
+
+    if (proxPrompt && player && !buildingManager?.activeBlueprint) {
+      const p = player.getPosition?.() || player.body?.translation?.();
+      if (p) {
+        let bestTarget = null;
+        let minScore = Infinity;
+
+        // Trees (< 3.2m)
+        for (const tree of currentMeadowlands.trees || []) {
+          const d = Math.hypot(p.x - tree.x, p.z - tree.z);
+          if (d < 3.2 && (d / 3.2) < minScore) {
+            minScore = d / 3.2;
+            bestTarget = { type: 'tree', tree, text: '[E] Gather Lumber (+2 Wood)' };
+          }
+        }
+
+        // Rock Nodes (< 3.0m)
+        for (const rock of currentMeadowlands.rockNodes || []) {
+          const d = Math.hypot(p.x - rock.x, p.z - rock.z);
+          if (d < 3.0 && (d / 3.0) < minScore) {
+            minScore = d / 3.0;
+            bestTarget = { type: 'rock', rock, text: '[E] Mine Stone (+2 Stone)' };
+          }
+        }
+
+        // Berry Bushes (< 2.6m)
+        for (const bush of currentMeadowlands.berryBushes || []) {
+          const d = Math.hypot(p.x - bush.x, p.z - bush.z);
+          if (d < 2.6 && (d / 2.6) < minScore) {
+            minScore = d / 2.6;
+            const hasBerries = (bush.available ?? 5) > 0;
+            bestTarget = {
+              type: hasBerries ? 'bush' : 'bush_empty',
+              bush,
+              text: hasBerries ? '[E] Harvest Berries (+1 Berry)' : '🍓 Berry Bush (Regrowing...)'
+            };
+          }
+        }
+
+        // Pressure Plates (< 2.2m)
+        const plates = [
+          ...(currentMeadowlands.pressurePlates || []),
+          ...((currentMeadowlands.ruins || []).flatMap(r => r.plates || []))
+        ];
+        for (const plate of plates) {
+          const d = Math.hypot(p.x - plate.x, p.z - plate.z);
+          if (d < 2.2 && (d / 2.2) < minScore) {
+            minScore = d / 2.2;
+            bestTarget = { type: 'plate', plate, text: '[E] Step on Plate' };
+          }
+        }
+
+        // Vaults (< 3.2m)
+        for (const ruin of currentMeadowlands.ruins || []) {
+          const d = Math.hypot(p.x - ruin.x, p.z - ruin.z);
+          if (d < 3.2 && (d / 3.2) < minScore) {
+            minScore = d / 3.2;
+            bestTarget = {
+              type: 'vault',
+              ruin,
+              text: ruin.opened ? '✨ Ancient Vault (Opened)' : '🔒 Sealed Toy Vault (Requires 3 Plates)'
+            };
+          }
+        }
+
+        if (bestTarget) {
+          currentGatherTarget = bestTarget;
+          if (promptAction) promptAction.textContent = bestTarget.text;
+          proxPrompt.classList.remove('hidden');
+        } else {
+          proxPrompt.classList.add('hidden');
+        }
+      } else {
+        proxPrompt.classList.add('hidden');
+      }
+    } else if (proxPrompt) {
+      proxPrompt.classList.add('hidden');
     }
   }
   particles.update(dt);
@@ -1333,6 +1791,22 @@ function updateNearMiss() {
 }
 
 function followCamera() {
+  if (currentMode === 'build_arena') {
+    const active = dweebs.filter(d => d.active && !d.eliminated);
+    if (active.length >= 2) {
+      const p1 = active[0].getPosition();
+      const p2 = active[1].getPosition();
+      const midX = (p1.x + p2.x) * 0.5;
+      const midY = (p1.y + p2.y) * 0.5 + 0.4;
+      const midZ = (p1.z + p2.z) * 0.5;
+      const dist = Math.hypot(p1.x - p2.x, p1.z - p2.z);
+      cam.setTarget(midX, midY, midZ);
+      cam.targetDistance = Math.max(9, Math.min(22, 6 + dist * 1.15));
+      cam.pitch = -0.38;
+      cam.yaw += 0.002;
+      return;
+    }
+  }
   if (cam.mode === 'first_person') {
     const p = player.getPosition();
     cam.setTarget(p.x, p.y + 0.5, p.z);
@@ -1427,15 +1901,114 @@ function wireCivCameraControls() {
     updateButtons('god');
   });
 
+  const btnExpedition = $('btn-launch-expedition');
+  btnExpedition?.addEventListener('click', () => {
+    audio.playUIClick();
+    if (colony && currentMeadowlands) {
+      colony.launchExpedition(currentMeadowlands);
+    }
+  });
+
+  const btnExitMall = $('btn-civ-exit-mall');
+  btnExitMall?.addEventListener('click', () => {
+    audio.playUIClick();
+    if (colony && buildingManager && currentMeadowlands) {
+      saveVillage({ colony, buildingManager, world: currentMeadowlands });
+    }
+    if (currentMeadowlands) {
+      currentMeadowlands.dispose();
+      currentMeadowlands = null;
+    }
+    if (buildingManager) {
+      buildingManager.cancelPlacing();
+      buildingManager = null;
+    }
+    colony = null;
+    audio.stopAmbience?.();
+    cam.setMode('explorer');
+    cam.unlock();
+    toMenu();
+    $('main-menu')?.classList.add('hidden');
+    if (window.__dweebsApp?.router) {
+      window.__dweebsApp.router.setMatchLock(false);
+      window.__dweebsApp.router.go('/');
+    } else {
+      location.hash = '#/';
+    }
+  });
+
+  // Citizen re-tasking clicker badges
+  document.querySelectorAll('.role-badge-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!colony || colony.citizens.length === 0) return;
+      const cit = colony.citizens[activeCitizenIdx % colony.citizens.length];
+      if (!cit) return;
+      const roleId = btn.dataset.role || null;
+      colony.assignRole(cit, roleId);
+      audio.playUIClick();
+      updateCitizenRoleBadges(cit);
+      cit.say?.(roleId ? `I am now the ${roleId}!` : 'I am free to wander!', roleId ? '🛠️' : '🌱');
+      const p = cit.dweeb?.getPosition?.() || cit.dweeb?.body?.translation?.() || player?.getPosition?.();
+      if (p && hud?.popup) hud.popup(roleId ? `${roleId.toUpperCase()}!` : 'FREE!', p, 'small', 0x5ee06a);
+    });
+  });
+
   window.addEventListener('keydown', (e) => {
     if (!currentMeadowlands) return;
-    if (e.key === 'b' || e.key === 'B') {
+    if (e.key === 'x' || e.key === 'X') {
+      if (colony && currentMeadowlands) {
+        audio.playUIClick();
+        colony.launchExpedition(currentMeadowlands);
+      }
+    } else if (e.key === 'b' || e.key === 'B') {
       toggleBuild();
+    } else if (e.key === 'r' || e.key === 'R') {
+      if (colony && colony.citizens.length > 0) {
+        const cit = colony.citizens[activeCitizenIdx % colony.citizens.length];
+        if (cit) {
+          const rolesCycle = [null, 'forager', 'builder', 'defender', 'tinkerer'];
+          const curIdx = rolesCycle.indexOf(cit.role || null);
+          const nextRole = rolesCycle[(curIdx + 1) % rolesCycle.length];
+          colony.assignRole(cit, nextRole);
+          audio.playUIClick();
+          updateCitizenRoleBadges(cit);
+          cit.say?.(nextRole ? `I am now a ${nextRole}!` : 'I am free to wander!', nextRole ? '🛠️' : '🌱');
+          const p = cit.dweeb?.getPosition?.() || cit.dweeb?.body?.translation?.() || player?.getPosition?.();
+          if (p && hud?.popup) hud.popup(nextRole ? `${nextRole.toUpperCase()}!` : 'FREE!', p, 'small', 0x5ee06a);
+        }
+      }
     } else if (e.key === 'e' || e.key === 'E') {
       if (buildingManager && buildingManager.activeBlueprint) {
         const res = buildingManager.confirmPlacement(colony, currentMeadowlands);
         if (res && !res.success) {
           hud?.toast?.(res.reason || 'Cannot place here');
+        }
+      } else if (currentGatherTarget && colony && currentMeadowlands) {
+        const silos = buildingManager
+          ? buildingManager.placedStructures.filter(s => s.id === 'silo')
+          : [];
+        const p = player?.getPosition?.() || player?.body?.translation?.() || { x: 0, y: 1, z: 0 };
+        if (currentGatherTarget.type === 'tree') {
+          colony.addResource('wood', 2, silos);
+          audio.playUIClick();
+          if (hud?.popup) hud.popup('+2 WOOD!', p, 'small', 0xb45309);
+        } else if (currentGatherTarget.type === 'rock') {
+          colony.addResource('stone', 2, silos);
+          audio.playUIClick();
+          if (hud?.popup) hud.popup('+2 STONE!', p, 'small', 0x94a3b8);
+        } else if (currentGatherTarget.type === 'bush') {
+          const bush = currentGatherTarget.bush;
+          if ((bush.available ?? 0) > 0) {
+            bush.available--;
+            if (bush.berries && bush.berries.length > 0) {
+              const bMesh = bush.berries[bush.available];
+              if (bMesh) bMesh.visible = false;
+            }
+            colony.addResource('berries', 1, silos);
+            audio.playUIClick();
+            if (hud?.popup) hud.popup('+1 BERRY!', p, 'small', 0xef4444);
+          }
         }
       }
     } else if (e.key === 'Escape') {

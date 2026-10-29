@@ -15,6 +15,11 @@ const CSS = `
 .wf-root button.blue{background:#3fa9ff;color:#fff;box-shadow:0 4px 0 #1f6fb0}
 .wf-root button.red{background:#ff4d5e;color:#fff;box-shadow:0 4px 0 #a82534}
 .wf-root button:disabled{opacity:.45;transform:none;cursor:default}
+.wf-powers button{position:relative;overflow:hidden;padding:8px 14px;font-size:14px;min-width:130px;min-height:38px;display:inline-flex;align-items:center;justify-content:center}
+.wf-powers button .wf-p-label{position:relative;z-index:1;pointer-events:none}
+.wf-powers button .wf-cd-sweep{position:absolute;inset:0;background:rgba(18,10,32,.78);transform-origin:bottom;pointer-events:none;z-index:2;display:none;transition:transform .05s linear}
+.wf-powers button .wf-cd-label{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-family:'Lilita One',sans-serif;font-size:15px;color:#ffd23f;text-shadow:0 2px 4px rgba(0,0,0,.85);pointer-events:none;z-index:3;letter-spacing:.5px}
+.wf-root .wf-powers button.off,.wf-root .wf-powers button.disabled,.wf-root .wf-powers button:disabled{opacity:.45;transform:none!important;cursor:default;box-shadow:none!important;filter:grayscale(30%)}
 .wf-screen{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(27,16,48,.55);backdrop-filter:blur(3px);pointer-events:auto}
 .wf-panel{background:#2a1d4a;border:4px solid #fff8ee;border-radius:24px;padding:26px 30px;max-width:720px;width:92vw;box-shadow:0 12px 0 rgba(0,0,0,.25);text-align:center}
 .wf-title{font-family:'Lilita One',sans-serif;font-size:56px;line-height:1;margin:0;color:#ffd23f;text-shadow:0 4px 0 #b84a12}
@@ -34,7 +39,13 @@ const CSS = `
 .wf-bar{height:12px;border-radius:7px;background:rgba(255,255,255,.2);overflow:hidden;margin-top:3px}
 .wf-bar i{display:block;height:100%;background:#5ee06a;transition:width .2s}
 .wf-bar.low i{background:#ff4d5e}
-.wf-count .b{color:#7cc4ff}.wf-count .r{color:#ff8a95}
+.wf-frontline-bar{position:relative;background:#ff4d5e;border-radius:6px;overflow:visible!important;height:12px}
+.wf-frontline-bar i{display:block;height:100%;background:#3fa9ff;border-radius:6px 0 0 6px}
+.wf-frontline-bar::after{content:'';position:absolute;top:-3px;bottom:-3px;left:50%;width:2px;background:#fff8ee;transform:translateX(-50%);border-radius:1px;box-shadow:0 0 4px rgba(0,0,0,.6);z-index:2;pointer-events:none}
+.wf-count{display:inline-flex;align-items:center;gap:6px;font-size:16px}
+.wf-count .b{color:#7cc4ff;font-weight:900;display:inline-flex;align-items:center;gap:3px}
+.wf-count .r{color:#ff8a95;font-weight:900;display:inline-flex;align-items:center;gap:3px}
+.wf-count .vs{font-size:12px;opacity:.7;font-family:Nunito,system-ui,sans-serif;font-weight:800}
 .wf-corner{position:absolute;top:10px;right:12px;display:flex;gap:8px}
 .wf-corner button{padding:6px 12px;font-size:16px}
 .wf-prep{position:absolute;top:110px;left:50%;transform:translateX(-50%);text-align:center}
@@ -64,6 +75,13 @@ const CSS = `
 .wf-stat{background:rgba(255,255,255,.08);border-radius:14px;padding:10px}
 .wf-stat b{display:block;font-family:'Lilita One',sans-serif;font-size:28px;color:#ffd23f}
 .wf-stat span{font-size:12px;font-weight:700;opacity:.85}
+.wf-end-panel{max-width:640px}
+.wf-score-hero{background:linear-gradient(135deg,rgba(255,210,63,.15),rgba(94,224,106,.12));border:2px solid #ffd23f;border-radius:18px;padding:14px 18px;margin:12px 0 16px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}
+.wf-hero-item{display:flex;flex-direction:column;gap:2px}
+.wf-hero-val{font-family:'Lilita One',sans-serif;font-size:24px;color:#ffd23f;line-height:1.1;text-shadow:0 2px 0 #1b1030}
+.wf-hero-lbl{font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;opacity:.85}
+.wf-btn-replay{background:#5ee06a!important;color:#133d18!important;box-shadow:0 4px 0 #2b7a34!important}
+.wf-btn-mall{background:#ffd23f!important;color:#1b1030!important;box-shadow:0 4px 0 #b88a12!important}
 .wf-net{position:absolute;top:10px;left:12px}
 .wf-boss{position:absolute;top:62px;left:50%;transform:translateX(-50%);width:min(420px,80vw);background:rgba(90,15,24,.85);border:3px solid #ffd23f;border-radius:14px;padding:5px 12px;font-family:'Lilita One',sans-serif;text-align:center}
 .wf-boss .wf-bar i{background:#ffd23f}
@@ -106,8 +124,9 @@ export class WarfareHud {
             <li><b>Boss every 5 waves.</b> Kamis hit the Brass Bully hardest.</li>
           </ul>
           <div class="wf-modes">
-            <button data-a="defense">DEFEND THE FORT</button>
-            <button class="blue" data-a="versus">VERSUS AI</button>
+            <button data-a="defense">🛡️ DEFEND THE FORT</button>
+            <button class="blue" data-a="versus">⚔️ VERSUS AI (100v100)</button>
+            <button class="red" data-a="pvp-local">👥 LOCAL 2-PLAYER PVP</button>
             <button class="alt" data-a="online-coop">ONLINE CO-OP</button>
             <button class="alt" data-a="online-versus">ONLINE VERSUS</button>
           </div>
@@ -122,8 +141,12 @@ export class WarfareHud {
           <div class="wf-chip" data-f="wave">WAVE 1/${FINAL_WAVE}</div>
           <div class="wf-chip wf-fort"><span data-f="fortLabel">YOUR FORT</span><div class="wf-bar" data-f="fortBar"><i></i></div></div>
           <div class="wf-chip wf-fort wf-hidden" data-f="efort"><span>ENEMY FORT</span><div class="wf-bar"><i></i></div></div>
+          <div class="wf-chip" style="width:130px; text-align:center;">
+            <div style="font-size:10px; opacity:0.85; margin-bottom:2px;">FRONTLINE TUG</div>
+            <div class="wf-bar wf-frontline-bar" style="background:#ff4d5e; border-radius:6px; overflow:visible;"><i style="background:#3fa9ff; width:50%;" data-f="frontlineBar"></i></div>
+          </div>
           <div class="wf-chip">🪙 <span data-f="coins">0</span></div>
-          <div class="wf-chip wf-count"><span class="b" data-f="nb">0</span> vs <span class="r" data-f="nr">0</span></div>
+          <div class="wf-chip wf-count" title="Alive units: Blue vs Red"><span class="b">🔵 <span data-f="nb">0</span></span> <span class="vs">vs</span> <span class="r"><span data-f="nr">0</span> 🔴</span></div>
         </div>
         <div class="wf-corner">
           <button class="alt" data-a="mute" title="Mute (M)">🔊</button>
@@ -133,6 +156,23 @@ export class WarfareHud {
         <div class="wf-prep" data-f="prep">
           <div class="t" data-f="prepText"></div>
           <button data-a="startWave">START WAVE (SPACE)</button>
+        </div>
+        <div class="wf-powers" style="position:absolute; bottom:112px; left:50%; transform:translateX(-50%); display:flex; gap:10px; pointer-events:auto;">
+          <button class="red" data-a="artillery" title="Artillery Barrage (Q) · Costs 25 Coins">
+            <span class="wf-p-label">🎯 BARRAGE (Q) 🪙25</span>
+            <i class="wf-cd-sweep" data-cd-sweep="artillery"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="artillery"></span>
+          </button>
+          <button class="blue" data-a="supply" title="Emergency Air-Drop (E) · Costs 15 Coins">
+            <span class="wf-p-label">📦 AIR-DROP (E) 🪙15</span>
+            <i class="wf-cd-sweep" data-cd-sweep="supply"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="supply"></span>
+          </button>
+          <button class="alt" data-a="stance" title="Toggle Formation Stance (R)">
+            <span class="wf-p-label">⚔️ STANCE (R)</span>
+            <i class="wf-cd-sweep" data-cd-sweep="stance"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="stance"></span>
+          </button>
         </div>
         <div class="wf-cards">${RECRUITABLE.map((t, i) => `
           <div class="wf-card" data-u="${t}"><span class="k">${i + 1}</span>
@@ -165,11 +205,21 @@ export class WarfareHud {
         </div>
       </div>
       <div class="wf-screen wf-hidden" data-s="end">
-        <div class="wf-panel">
+        <div class="wf-panel wf-end-panel">
           <h1 class="wf-title" data-f="endTitle">VICTORY!</h1>
           <p class="wf-sub" data-f="endSub"></p>
+          <div class="wf-score-hero" data-f="scoreHero">
+            <div class="wf-hero-item"><span class="wf-hero-val" data-f="endWaves">0 / ${FINAL_WAVE}</span><span class="wf-hero-lbl">Waves Defended</span></div>
+            <div class="wf-hero-item"><span class="wf-hero-val" data-f="endKills">0</span><span class="wf-hero-lbl">Enemies Slain</span></div>
+            <div class="wf-hero-item"><span class="wf-hero-val" data-f="endTime">0:00</span><span class="wf-hero-lbl">Match Time</span></div>
+            <div class="wf-hero-item"><span class="wf-hero-val" data-f="endScore">0</span><span class="wf-hero-lbl">Total Score</span></div>
+          </div>
           <div class="wf-stats" data-f="stats"></div>
-          <div class="wf-modes"><button data-a="restart">PLAY AGAIN</button><button class="alt" data-a="quit">MENU</button><button class="alt" data-a="exit">BACK TO THE MALL</button></div>
+          <div class="wf-modes">
+            <button data-a="restart" class="wf-btn-replay">↺ Replay</button>
+            <button data-a="exit" class="wf-btn-mall alt">🏛️ Exit to Mall</button>
+            <button data-a="quit" class="alt">Menu</button>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(root);
@@ -189,7 +239,7 @@ export class WarfareHud {
   }
 
   screen(name) {
-    for (const s of ['title', 'game', 'pause', 'end', 'online']) this.q(`[data-s="${s}"]`).classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
+    for (const s of ['title', 'game', 'pause', 'end', 'online']) this.q(`[data-s="${s}"]`)?.classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
   }
 
   refreshBest(difficulty = 'normal') {
@@ -228,7 +278,7 @@ export class WarfareHud {
     }
   }
 
-  update(st, team, dt) {
+  update(st, team, dt, powerCooldowns = {}) {
     const L = this.last;
     const set = (k, v, fn) => { if (L[k] !== v) { L[k] = v; fn(v); } };
     const versus = st.mode === 'versus';
@@ -241,23 +291,36 @@ export class WarfareHud {
     set('fort', Math.ceil(mine.hp), () => {
       const p = Math.max(0, mine.hp / mine.maxHp);
       const bar = this.f('fortBar');
-      bar.firstElementChild.style.width = (p * 100).toFixed(1) + '%';
-      bar.classList.toggle('low', p < 0.3);
+      if (bar?.firstElementChild) bar.firstElementChild.style.width = (p * 100).toFixed(1) + '%';
+      if (bar) bar.classList.toggle('low', p < 0.3);
     });
-    set('efortShow', versus, v => this.f('efort').classList.toggle('wf-hidden', !v));
+    set('efortShow', versus, v => this.f('efort')?.classList.toggle('wf-hidden', !v));
     if (versus) set('efort', Math.ceil(theirs.hp), () => {
       const p = Math.max(0, theirs.hp / theirs.maxHp);
-      this.f('efort').querySelector('i').style.width = (p * 100).toFixed(1) + '%';
+      const fi = this.f('efort')?.querySelector('i');
+      if (fi) fi.style.width = (p * 100).toFixed(1) + '%';
     });
     const coins = st.coins[team];
     set('coins', coins, v => { this.f('coins').textContent = v; });
     let nb = 0, nr = 0;
-    for (const u of st.units) { if (u.team === 'blue') nb++; else nr++; }
+    for (const u of st.units) { if (u.alive) { if (u.team === 'blue') nb++; else nr++; } }
     set('nb', nb, v => { this.f('nb').textContent = v; });
     set('nr', nr, v => { this.f('nr').textContent = v; });
+    let sumX = 0, count = 0;
+    for (const u of st.units) { if (u.alive) { sumX += u.x; count++; } }
+    const avgX = count > 0 ? (sumX / count) : 0;
+    const flPct = Math.max(5, Math.min(95, ((avgX + 40) / 80) * 100));
+    this.smoothFl = this.smoothFl ?? flPct;
+    this.smoothFl += (flPct - this.smoothFl) * Math.min(1, dt * 5);
+    const roundedFl = Math.round(this.smoothFl * 10) / 10;
+    set('fl', roundedFl, v => {
+      const el = this.f('frontlineBar');
+      if (el) el.style.width = v + '%';
+    });
     set('coinsCards', coins, () => {
       for (const c of this.root.querySelectorAll('.wf-card')) c.classList.toggle('off', coins < UNIT_TYPES[c.dataset.u].cost);
     });
+    this.updatePowers(st, powerCooldowns);
     let boss = null;
     for (const u of st.units) if (u.type === 'boss') { boss = u; break; }
     set('bossShow', !!boss, v => this.f('boss').classList.toggle('wf-hidden', !v));
@@ -274,6 +337,45 @@ export class WarfareHud {
       this.bannerT -= dt;
       if (this.bannerT <= 0) this.f('banner').classList.remove('show');
     }
+  }
+
+  updatePowers(st, powerCooldowns = {}) {
+    if (!st) return;
+    const coins = st.coins?.blue ?? 0;
+    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0 };
+    const costs = { artillery: 25, supply: 15, stance: 0 };
+    for (const k of ['artillery', 'supply', 'stance']) {
+      const cd = Math.max(0, powerCooldowns[k] || 0);
+      const cost = costs[k];
+      const btn = this.q(`.wf-powers button[data-a="${k}"]`);
+      if (!btn) continue;
+      const sweep = btn.querySelector('[data-cd-sweep]');
+      const label = btn.querySelector('[data-cd-text]');
+      const onCd = cd > 0;
+      const lackingCoins = cost > 0 && coins < cost;
+      const off = onCd || lackingCoins;
+
+      btn.classList.toggle('off', off);
+      btn.classList.toggle('disabled', off);
+      btn.classList.toggle('on-cd', onCd);
+      btn.disabled = off;
+
+      if (sweep) {
+        sweep.style.display = onCd ? 'block' : 'none';
+        if (onCd) {
+          const pct = Math.max(0, Math.min(1, cd / maxCds[k]));
+          sweep.style.transform = `scaleY(${pct.toFixed(3)})`;
+        }
+      }
+      if (label) {
+        label.style.display = onCd ? 'flex' : 'none';
+        label.textContent = onCd ? `${cd.toFixed(1)}s` : '';
+      }
+    }
+  }
+
+  render(st, powerCooldowns = {}) {
+    this.updatePowers(st, powerCooldowns);
   }
 
   pop(type) {
@@ -303,11 +405,17 @@ export class WarfareHud {
     setTimeout(() => el.remove(), secs * 1000);
   }
 
-  showEnd({ won, title, sub, stats }) {
+  showEnd({ won, title, sub, stats = [], waves, kills, time, score }) {
     this.f('endTitle').textContent = title || (won ? 'VICTORY!' : 'DEFEAT');
     this.f('endTitle').style.color = won ? '#5ee06a' : '#ff4d5e';
     this.f('endSub').textContent = sub || '';
-    this.f('stats').innerHTML = stats.map(([label, value]) => `<div class="wf-stat"><b>${value}</b><span>${label}</span></div>`).join('');
+    if (waves !== undefined && this.f('endWaves')) this.f('endWaves').textContent = waves;
+    if (kills !== undefined && this.f('endKills')) this.f('endKills').textContent = String(kills);
+    if (time !== undefined && this.f('endTime')) this.f('endTime').textContent = time;
+    if (score !== undefined && this.f('endScore')) this.f('endScore').textContent = typeof score === 'number' ? score.toLocaleString() : String(score);
+    if (stats && this.f('stats')) {
+      this.f('stats').innerHTML = stats.map(([label, value]) => `<div class="wf-stat"><b>${value}</b><span>${label}</span></div>`).join('');
+    }
     this.screen('end');
   }
 

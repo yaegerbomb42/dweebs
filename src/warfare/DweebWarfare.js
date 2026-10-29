@@ -16,6 +16,12 @@ import { WarfareNet } from './WarfareNet.js';
 
 export { RECRUITABLE as UNIT_ROLES };
 
+export const POWER_COOLDOWNS = {
+  artillery: 10.0,
+  supply: 8.0,
+  stance: 4.0,
+};
+
 const ENEMY_HINTS = {
   rocket: 'Enemy <b>rockets</b> lob splash shells. Walk <b>shields</b> into them.',
   stealer: 'Enemy <b>stealers</b> kidnap your dweebs! <b>Rockets</b> shred them in the open.',
@@ -67,6 +73,7 @@ export class DweebWarfare {
     this.difficulty = 'normal';
     try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
     this.pending = [];
     this.acc = 0;
     this.seen = new Set();
@@ -121,6 +128,7 @@ export class DweebWarfare {
     this.attract = false;
     this.team = team;
     this.st = createBattle({ seed, mode, difficulty });
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
     this.pending = [];
     this.outbox = [];
     this.seen = new Set();
@@ -193,7 +201,16 @@ export class DweebWarfare {
   _forfeitEnd(won, sub) {
     const s = this.st.stats[this.team];
     this.phase = 'over';
-    this.hud.showEnd({ won, title: won ? 'VICTORY!' : 'DISCONNECTED', sub, stats: [['enemies popped', s.kills], ['dweebs lost', s.lost], ['kidnapped & converted', s.converted], ['coins earned', s.coinsEarned], ['damage dealt', Math.round(s.dmgDealt)], ['time', `${Math.round(this.st.tick * WF_DT)}s`]] });
+    const secs = Math.round(this.st.tick * WF_DT);
+    const time = `${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')}`;
+    const wavesDefended = this.st.stats?.wavesCleared || (won ? 1 : 0);
+    const wavesStr = this.mode === 'defense' ? `${wavesDefended} / ${FINAL_WAVE}` : (won ? 'VICTORY' : 'FORFEIT');
+    const totalScore = (wavesDefended * 500) + (s.kills * 25) + (won ? 2000 : 0);
+    this.hud.showEnd({
+      won, title: won ? 'VICTORY!' : 'DISCONNECTED', sub,
+      waves: wavesStr, kills: s.kills, time, score: totalScore,
+      stats: [['enemies popped', s.kills], ['dweebs lost', s.lost], ['kidnapped & converted', s.converted], ['coins earned', s.coinsEarned], ['damage dealt', Math.round(s.dmgDealt)], ['time', `${secs}s`]]
+    });
     if (won) this.audio?.win();
     this._leaveOnline();
   }
@@ -241,16 +258,66 @@ export class DweebWarfare {
     if (this.audio) { this.audio.listenerX = this.cam.x; this.audio.events(st.events, this.team); }
   }
 
-  recruit(type) {
+  recruit(type, team = this.team) {
     if (this.phase !== 'playing' || !RECRUITABLE.includes(type)) return;
-    if (this.st.coins[this.team] < UNIT_TYPES[type].cost) { this.audio?.deny(); this.hud.toast(`Need 🪙 ${UNIT_TYPES[type].cost} for a ${UNIT_TYPES[type].name}`, 2.5); return; }
-    this._cmd({ type: 'recruit', team: this.team, unit: type });
+    if (this.st.coins[team] < UNIT_TYPES[type].cost) { this.audio?.deny(); this.hud.toast(`Need 🪙 ${UNIT_TYPES[type].cost} for a ${UNIT_TYPES[type].name}`, 2.5); return; }
+    this._cmd({ type: 'recruit', team, unit: type });
+  }
+
+  callArtillery(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.artillery > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Artillery recharging (${this.powerCooldowns.artillery.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < 25) {
+      this.audio?.deny();
+      this.hud.toast('Need 🪙 25 for Artillery Barrage', 2.0);
+      return;
+    }
+    this.powerCooldowns.artillery = POWER_COOLDOWNS.artillery;
+    const targetX = this.st.rally[team]?.x ?? (team === 'blue' ? 10 : -10);
+    const targetZ = this.st.rally[team]?.z ?? 0;
+    this._cmd({ type: 'artillery', team, x: targetX, z: targetZ });
+  }
+
+  callSupply(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.supply > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Supplies recharging (${this.powerCooldowns.supply.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < 15) {
+      this.audio?.deny();
+      this.hud.toast('Need 🪙 15 for Emergency Supplies', 2.0);
+      return;
+    }
+    this.powerCooldowns.supply = POWER_COOLDOWNS.supply;
+    this._cmd({ type: 'supply', team });
+  }
+
+  toggleFormation(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.stance > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Stance shift cooling down (${this.powerCooldowns.stance.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    this.powerCooldowns.stance = POWER_COOLDOWNS.stance;
+    this.currentStance = this.currentStance === 'charge' ? 'defense' : 'charge';
+    this._cmd({ type: 'stance', team, stance: this.currentStance });
   }
 
   _action(a) {
     this.audio?.unlock();
     this.audio?.click();
-    if (a === 'defense' || a === 'versus') this.start(a);
+    if (a === 'defense' || a === 'versus') { this.isLocalPvp = false; this.start(a); }
+    else if (a === 'pvp-local') { this.isLocalPvp = true; this.start('versus'); }
+    else if (a === 'artillery') this.callArtillery();
+    else if (a === 'supply') this.callSupply();
+    else if (a === 'stance') this.toggleFormation();
     else if (a.startsWith('diff-') && DIFFICULTY[a.slice(5)]) {
       this.difficulty = a.slice(5);
       try { localStorage.setItem('dweebs-warfare-diff', this.difficulty); } catch { /* private mode */ }
@@ -296,7 +363,17 @@ export class DweebWarfare {
       if (this.phase !== 'playing') return;
       const n = '1234'.indexOf(e.key);
       if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
+      else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
+      else if (k === 'e') { this.callSupply(); e.preventDefault(); }
+      else if (k === 'r') { this.toggleFormation(); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
+      // Player 2 local PvP controls (keys 7, 8, 9, 0, and [)
+      else if (this.isLocalPvp) {
+        const p2n = '7890'.indexOf(e.key);
+        if (p2n >= 0) { this.recruit(RECRUITABLE[p2n], 'red'); e.preventDefault(); }
+        else if (k === '[') { this.callArtillery('red'); e.preventDefault(); }
+        else if (k === ']') { this.callSupply('red'); e.preventDefault(); }
+      }
     };
     // Pointer: a tap/click moves the rally flag; a drag pans the camera (touch-friendly); two fingers pinch-zoom.
     this._ptrs = new Map();
@@ -360,7 +437,7 @@ export class DweebWarfare {
     if (this.attract) cmds = [...commanderDecide(st, 'blue'), ...commanderDecide(st, 'red')];
     else {
       cmds = this.pending.splice(0);
-      if (st.mode === 'versus') cmds.push(...commanderDecide(st, 'red'));
+      if (st.mode === 'versus' && !this.isLocalPvp) cmds.push(...commanderDecide(st, 'red'));
     }
     if (!this.attract) { this._stepWith(cmds); return; }
     stepBattle(st, cmds);
@@ -370,7 +447,15 @@ export class DweebWarfare {
   _react(events) {
     const hud = this.hud, st = this.st;
     for (const ev of events) {
-      if (ev.type === 'waveStart') {
+      if (ev.type === 'artillery') {
+        this.view?.fx?.explosion?.(ev.x, ev.z, ev.radius || 8.5, true);
+        hud.toast(`🎯 Artillery strike impact at X:${Math.round(ev.x)}!`, 2.5);
+      } else if (ev.type === 'supply') {
+        this.view?.fx?.shockwave?.(ev.x, ev.z, 10, 0x5ee06a);
+        hud.toast(`📦 Supplies air-dropped! Nearby units healed!`, 2.5);
+      } else if (ev.type === 'stance') {
+        hud.toast(ev.stance === 'charge' ? `⚔️ CHARGE! Speed boosted!` : `🛡️ DEFENSIVE WALL! Holding ground!`, 2.0);
+      } else if (ev.type === 'waveStart') {
         hud.banner(ev.boss ? 'BOSS WAVE!' : `WAVE ${ev.wave}`, ev.boss ? 'The Brass Bully rolls in' : `${ev.count} enemies incoming`, ev.boss ? 'boss' : '');
       } else if (ev.type === 'waveClear') {
         hud.banner('WAVE CLEARED', `+🪙 ${ev.reward} · your army patches up`, 'good');
@@ -413,13 +498,20 @@ export class DweebWarfare {
     }
     const secs = Math.round(st.tick * WF_DT);
     const time = `${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')}`;
+    const wavesDefended = this.mode === 'defense' ? (won ? FINAL_WAVE : Math.max(0, st.wave - 1)) : (won ? 1 : 0);
+    const wavesStr = this.mode === 'defense' ? `${wavesDefended} / ${FINAL_WAVE}` : (won ? 'VICTORY' : 'DEFEAT');
+    const totalScore = ((this.mode === 'defense' ? wavesDefended : (won ? 10 : 2)) * 500) + (s.kills * 25) + Math.round((s.dmgDealt || 0) * 0.5) + (won ? 2000 : 0);
     const sub = this.mode === 'defense'
       ? (won ? `The fort held through all ${FINAL_WAVE} waves on ${st.diff.label}!` : `The fort fell on wave ${st.wave} (${st.diff.label}).`)
       : (won ? `The ${this.team === 'blue' ? 'red' : 'blue'} fort is rubble.` : 'Your fort got flattened.');
     this.hud.showEnd({
       won, sub,
+      waves: wavesStr,
+      kills: s.kills,
+      time,
+      score: totalScore,
       stats: [
-        [this.mode === 'defense' ? 'waves cleared' : 'time', this.mode === 'defense' ? `${st.stats.wavesCleared}/${FINAL_WAVE}` : time],
+        [this.mode === 'defense' ? 'waves cleared' : 'time', this.mode === 'defense' ? `${wavesDefended}/${FINAL_WAVE}` : time],
         ['enemies popped', s.kills],
         ['dweebs lost', s.lost],
         ['kidnapped & converted', s.converted],
@@ -433,6 +525,11 @@ export class DweebWarfare {
 
   update(rawDt) {
     const dt = Math.min(rawDt, 0.1);
+    for (const k of ['artillery', 'supply', 'stance']) {
+      if (this.powerCooldowns[k] > 0) {
+        this.powerCooldowns[k] = Math.max(0, this.powerCooldowns[k] - dt);
+      }
+    }
     if (this.online) this._updateOnline(dt);
     else if (this.phase === 'playing' || this.phase === 'title') {
       this.acc += dt;
@@ -447,7 +544,10 @@ export class DweebWarfare {
     }
     const alpha = this.phase === 'playing' || this.phase === 'title' ? Math.min(1, this.acc / WF_DT) : 1;
     this.view.frame(this.st, alpha, this.phase === 'paused' ? 0 : dt);
-    if (this.phase !== 'title') this.hud.update(this.st, this.team, dt);
+    if (this.phase !== 'title') {
+      this.hud.update(this.st, this.team, dt, this.powerCooldowns);
+      this.hud.render(this.st, this.powerCooldowns);
+    }
     this._camera(dt);
   }
 
