@@ -168,12 +168,14 @@ export function isNeutralInput(f) {
  * @property {boolean}  items         Whether the drop table runs at all.
  * @property {number}   tickHz        Must equal TICK_HZ; a mismatch should be loud, not subtle.
  * @property {PlayerId[]} order      Slot order, so spawn positions are reproducible.
+ * @property {string}   [arena]       Stage id ('stadium', 'colosseum', 'icepeak', 'lavafoundry').
+ *                                    Unknown ids play as the stadium. Defaults to 'stadium'.
  */
 
 /** Defaults matching current offline settings: 3 stocks, best of 3, 120 s rounds. */
 export const DEFAULT_CONFIG = Object.freeze({
   version: 1, seed: 1, stocks: 3, roundsToWin: 2, roundTime: 120, suddenDeathAt: 40,
-  botDifficulty: 'normal', items: true, tickHz: TICK_HZ, order: [0, 1, 2, 3],
+  botDifficulty: 'normal', items: true, tickHz: TICK_HZ, order: [0, 1, 2, 3], arena: 'stadium',
 });
 
 // ─── Simulation state ──────────────────────────────────────────────────────────
@@ -330,6 +332,14 @@ export const EV = Object.freeze({
   SEGMENT_WARN: 'segmentWarn',
   /** Stage segment b fell. */
   SEGMENT_FALL: 'segmentFall',
+  /** A sky drop was picked and telegraphed: kind = item key, (x, z) = landing zone, mag = warn seconds, tier = 1 for rare drops. */
+  TELEGRAPH: 'telegraph',
+  /** Dweeb a touched rising lava at (x, y, z). mag = launch. */
+  LAVA: 'lava',
+  /** A jump pad launched dweeb a. mag = upward velocity. */
+  JUMPPAD: 'jumppad',
+  /** A stage hazard hit dweeb a. kind names the hazard ('hammer'), mag = launch. */
+  HAZARD: 'hazard',
   /** Dweeb a is hanging off the ledge. x = ledge angle, mag = hang time. */
   LEDGE: 'ledge',
   /** Dweeb a reached style tier (1..3). */
