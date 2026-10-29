@@ -16,6 +16,7 @@ const CSS = `
 .wf-root button.red{background:#ff4d5e;color:#fff;box-shadow:0 4px 0 #a82534}
 .wf-root button:disabled{opacity:.45;transform:none;cursor:default}
 .wf-powers button{position:relative;overflow:hidden;padding:8px 14px;font-size:14px;min-width:130px;min-height:38px;display:inline-flex;align-items:center;justify-content:center}
+@media (max-width:900px){.wf-powers button{min-width:0;font-size:12px;padding:6px 10px}}
 .wf-powers button .wf-p-label{position:relative;z-index:1;pointer-events:none}
 .wf-powers button .wf-cd-sweep{position:absolute;inset:0;background:rgba(18,10,32,.78);transform-origin:bottom;pointer-events:none;z-index:2;display:none;transition:transform .05s linear}
 .wf-powers button .wf-cd-label{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-family:'Lilita One',sans-serif;font-size:15px;color:#ffd23f;text-shadow:0 2px 4px rgba(0,0,0,.85);pointer-events:none;z-index:3;letter-spacing:.5px}
@@ -130,21 +131,30 @@ export class WarfareHud {
           <ul class="wf-hints">
             <li><b>Click the board</b> to plant your rally flag. Your army holds there.</li>
             <li><b>Keys 1–4</b> (or tap a card) recruit units at your fort with coins.</li>
+            <li><b>Powers:</b> Q barrage · E air-drop · R stance · <b>T war horn</b> · <b>F fortify</b> · <b>Y spike pit</b> (aim with a click).</li>
             <li><b>Counters:</b> Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield.</li>
             <li><b>Stealers</b> drag enemies home to convert them, and flip kami fuses.</li>
-            <li><b>Space</b> starts the next wave early. Kills and clears pay coins.</li>
-            <li><b>Boss every 5 waves.</b> Kamis hit the Brass Bully hardest.</li>
+            <li><b>Campaign:</b> six missions, one persistent veteran army. Boss every 5 waves.</li>
           </ul>
           <div class="wf-modes">
             <button data-a="defense">🛡️ DEFEND THE FORT</button>
             <button class="blue" data-a="versus">⚔️ VERSUS AI (100v100)</button>
             <button class="red" data-a="pvp-local">👥 LOCAL 2-PLAYER PVP</button>
+            <button data-a="campaign">🗺️ CAMPAIGN</button>
             <button class="alt" data-a="online-coop">ONLINE CO-OP</button>
             <button class="alt" data-a="online-versus">ONLINE VERSUS</button>
           </div>
           <div class="wf-diff">Fort defense: <button data-a="diff-easy">EASY</button><button data-a="diff-normal">NORMAL</button><button data-a="diff-hard">HARD</button></div>
           <div class="wf-small"><span data-f="best"></span> · WASD/arrows pan · wheel zooms · M mutes · Esc pauses</div>
           <div style="margin-top:14px"><button class="alt" data-a="exit">◀ BACK TO THE MALL</button></div>
+        </div>
+      </div>
+      <div class="wf-screen wf-hidden" data-s="campaign">
+        <div class="wf-panel">
+          <h1 class="wf-title">CAMPAIGN</h1>
+          <p class="wf-sub">Six missions, one war. Survivors fight on as <b>veterans</b> (+15% HP) in the next mission.</p>
+          <div data-f="missions" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
+          <div class="wf-modes"><button class="alt" data-a="campaignBack">◀ BACK</button></div>
         </div>
       </div>
       <div class="wf-game wf-hidden" data-s="game">
@@ -170,7 +180,7 @@ export class WarfareHud {
           <div class="wf-prep-comp" data-f="prepComp"></div>
           <button data-a="startWave">START WAVE (SPACE)</button>
         </div>
-        <div class="wf-powers" style="position:absolute; bottom:112px; left:50%; transform:translateX(-50%); display:flex; gap:10px; pointer-events:auto;">
+        <div class="wf-powers" style="position:absolute; bottom:118px; left:50%; transform:translateX(-50%); display:flex; gap:8px; flex-wrap:wrap; justify-content:center; max-width:98vw; pointer-events:auto;">
           <button class="red" data-a="artillery" title="Artillery Barrage (Q) · Costs 25 Coins">
             <span class="wf-p-label">🎯 BARRAGE (Q) 🪙25</span>
             <i class="wf-cd-sweep" data-cd-sweep="artillery"></i>
@@ -185,6 +195,21 @@ export class WarfareHud {
             <span class="wf-p-label">⚔️ STANCE (R)</span>
             <i class="wf-cd-sweep" data-cd-sweep="stance"></i>
             <span class="wf-cd-label wf-cd-overlay" data-cd-text="stance"></span>
+          </button>
+          <button class="alt" data-a="warhorn" title="War Horn (T) · Costs 20 Coins — your army hits +30% harder and moves +20% faster for 8s">
+            <span class="wf-p-label">📯 WAR HORN (T) 🪙20</span>
+            <i class="wf-cd-sweep" data-cd-sweep="warhorn"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="warhorn"></span>
+          </button>
+          <button class="blue" data-a="repair" title="Fortify (F) · Costs 30 Coins — patch your fort for +400 HP">
+            <span class="wf-p-label">🛠️ FORTIFY (F) 🪙30</span>
+            <i class="wf-cd-sweep" data-cd-sweep="repair"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="repair"></span>
+          </button>
+          <button class="red" data-a="trap" title="Spike Pit (Y) · Costs 20 Coins — click the board to bury a pit that shreds enemies for 25s">
+            <span class="wf-p-label">🕳️ SPIKE PIT (Y) 🪙20</span>
+            <i class="wf-cd-sweep" data-cd-sweep="trap"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="trap"></span>
           </button>
         </div>
         <div class="wf-cards">${RECRUITABLE.map((t, i) => `
@@ -229,6 +254,7 @@ export class WarfareHud {
           </div>
           <div class="wf-stats" data-f="stats"></div>
           <div class="wf-modes">
+            <button data-a="nextMission" class="wf-btn-replay wf-hidden" data-f="nextBtn">NEXT MISSION ▶</button>
             <button data-a="restart" class="wf-btn-replay">↺ Replay</button>
             <button data-a="exit" class="wf-btn-mall alt">🏛️ Exit to Mall</button>
             <button data-a="quit" class="alt">Menu</button>
@@ -252,7 +278,23 @@ export class WarfareHud {
   }
 
   screen(name) {
-    for (const s of ['title', 'game', 'pause', 'end', 'online']) this.q(`[data-s="${s}"]`)?.classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
+    for (const s of ['title', 'game', 'pause', 'end', 'online', 'campaign']) this.q(`[data-s="${s}"]`)?.classList.toggle('wf-hidden', !(s === name || (s === 'game' && (name === 'pause' || name === 'end'))));
+  }
+
+  /** Render the campaign mission list. `progress` = {unlocked, stars}, `missions` = CAMPAIGN. */
+  setCampaign(progress, missions) {
+    const el = this.f('missions');
+    el.innerHTML = missions.map((m, i) => {
+      const locked = i > progress.unlocked;
+      const stars = progress.stars[m.id] || 0;
+      const meta = m.mode === 'defense'
+        ? `${m.waves} waves · ${m.difficulty}` : `versus · ${m.difficulty}`;
+      return `<button ${locked ? 'disabled' : ''} data-a="mission-${m.id}" class="${locked ? '' : 'blue'}" style="text-align:left;display:block;width:100%">
+        <span style="font-size:20px">${locked ? '🔒' : '🗺️'} ${m.name}</span>
+        <span style="float:right;color:#ffd23f">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</span><br>
+        <span style="font-family:Nunito,system-ui,sans-serif;font-size:13px;font-weight:700;opacity:.9">${m.briefing}<br>${meta} · ${m.map}</span>
+      </button>`;
+    }).join('');
   }
 
   refreshBest(difficulty = 'normal') {
@@ -295,9 +337,10 @@ export class WarfareHud {
     const L = this.last;
     const set = (k, v, fn) => { if (L[k] !== v) { L[k] = v; fn(v); } };
     const versus = st.mode === 'versus';
-    set('wave', versus ? 'VERSUS' : `${st.wave}|${isBossWave(st.wave)}`, () => {
+    const fw = st.finalWave || FINAL_WAVE;
+    set('wave', versus ? 'VERSUS' : `${st.wave}|${isBossWave(st.wave)}|${fw}`, () => {
       const el = this.f('wave');
-      el.textContent = versus ? 'VERSUS' : `WAVE ${Math.max(1, st.wave)}/${FINAL_WAVE}${isBossWave(st.wave) ? ' · BOSS' : ''}`;
+      el.textContent = versus ? 'VERSUS' : `WAVE ${Math.max(1, st.wave)}/${fw}${isBossWave(st.wave) ? ' · BOSS' : ''}`;
       el.classList.toggle('boss', !versus && isBossWave(st.wave));
     });
     const mine = st.forts[team], theirs = st.forts[team === 'blue' ? 'red' : 'blue'];
@@ -316,9 +359,17 @@ export class WarfareHud {
     const coins = st.coins[team];
     set('coins', coins, v => { this.f('coins').textContent = v; });
     let nb = 0, nr = 0;
-    for (const u of st.units) { if (u.alive) { if (u.team === 'blue') nb++; else nr++; } }
+    const comp = { blue: new Map(), red: new Map() };
+    for (const u of st.units) {
+      if (!u.alive) continue;
+      if (u.team === 'blue') { nb++; comp.blue.set(u.type, (comp.blue.get(u.type) || 0) + 1); }
+      else { nr++; comp.red.set(u.type, (comp.red.get(u.type) || 0) + 1); }
+    }
     set('nb', nb, v => { this.f('nb').textContent = v; });
     set('nr', nr, v => { this.f('nr').textContent = v; });
+    const compStr = ['blue', 'red'].map(t =>
+      `${t === 'blue' ? 'Blue' : 'Red'}: ${[...comp[t]].map(([type, n]) => `${ICON_ALL[type] || '❓'}×${n}`).join(' ') || '—'}`).join('  vs  ');
+    set('comp', compStr, v => { const el = this.q('.wf-count'); if (el) el.title = `Alive by type — ${v}`; });
     let sumX = 0, count = 0;
     for (const u of st.units) { if (u.alive) { sumX += u.x; count++; } }
     const avgX = count > 0 ? (sumX / count) : 0;
@@ -358,9 +409,9 @@ export class WarfareHud {
   updatePowers(st, team, powerCooldowns = {}) {
     if (!st) return;
     const coins = st.coins?.[team] ?? 0;
-    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0 };
-    const costs = { artillery: 25, supply: 15, stance: 0 };
-    for (const k of ['artillery', 'supply', 'stance']) {
+    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0, warhorn: 18.0, repair: 25.0, trap: 15.0 };
+    const costs = { artillery: 25, supply: 15, stance: 0, warhorn: 20, repair: 30, trap: 20 };
+    for (const k of Object.keys(costs)) {
       const cd = Math.max(0, powerCooldowns[k] || 0);
       const cost = costs[k];
       const btn = this.q(`.wf-powers button[data-a="${k}"]`);
@@ -421,7 +472,7 @@ export class WarfareHud {
     setTimeout(() => el.remove(), secs * 1000);
   }
 
-  showEnd({ won, title, sub, stats = [], waves, kills, time, score }) {
+  showEnd({ won, title, sub, stats = [], waves, kills, time, score, nextMission = false }) {
     this.f('endTitle').textContent = title || (won ? 'VICTORY!' : 'DEFEAT');
     this.f('endTitle').style.color = won ? '#5ee06a' : '#ff4d5e';
     this.f('endSub').textContent = sub || '';
@@ -432,6 +483,7 @@ export class WarfareHud {
     if (stats && this.f('stats')) {
       this.f('stats').innerHTML = stats.map(([label, value]) => `<div class="wf-stat"><b>${value}</b><span>${label}</span></div>`).join('');
     }
+    this.f('nextBtn')?.classList.toggle('wf-hidden', !nextMission);
     this.screen('end');
   }
 
