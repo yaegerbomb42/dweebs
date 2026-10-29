@@ -174,6 +174,7 @@ export class WarfareAudio {
         case 'slam': if (this._take('slam')) this.slam(ev.x, ev.unit === 'boss'); break;
         case 'grab': if (this._take('grab')) this.grab(ev.x); break;
         case 'convert': if (this._take('convert')) this.convert(ev.x); break;
+        case 'artillery': if (this._take('explode')) this.boom(ev.x, true); break;
         case 'recruit': if (ev.team === team && this._take('recruit')) this.recruit(); break;
         case 'fortHit': if (ev.team === team && this._take('fortHit')) this.fortThunk(); break;
         case 'waveStart': this.waveStart(ev.boss); break;

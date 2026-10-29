@@ -6,7 +6,7 @@
 //   paused / over → pause menu, win/lose screen with stats and restart
 import * as THREE from 'three';
 import { createBattle, stepBattle, battleHash, WF_DT, FIELD } from '../sim/warfareBattle.js';
-import { commanderDecide } from '../sim/warfareAI.js';
+import { commanderTurn, createCommanderBrain } from './WarfareCommander.js';
 import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
 import { DIFFICULTY, FINAL_WAVE } from '../sim/warfareWaves.js';
 import { WarfareView } from './WarfareView.js';
@@ -74,6 +74,8 @@ export class DweebWarfare {
     try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
     this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.brain = createCommanderBrain();
+    this.aiming = null; // { kind: 'artillery', team } while the player picks a target
     this.pending = [];
     this.acc = 0;
     this.seen = new Set();
@@ -102,24 +104,34 @@ export class DweebWarfare {
   _startAttract() {
     this.phase = 'title';
     this.overlay = false;
-    this.st = createBattle({ seed: (Date.now() & 0xffff) + 1, mode: 'versus' });
+    this.st = createBattle({ seed: (Date.now() & 0xffff) + 1, mode: 'versus', map: 'random' });
     this.attract = true;
+    this.brain = createCommanderBrain();
+    this._cancelAim();
     this.view.reset();
+    this.view.setBarricades(this.st.barricades);
     this.view.localTeam = this.team;
     this.hud.setDifficulty(this.difficulty);
     this.hud.screen('title');
     this.cam.tx = 0; this.cam.tz = 2; this.cam.tdist = 56;
   }
 
+  /** Drop any in-progress power targeting (Esc, new battle, mode switch). */
+  _cancelAim() {
+    this.aiming = null;
+    if (this.canvas) this.canvas.style.cursor = '';
+  }
+
   start(mode = 'defense') {
     this._leaveOnline();
     this._begin(mode, (Date.now() & 0x7fffffff) | 1, 'blue', this.difficulty);
+    const mapTag = ` · ${this.st.mapName} MAP`;
     if (mode === 'defense') {
-      this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}`, '', 2.6);
+      this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}${mapTag}`, '', 2.6);
       this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
     } else {
-      this.hud.banner('VERSUS', 'Smash the red fort before they smash yours', '', 2.6);
-      this.hud.toast('The AI buys counters to your army. Mix it up!', 8);
+      this.hud.banner('VERSUS', `Smash the red fort before they smash yours${mapTag}`, '', 2.6);
+      this.hud.toast('The AI buys counters to your army — and shells your clumps. Mix it up!', 8);
     }
   }
 
@@ -127,8 +139,10 @@ export class DweebWarfare {
     this.mode = mode;
     this.attract = false;
     this.team = team;
-    this.st = createBattle({ seed, mode, difficulty });
+    this.st = createBattle({ seed, mode, difficulty, map: 'random' });
     this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.brain = createCommanderBrain();
+    this._cancelAim();
     this.pending = [];
     this.outbox = [];
     this.seen = new Set();
@@ -136,6 +150,7 @@ export class DweebWarfare {
     this.endTimer = 0;
     this.overlay = false;
     this.view.reset();
+    this.view.setBarricades(this.st.barricades);
     this.view.localTeam = team;
     this.phase = 'playing';
     this.hud.last = {};
@@ -276,10 +291,23 @@ export class DweebWarfare {
       this.hud.toast('Need 🪙 25 for Artillery Barrage', 2.0);
       return;
     }
+    // Arm the barrage: the next board tap picks the impact point (Esc cancels).
+    this.aiming = { kind: 'artillery', team };
+    if (this.canvas) this.canvas.style.cursor = 'crosshair';
+    this.audio?.click();
+    this.hud.toast('🎯 <b>Click the board</b> to call the barrage — <b>Esc</b> cancels', 6);
+  }
+
+  _fireArtillery(x, z, team) {
+    this._cancelAim();
+    if (this.phase !== 'playing') return;
+    if (this.st.coins[team] < 25) {
+      this.audio?.deny();
+      this.hud.toast('Need 🪙 25 for Artillery Barrage', 2.0);
+      return;
+    }
     this.powerCooldowns.artillery = POWER_COOLDOWNS.artillery;
-    const targetX = this.st.rally[team]?.x ?? (team === 'blue' ? 10 : -10);
-    const targetZ = this.st.rally[team]?.z ?? 0;
-    this._cmd({ type: 'artillery', team, x: targetX, z: targetZ });
+    this._cmd({ type: 'artillery', team, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10 });
   }
 
   callSupply(team = this.team) {
@@ -358,7 +386,12 @@ export class DweebWarfare {
       const k = e.key.toLowerCase();
       if (e.type === 'keyup') { this.keys.delete(k); return; }
       this.keys.add(k);
-      if (k === 'escape') { if (this.phase === 'playing' && !this.overlay) this.setPaused(true); else if (this.phase === 'paused' || this.overlay) this.setPaused(false); e.preventDefault(); return; }
+      if (k === 'escape') {
+        if (this.aiming) { this._cancelAim(); this.hud.toast('Barrage cancelled', 1.5); e.preventDefault(); return; }
+        if (this.phase === 'playing' && !this.overlay) this.setPaused(true);
+        else if (this.phase === 'paused' || this.overlay) this.setPaused(false);
+        e.preventDefault(); return;
+      }
       if (k === 'm') { this.toggleMute(); return; }
       if (this.phase !== 'playing') return;
       const n = '1234'.indexOf(e.key);
@@ -406,7 +439,10 @@ export class DweebWarfare {
       if (this._ptrs.size < 2) this._pinch = this._ptrs.size ? this._pinch : null;
       if (e.type === 'pointerup' && !p.moved && !wasMulti && this.phase === 'playing') {
         const hit = this._pick(e.clientX, e.clientY);
-        if (hit) { this.setRallyPoint(hit.x, hit.z); this.audio?.click(); }
+        if (hit) {
+          if (this.aiming?.kind === 'artillery') this._fireArtillery(hit.x, hit.z, this.aiming.team);
+          else { this.setRallyPoint(hit.x, hit.z); this.audio?.click(); }
+        }
       }
       if (!this._ptrs.size) this._pinch = null;
     };
@@ -434,10 +470,10 @@ export class DweebWarfare {
   _stepOnce() {
     const st = this.st;
     let cmds;
-    if (this.attract) cmds = [...commanderDecide(st, 'blue'), ...commanderDecide(st, 'red')];
+    if (this.attract) cmds = [...commanderTurn(st, this.brain, 'blue'), ...commanderTurn(st, this.brain, 'red')];
     else {
       cmds = this.pending.splice(0);
-      if (st.mode === 'versus' && !this.isLocalPvp) cmds.push(...commanderDecide(st, 'red'));
+      if (st.mode === 'versus' && !this.isLocalPvp) cmds.push(...commanderTurn(st, this.brain, 'red'));
     }
     if (!this.attract) { this._stepWith(cmds); return; }
     stepBattle(st, cmds);
@@ -546,7 +582,7 @@ export class DweebWarfare {
     this.view.frame(this.st, alpha, this.phase === 'paused' ? 0 : dt);
     if (this.phase !== 'title') {
       this.hud.update(this.st, this.team, dt, this.powerCooldowns);
-      this.hud.render(this.st, this.powerCooldowns);
+      this.hud.render(this.st, this.team, this.powerCooldowns);
     }
     this._camera(dt);
   }
@@ -576,6 +612,7 @@ export class DweebWarfare {
   }
 
   dispose() {
+    this._cancelAim();
     window.removeEventListener('keydown', this._onKey);
     window.removeEventListener('keyup', this._onKey);
     this.canvas?.removeEventListener('pointerdown', this._onPointer);

@@ -1,7 +1,7 @@
 // WarfareHud.js — all Dweeb Warfare DOM: start screen with tutorial hints, top bar, recruit
 // cards, wave banners, toasts, pause and the win/lose screen. Self-contained (injects its CSS).
 import { UNIT_TYPES, RECRUITABLE, COUNTER_OF } from '../sim/warfareUnits.js';
-import { FINAL_WAVE, isBossWave } from '../sim/warfareWaves.js';
+import { FINAL_WAVE, isBossWave, waveComposition } from '../sim/warfareWaves.js';
 import { WF_HZ } from '../sim/warfareBattle.js';
 
 const CSS = `
@@ -51,6 +51,7 @@ const CSS = `
 .wf-prep{position:absolute;top:110px;left:50%;transform:translateX(-50%);text-align:center}
 .wf-prep button{font-size:20px}
 .wf-prep .t{font-family:'Lilita One',sans-serif;font-size:20px;text-shadow:0 2px 0 #1b1030;margin-bottom:6px}
+.wf-prep-comp{font-size:15px;font-weight:800;text-shadow:0 2px 0 #1b1030;margin-bottom:8px;letter-spacing:1px}
 .wf-cards{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:10px}
 .wf-card{pointer-events:auto;cursor:pointer;width:128px;background:rgba(27,16,48,.85);border:3px solid #fff8ee;border-radius:16px;padding:8px;text-align:center;transition:transform .08s}
 .wf-card:hover{transform:translateY(-4px)}
@@ -98,6 +99,17 @@ body.warfare-active canvas{touch-action:none}
 `;
 
 const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣' };
+const ICON_ALL = { ...ICON, sneak: '🗡️', brute: '🦍', boss: '⚙️' };
+
+/** One-line preview of wave N's composition, e.g. "🛡️×3 🚀×2 ⚙️ BOSS". Pure — unit-testable. */
+export function wavePreview(n) {
+  const counts = new Map();
+  for (const t of waveComposition(n)) counts.set(t, (counts.get(t) || 0) + 1);
+  const parts = [];
+  for (const [t, c] of counts) parts.push(`${ICON_ALL[t] || '❓'}×${c}`);
+  if (isBossWave(n)) parts.push('<b style="color:#ffd23f">BOSS</b>');
+  return `next: ${parts.join(' ')}`;
+}
 
 /** localStorage key for the best defense wave; normal keeps the original key. */
 export const bestKey = d => (d && d !== 'normal' ? `dweebs-warfare-best-${d}` : 'dweebs-warfare-best');
@@ -155,6 +167,7 @@ export class WarfareHud {
         <div class="wf-boss wf-hidden" data-f="boss"><span>⚙️ BRASS BULLY</span><div class="wf-bar"><i></i></div></div>
         <div class="wf-prep" data-f="prep">
           <div class="t" data-f="prepText"></div>
+          <div class="wf-prep-comp" data-f="prepComp"></div>
           <button data-a="startWave">START WAVE (SPACE)</button>
         </div>
         <div class="wf-powers" style="position:absolute; bottom:112px; left:50%; transform:translateX(-50%); display:flex; gap:10px; pointer-events:auto;">
@@ -320,7 +333,7 @@ export class WarfareHud {
     set('coinsCards', coins, () => {
       for (const c of this.root.querySelectorAll('.wf-card')) c.classList.toggle('off', coins < UNIT_TYPES[c.dataset.u].cost);
     });
-    this.updatePowers(st, powerCooldowns);
+    this.updatePowers(st, team, powerCooldowns);
     let boss = null;
     for (const u of st.units) if (u.type === 'boss') { boss = u; break; }
     set('bossShow', !!boss, v => this.f('boss').classList.toggle('wf-hidden', !v));
@@ -330,18 +343,21 @@ export class WarfareHud {
     }
     const prep = st.phase === 'prep';
     set('prep', prep, v => this.f('prep').classList.toggle('wf-hidden', !v));
-    if (prep) set('prepT', Math.ceil(st.prepTicks / WF_HZ), s => {
-      this.f('prepText').textContent = st.wave === 0 ? `Plant your rally flag and recruit. First wave in ${s}s` : `Wave ${st.wave + 1}${isBossWave(st.wave + 1) ? ' (BOSS!)' : ''} in ${s}s`;
-    });
+    if (prep) {
+      set('prepT', Math.ceil(st.prepTicks / WF_HZ), s => {
+        this.f('prepText').textContent = st.wave === 0 ? `Plant your rally flag and recruit. First wave in ${s}s` : `Wave ${st.wave + 1}${isBossWave(st.wave + 1) ? ' (BOSS!)' : ''} in ${s}s`;
+      });
+      set('prepComp', st.wave + 1, w => { this.f('prepComp').innerHTML = wavePreview(w); });
+    }
     if (this.bannerT > 0) {
       this.bannerT -= dt;
       if (this.bannerT <= 0) this.f('banner').classList.remove('show');
     }
   }
 
-  updatePowers(st, powerCooldowns = {}) {
+  updatePowers(st, team, powerCooldowns = {}) {
     if (!st) return;
-    const coins = st.coins?.blue ?? 0;
+    const coins = st.coins?.[team] ?? 0;
     const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0 };
     const costs = { artillery: 25, supply: 15, stance: 0 };
     for (const k of ['artillery', 'supply', 'stance']) {
@@ -374,8 +390,8 @@ export class WarfareHud {
     }
   }
 
-  render(st, powerCooldowns = {}) {
-    this.updatePowers(st, powerCooldowns);
+  render(st, team, powerCooldowns = {}) {
+    this.updatePowers(st, team, powerCooldowns);
   }
 
   pop(type) {

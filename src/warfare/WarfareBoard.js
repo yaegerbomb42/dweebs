@@ -5,6 +5,36 @@ import { toonMat, noOutline } from '../render/Toon.js';
 import { FIELD, FORT_X, FORT_RADIUS, BARRICADES } from '../sim/warfareBattle.js';
 import { TEAM_COLORS, sharedMats } from './WarfareModels.js';
 
+/** Barricades: three stacked dowel logs with brass bands, at each circle in `list`. */
+export function buildBarricades(list) {
+  const mats = sharedMats();
+  const g = new THREE.Group();
+  const logGeo = new THREE.CylinderGeometry(0.42, 0.42, 3.4, 7);
+  const bandGeo = new THREE.TorusGeometry(0.5, 0.08, 4, 10);
+  for (const b of list) {
+    const bg = new THREE.Group();
+    const spots = [[-0.45, 0.42], [0.45, 0.42], [0, 1.1]];
+    for (const [ox, y] of spots) {
+      const log = new THREE.Mesh(logGeo, mats.wood);
+      log.rotation.x = Math.PI / 2;
+      log.position.set(ox, y, 0);
+      log.castShadow = true;
+      bg.add(log);
+    }
+    for (const oz of [-1.1, 1.1]) {
+      const band = new THREE.Mesh(bandGeo, mats.brass);
+      band.scale.set(1.6, 1.5, 1);
+      band.position.set(0, 0.75, oz);
+      bg.add(band);
+    }
+    const s = b.r / 1.5;
+    bg.scale.set(s, 1, s);
+    bg.position.set(b.x, 0, b.z);
+    g.add(bg);
+  }
+  return g;
+}
+
 function roundedRect(w, h, r) {
   const s = new THREE.Shape();
   const x = -w / 2, y = -h / 2;
@@ -16,7 +46,7 @@ function roundedRect(w, h, r) {
   return s;
 }
 
-export function buildBoard() {
+export function buildBoard(barricades = BARRICADES) {
   const mats = sharedMats();
   const group = new THREE.Group();
   const W = FIELD.halfX * 2 + 4, H = FIELD.halfZ * 2 + 4;
@@ -70,28 +100,9 @@ export function buildBoard() {
     rail(FIELD.halfZ * 2 - 2, FIELD.halfX + 1.4, 0, false, y);
   }
 
-  // Barricades: three stacked dowel logs with brass bands
-  const logGeo = new THREE.CylinderGeometry(0.42, 0.42, 3.4, 7);
-  const bandGeo = new THREE.TorusGeometry(0.5, 0.08, 4, 10);
-  for (const b of BARRICADES) {
-    const g = new THREE.Group();
-    const spots = [[-0.45, 0.42], [0.45, 0.42], [0, 1.1]];
-    for (const [ox, y] of spots) {
-      const log = new THREE.Mesh(logGeo, mats.wood);
-      log.rotation.x = Math.PI / 2;
-      log.position.set(ox, y, 0);
-      log.castShadow = true;
-      g.add(log);
-    }
-    for (const oz of [-1.1, 1.1]) {
-      const band = new THREE.Mesh(bandGeo, mats.brass);
-      band.scale.set(1.6, 1.5, 1);
-      band.position.set(0, 0.75, oz);
-      g.add(band);
-    }
-    g.position.set(b.x, 0, b.z);
-    group.add(g);
-  }
+  // Barricades: dowel-bundle circles the sim slides units around (rebuilt per battle/map)
+  const barr = buildBarricades(barricades);
+  group.add(barr);
 
   const forts = { blue: buildFort('blue', -FORT_X), red: buildFort('red', FORT_X) };
   group.add(forts.blue.group, forts.red.group);
@@ -101,7 +112,7 @@ export function buildBoard() {
   pick.rotation.x = -Math.PI / 2;
   group.add(pick);
 
-  return { group, pick, forts };
+  return { group, pick, forts, barr };
 }
 
 function buildFort(team, x) {

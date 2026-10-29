@@ -31,10 +31,24 @@ export const FORT_ALARM = 16;
 export const PEN_REACH = 4;
 export const SPAWN_GAP = 8;
 export const VERSUS_INCOME = 4;          // coins per second per side in versus
-/** Dowel-bundle barricades in no-man's land: circles units slide around. */
-export const BARRICADES = Object.freeze([
-  { x: -2, z: -13, r: 1.5 }, { x: 2, z: -4.5, r: 1.5 }, { x: -2, z: 4.5, r: 1.5 }, { x: 2, z: 13, r: 1.5 },
+/** Commander stances and their army-wide speed multiplier. */
+export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
+/** Ticks a supply drop's +35% speed boost lasts (then the army falls back to its stance pace). */
+export const SUPPLY_BOOST_TICKS = 10 * WF_HZ;
+/** Artillery also cracks the enemy fort for this fraction of its splash damage. */
+export const ARTILLERY_FORT_FRAC = 0.5;
+/** Toy-battlefield layouts: symmetric dowel-bundle barricade sets, one picked per battle by seed. */
+export const MAP_LAYOUTS = Object.freeze([
+  { name: 'CROSSROADS', barricades: Object.freeze([
+    { x: -2, z: -13, r: 1.5 }, { x: 2, z: -4.5, r: 1.5 }, { x: -2, z: 4.5, r: 1.5 }, { x: 2, z: 13, r: 1.5 },
+  ]) },
+  { name: 'GAUNTLET', barricades: Object.freeze([
+    { x: 0, z: -9, r: 2.2 }, { x: 0, z: 9, r: 2.2 }, { x: -16, z: -8, r: 1.6 }, { x: 16, z: 8, r: 1.6 },
+  ]) },
+  { name: 'OPEN FIELD', barricades: Object.freeze([]) },
 ]);
+/** Dowel-bundle barricades in no-man's land: circles units slide around (default layout). */
+export const BARRICADES = MAP_LAYOUTS[0].barricades;
 
 const ACCEL = 0.25;
 /** Brute charge: dash at a target 4–10 m away. */
@@ -57,8 +71,11 @@ function teamStats() {
  * @param {number} [o.seed]
  * @param {'defense'|'versus'} [o.mode]
  * @param {boolean} [o.army] spawn the starting armies (tests turn this off for duels)
+ * @param {'random'|number|string} [o.map] battlefield layout: 'random' (drawn from the seed,
+ *   so lockstep peers agree), a MAP_LAYOUTS index, or a layout name. Defaults to CROSSROADS,
+ *   the classic map the balance tests are tuned on.
  */
-export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal' } = {}) {
+export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', map } = {}) {
   const versus = mode === 'versus';
   const dkey = !versus && Object.hasOwn(DIFFICULTY, difficulty) ? difficulty : 'normal';
   const diff = DIFFICULTY[dkey];
@@ -79,12 +96,24 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins, d
     winner: null, income: versus ? VERSUS_INCOME : 0,
     stats: { blue: teamStats(), red: teamStats(), wavesCleared: 0 },
   };
+  const mapIdx = map === 'random' ? st.rng.int(MAP_LAYOUTS.length)
+    : typeof map === 'number' ? ((map % MAP_LAYOUTS.length) + MAP_LAYOUTS.length) % MAP_LAYOUTS.length
+    : typeof map === 'string' ? Math.max(0, MAP_LAYOUTS.findIndex(m => m.name === map)) : 0;
+  const layout = MAP_LAYOUTS[mapIdx];
+  st.mapName = layout.name;
+  st.barricades = layout.barricades;
   if (army) {
     const start = versus ? ['shield', 'shield', 'shield', 'rocket', 'rocket'] : ['shield', 'shield', 'shield', 'shield', 'rocket', 'rocket', 'stealer'];
     for (const t of start) spawnUnit(st, 'blue', t, { x: -26 + st.rng.range(-3, 3), z: st.rng.range(-8, 8) });
     if (versus) for (const t of start) spawnUnit(st, 'red', t, { x: 26 + st.rng.range(-3, 3), z: st.rng.range(-8, 8) });
   }
   return st;
+}
+
+/** Army-wide speed multiplier for a team's current stance (1 when no stance was ordered). */
+function stanceSpeed(st, team) {
+  const s = st.stance && st.stance[team];
+  return STANCE_SPEED[s] || 1;
 }
 
 /** Add a unit. Returns it. */
@@ -97,7 +126,8 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     cd: st.rng.int(Math.max(1, s.cooldown || 1)),
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
-    dash: 0, dashCd: 60, enraged: false, speedMul: 1, cdMul: 1,
+    dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeed(st, team), boostMul: 1, boostT: 0, cdMul: 1,
+    lastAttackerId: 0, lastHurtTick: -1e9, grudgeId: 0, pushT: 0,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -158,6 +188,10 @@ export function applyCommand(st, c) {
         if (u.hp <= 0) kill(st, u, c.team, kdirX * 3, kdirZ * 3);
       }
     }
+    // Barrages also crack the enemy fort when it sits inside the blast.
+    const foe = otherTeam(c.team);
+    const ef = st.forts[foe];
+    if (Math.hypot(ef.x - tx, ef.z - tz) <= splashR + ef.r) hurtFort(st, foe, splashDmg * ARTILLERY_FORT_FRAC, 'artillery');
     return true;
   }
   if (c.type === 'supply') {
@@ -172,17 +206,19 @@ export function applyCommand(st, c) {
       if (!u.alive || u.team !== c.team) continue;
       if (Math.hypot(u.x - tx, u.z - tz) < 14) {
         u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.45);
-        u.speedMul = 1.35;
+        // a temporary hustle on top of the stance pace — it decays, never clobbers the stance
+        u.boostMul = 1.35;
+        u.boostT = SUPPLY_BOOST_TICKS;
       }
     }
     return true;
   }
   if (c.type === 'stance') {
-    const stance = c.stance || 'charge';
+    const stance = c.stance === 'defense' ? 'defense' : 'charge';
     st.stance = st.stance || {};
     st.stance[c.team] = stance;
     st.events.push({ type: 'stance', team: c.team, stance });
-    const mul = stance === 'charge' ? 1.35 : 0.8;
+    const mul = STANCE_SPEED[stance];
     for (const u of st.units) {
       if (u.alive && u.team === c.team) {
         u.speedMul = mul;
@@ -221,8 +257,8 @@ function kill(st, u, attTeam, kx, kz) {
   }
 }
 
-/** Damage `t` from an attacker of (team, type) at (ax, az). */
-function hurt(st, t, dmg, attTeam, attType, ax, az) {
+/** Damage `t` from an attacker of (team, type) at (ax, az). attId: the attacking unit, for retaliation. */
+function hurt(st, t, dmg, attTeam, attType, ax, az, attId = 0) {
   if (!t.alive || dmg <= 0) return;
   t.hp -= dmg;
   const dx = t.x - ax, dz = t.z - az;
@@ -233,6 +269,9 @@ function hurt(st, t, dmg, attTeam, attType, ax, az) {
   st.stats[attTeam].dmgDealt += dmg;
   st.events.push({ type: 'hit', id: t.id, team: t.team, unit: t.type, src: attType, dmg, x: t.x, z: t.z, kx, kz });
   if (t.hp <= 0) kill(st, t, attTeam, kx, kz);
+  // Remember the attacker: a stationary unit with nothing to fight may nurse a grudge.
+  // (The grudge itself is taken up in updateUnit — never here — so advancing walls don't scatter.)
+  else if (attId && attId !== t.id) { t.lastAttackerId = attId; t.lastHurtTick = st.tick; }
 }
 
 function isCovered(st, t) {
@@ -247,7 +286,7 @@ function isCovered(st, t) {
 }
 
 /** Splash damage centred at (x, z). */
-function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base } = {}) {
+function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, attId = 0 } = {}) {
   for (const e of st.units) {
     if (!e.alive || e.team === attTeam) continue;
     const dx = e.x - x, dz = e.z - z;
@@ -255,7 +294,7 @@ function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, bas
     const f = splashFalloff(d, radius + e.radius * 0.5);
     if (f <= 0) continue;
     const dmg = computeDamage(attType, e.type, { base, dmgMul, falloff: f, covered: cover && isCovered(st, e) });
-    hurt(st, e, dmg, attTeam, attType, x, z);
+    hurt(st, e, dmg, attTeam, attType, x, z, attId);
   }
 }
 
@@ -295,7 +334,7 @@ function updateShells(st) {
     if (sh.t < sh.T) continue;
     st.shells.splice(i, 1);
     st.events.push({ type: 'explode', team: sh.team, src: sh.src, x: sh.x1, z: sh.z1, r: sh.splash });
-    splash(st, sh.x1, sh.z1, sh.splash, sh.team, sh.src, sh.dmgMul, { cover: true });
+    splash(st, sh.x1, sh.z1, sh.splash, sh.team, sh.src, sh.dmgMul, { cover: true, attId: sh.ownerId });
     const enemy = otherTeam(sh.team);
     const f = st.forts[enemy];
     const fx = sh.x1 - f.x, fz = sh.z1 - f.z;
@@ -303,6 +342,31 @@ function updateShells(st) {
   }
 }
 
+/** Start a grudge: a stationary unit with no natural target answers whoever is hitting it,
+ *  even past normal aggro. Breaks bombardment standoffs (a rocket plinking a held shield
+ *  from 16 m forever) without scattering advancing walls — those keep their orders. */
+function startGrudge(st, u) {
+  if (!u.lastAttackerId || st.tick - u.lastHurtTick > 120) return null;
+  if (u.vx * u.vx + u.vz * u.vz >= 1) return null;
+  const a = st.byId.get(u.lastAttackerId);
+  if (!a || !a.alive || a.team === u.team || a.carriedBy) return null;
+  const dx = a.x - u.x, dz = a.z - u.z;
+  const reach = stats(u.type).aggro * 2;
+  if (dx * dx + dz * dz > reach * reach) return null;
+  u.grudgeId = a.id;
+  return a;
+}
+
+/** Keep nursing a grudge while the target is still a plausible chase. */
+function keepGrudge(st, u) {
+  if (!u.grudgeId) return null;
+  const g = st.byId.get(u.grudgeId);
+  if (!g || !g.alive || g.team === u.team || g.carriedBy) { u.grudgeId = 0; return null; }
+  const dx = g.x - u.x, dz = g.z - u.z;
+  const reach = stats(u.type).aggro * 2;
+  if (dx * dx + dz * dz > reach * reach) { u.grudgeId = 0; return null; }
+  return g;
+}
 /** Nearest enemy inside FORT_ALARM of u's own fort: defenders always answer a raid on home. */
 function fortAlarm(st, u, enemies) {
   const f = st.forts[u.team];
@@ -354,6 +418,7 @@ function updateUnit(st, u, enemies) {
   if (u.cd > 0) u.cd--;
   if (u.dashCd > 0) u.dashCd--;
   if (u.dash > 0) u.dash--;
+  if (u.boostT > 0 && --u.boostT === 0) u.boostMul = 1;
   if (u.type === 'boss' && !u.enraged && u.hp < u.maxHp * ENRAGE_AT) {
     u.enraged = true;
     u.speedMul = 1.35;
@@ -363,7 +428,7 @@ function updateUnit(st, u, enemies) {
       spawnUnit(st, u.team, 'kami', { x: u.x + dirOf(u.team) * -1.5, z: u.z + (i - 1) * 2.2, hpMul: st.scaling.hpMul, dmgMul: st.scaling.dmgMul });
     }
   }
-  const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
+  const speed = s.speed * u.speedMul * u.boostMul * (u.dash > 0 ? CHARGE.speedMul : 1);
   const home = st.forts[u.team];
   const enemyTeam = otherTeam(u.team);
   const efort = st.forts[enemyTeam];
@@ -411,10 +476,18 @@ function updateUnit(st, u, enemies) {
     return;
   }
 
-  // Target selection (staggered so 120 units don't all think on the same tick)
+  // Target selection (staggered so 120 units don't all think on the same tick).
+  // A grudge lets a stationary unit answer bombardment past aggro; a natural target always
+  // ends one, so grudges never pull units off a real fight.
   let t = u.targetId ? st.byId.get(u.targetId) : null;
-  if (!t || !t.alive || t.carriedBy || t.team === u.team || (st.tick + u.id) % 6 === 0) {
+  if (!t || !t.alive || t.carriedBy || t.team === u.team) {
+    u.grudgeId = 0;
+    t = pickTarget(u, enemies) || fortAlarm(st, u, enemies) || startGrudge(st, u);
+    u.targetId = t ? t.id : 0;
+  } else if ((st.tick + u.id) % 6 === 0) {
     t = pickTarget(u, enemies) || fortAlarm(st, u, enemies);
+    if (t) u.grudgeId = 0;
+    else t = keepGrudge(st, u) || startGrudge(st, u);
     u.targetId = t ? t.id : 0;
   }
 
@@ -440,7 +513,7 @@ function updateUnit(st, u, enemies) {
       halt(u);
       if (s.attack === 'blast') {
         st.events.push({ type: 'explode', team: u.team, src: u.type, x: u.x, z: u.z, r: s.splash, big: true });
-        splash(st, u.x, u.z, s.splash, u.team, u.type, u.dmgMul);
+        splash(st, u.x, u.z, s.splash, u.team, u.type, u.dmgMul, { attId: u.id });
         kill(st, u, null, 0, 0);
         return;
       }
@@ -469,13 +542,13 @@ function updateUnit(st, u, enemies) {
           const charging = u.dash > 0;
           const r = s.splash * (u.enraged ? 1.25 : 1);
           st.events.push({ type: 'slam', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, r, charge: charging });
-          splash(st, t.x, t.z, r, u.team, u.type, u.dmgMul * (charging ? 1.5 : 1));
+          splash(st, t.x, t.z, r, u.team, u.type, u.dmgMul * (charging ? 1.5 : 1), { attId: u.id });
           u.dash = 0;
         } else {
           const backstab = u.type === 'sneak' && t.targetId && t.targetId !== u.id;
           const base = s.dmg * (backstab ? BACKSTAB : 1);
           if (backstab) st.events.push({ type: 'backstab', id: u.id, team: u.team, x: t.x, z: t.z });
-          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul, base }), u.team, u.type, u.x, u.z);
+          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul, base }), u.team, u.type, u.x, u.z, u.id);
         }
       }
       return;
@@ -558,7 +631,9 @@ function integrate(st) {
   }
   for (const u of units) {
     if (!u.alive || u.carriedBy) continue;
-    for (const o of BARRICADES) pushOut(u, o.x, o.z, o.r);
+    if (!u.touching) u.pushT = 0;
+    u.touching = false;
+    for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
     for (const team of ['blue', 'red']) { const f = st.forts[team]; pushOut(u, f.x, f.z, f.r); }
     u.x = clamp(u.x, -FIELD.halfX, FIELD.halfX);
     u.z = clamp(u.z, -FIELD.halfZ, FIELD.halfZ);
@@ -571,8 +646,24 @@ function pushOut(u, x, z, r) {
   const d2 = dx * dx + dz * dz;
   if (d2 >= min * min) return;
   const d = Math.sqrt(d2) || 0.001;
-  u.x = x + (dx / d) * min;
-  u.z = z + (dz / d) * min;
+  const nx = dx / d, nz = dz / d;
+  u.x = x + nx * min;
+  u.z = z + nz * min;
+  u.touching = true;
+  u.pushT++;
+  // Slide around, but only when genuinely stuck: a unit pressing head-on into a wall sits in
+  // perfect equilibrium with its seek steering forever (e.g. the boss marching z=0 into a
+  // barricade on the centre line). Brief brawl jostles never reach the threshold, so the
+  // nudge can't perturb normal fighting. The drift always goes to the unit's deterministic
+  // flank side so it can't oscillate; it stops the moment the unit isn't pressing in.
+  if (u.pushT > 45) {
+    const into = -(u.vx * nx + u.vz * nz);
+    if (into > 0) {
+      const slide = Math.min(into, 2) * 0.6 * (u.flankSide || 1);
+      u.vx += -nz * slide;
+      u.vz += nx * slide;
+    }
+  }
 }
 
 function updatePhase(st) {
@@ -666,6 +757,16 @@ export function battleHash(st) {
   mix(st.tick); mix(st.wave); mix(st.coins.blue); mix(st.coins.red);
   mix(Math.round(st.forts.blue.hp * 10)); mix(Math.round(st.forts.red.hp * 10));
   mix(st.units.length); mix(st.shells.length);
+  // Commander-visible state also desyncs battles: a rally/stance the peer never got changes
+  // every order that follows, so it belongs in the hash.
+  const phaseCode = st.phase === 'prep' ? 1 : st.phase === 'battle' ? 2 : st.phase === 'won' ? 3 : 4;
+  mix(phaseCode); mix(st.prepTicks); mix(st.spawnQueue.length);
+  for (const team of ['blue', 'red']) {
+    const r = st.rally[team];
+    mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100));
+    const s = st.stance && st.stance[team];
+    mix(s === 'charge' ? 1 : s === 'defense' ? 2 : 0);
+  }
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));

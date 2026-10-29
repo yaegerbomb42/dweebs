@@ -3,7 +3,7 @@
 // turns sim events into juice via WarfareFx.
 import * as THREE from 'three';
 import { counterMult } from '../sim/warfareUnits.js';
-import { buildBoard } from './WarfareBoard.js';
+import { buildBoard, buildBarricades } from './WarfareBoard.js';
 import { buildUnit, buildShell, buildRing, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
 import { WarfareFx } from './WarfareFx.js';
 
@@ -43,6 +43,13 @@ export class WarfareView {
   }
 
   get pickMesh() { return this.board.pick; }
+
+  /** Swap the barricade set (per-battle map layout). Safe to call with [] or undefined. */
+  setBarricades(list) {
+    if (this.board.barr) this.board.group.remove(this.board.barr);
+    this.board.barr = buildBarricades(list || []);
+    this.board.group.add(this.board.barr);
+  }
 
   reset() {
     for (const e of this.entries.values()) this.dyn.remove(e.m.root);
