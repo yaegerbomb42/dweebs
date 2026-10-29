@@ -7,8 +7,9 @@
 
 import { setSeg } from './dom.js';
 import { loadSettings, saveSettings, onSettingsChange, prettyCode, DEFAULT_BINDINGS } from './settings.js';
+import { findGamepad, padFamily, watchGamepads } from './gamepad.js';
 
-/* global navigator, setInterval, clearInterval, window */
+/* global navigator, setInterval, clearInterval */
 
 const SLIDERS = {
   'app-vol-master': ['master', v => v / 100],
@@ -115,19 +116,26 @@ export function mountSettings({ root, toast }) {
   paint(loadSettings());
   const off = onSettingsChange(paint);
 
-  // ─── gamepad detection (informational only; support is always available) ───
+  // ─── gamepad detection (informational; gameplay support is always available) ───
+  // Uses src/app/gamepad.js: the same detection the unified input polls, so the
+  // note and the input can never disagree about whether a pad is connected.
   const note = q('#app-pad-note');
+  function padLabel(pad) {
+    const family = padFamily(pad);
+    const kind = family === 'xbox' ? 'Xbox' : family === 'playstation' ? 'PlayStation' : 'Gamepad';
+    const name = (pad.id || '').slice(0, 34).trim();
+    return name && !/^(xbox|playstation)/i.test(name) ? `${kind}: ${name}` : kind + ' connected';
+  }
   function scanPads() {
     if (!note) return true;
-    const pads = navigator.getGamepads?.() || [];
-    const pad = [...pads].find(Boolean);
+    const pad = findGamepad(navigator);
     note.textContent = pad
-      ? 'Gamepad found: ' + (pad.id || 'connected').slice(0, 34)
+      ? 'Gamepad found — ' + padLabel(pad) + '.'
       : 'No gamepad detected. Plug one in and press a button.';
     return !!pad;
   }
   let padTimer = setInterval(scanPads, 1000);
-  window.addEventListener('gamepadconnected', scanPads);
+  const stopWatchingPads = watchGamepads({ onConnect: scanPads, onDisconnect: scanPads });
   scanPads();
 
   return {
@@ -136,6 +144,7 @@ export function mountSettings({ root, toast }) {
     dispose() {
       document.removeEventListener('keydown', onKeyDown, true);
       clearInterval(padTimer);
+      stopWatchingPads();
       off();
     },
   };
