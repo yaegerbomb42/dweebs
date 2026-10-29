@@ -339,43 +339,148 @@
 /* The player-facing toggle sets the same flag for in-game shake and confetti. */
 :root[data-reduced-motion="on"] #app-toasts { transition: none; }
 
-/* ─── The Dweeb Mall Hub ─── */
-.mall-container {
+/* ─── Builder-first hub (title screen) ───
+ * Build-A-Dweeb is the hero; the mini-games are a secondary arcade row.
+ * Every rule stays scoped to .hub-*, .hero-*, .arcade-* or .diff-*, plus the
+ * launch-shimmer hook on .btn.is-launching (added transiently by boot.js). */
+.hub-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  max-width: 1240px;
-  width: 95vw;
-  gap: 18px;
-  padding: 10px 0;
+  width: min(1120px, 95vw);
+  gap: clamp(16px, 2.4vh, 26px);
+  padding: 12px 0 24px;
 }
-.mall-header {
-  text-align: center;
-}
-.mall-title {
+.hub-header { text-align: center; animation: hubFade .45s ease both; }
+@keyframes hubFade { from { opacity: 0; transform: translateY(-12px); } }
+.hub-wordmark {
   font-family: var(--display);
-  font-size: clamp(38px, 6vw, 68px);
-  color: var(--yellow);
+  font-size: clamp(46px, 7vw, 88px);
+  line-height: 1;
+  letter-spacing: 3px;
+}
+.hub-wordmark span {
+  display: inline-block;
+  color: var(--c);
   -webkit-text-stroke: 5px var(--ink);
   paint-order: stroke fill;
-  text-shadow: 0 8px 0 var(--ink);
-  margin-bottom: 4px;
-  letter-spacing: 2px;
+  text-shadow: 0 7px 0 var(--ink);
+  animation: hubBob 3s ease-in-out infinite;
+  animation-delay: calc(var(--i) * -.3s);
 }
-.mall-subtitle {
+@keyframes hubBob { 50% { transform: translateY(-7px) rotate(2deg); } }
+.hub-tagline {
   font-family: var(--display);
-  font-size: clamp(16px, 2.2vw, 22px);
+  font-size: clamp(15px, 2vw, 21px);
   color: var(--cream);
   -webkit-text-stroke: 3px var(--ink);
   paint-order: stroke fill;
+  margin-top: 8px;
 }
-.mall-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 16px;
+
+/* ── HERO: Build-A-Dweeb ── */
+.hub-hero {
+  --hero-ink: #14102e;
+  position: relative;
+  overflow: hidden;
   width: 100%;
+  border: 5px solid var(--hero-ink);
+  border-radius: 30px;
+  background:
+    radial-gradient(120% 130% at 50% -20%, rgba(181, 108, 255, .34), transparent 55%),
+    radial-gradient(100% 120% at 85% 110%, rgba(63, 169, 255, .22), transparent 60%),
+    linear-gradient(160deg, #2c1d52 0%, #1d1440 60%, #161032 100%);
+  box-shadow: 0 12px 0 var(--hero-ink), 0 30px 70px rgba(0, 0, 0, .45);
+  padding: clamp(20px, 3vw, 34px) clamp(18px, 3.4vw, 40px);
+  color: var(--cream);
+  animation: heroIn .6s cubic-bezier(.2, 1.35, .4, 1) both;
 }
-.mall-card {
+@keyframes heroIn { from { opacity: 0; transform: translateY(30px) scale(.97); } }
+.hero-glow {
+  position: absolute;
+  inset: -40%;
+  background: conic-gradient(from 0deg, transparent 0 40%, rgba(255, 255, 255, .06) 50%, transparent 60% 100%);
+  animation: heroSpin 14s linear infinite;
+  pointer-events: none;
+}
+@keyframes heroSpin { to { transform: rotate(360deg); } }
+.hero-badges { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; position: relative; }
+.hero-main-badge {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 2px;
+  background: var(--yellow);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-radius: 99px;
+  padding: 4px 14px;
+  box-shadow: 0 4px 0 var(--ink);
+  animation: badgePulse 2s ease-in-out infinite;
+}
+@keyframes badgePulse { 50% { transform: scale(1.06) rotate(-1deg); } }
+.hero-body { display: flex; gap: clamp(14px, 2.5vw, 30px); align-items: center; position: relative; }
+.hero-icon {
+  font-size: clamp(56px, 8vw, 96px);
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, .35));
+  animation: iconFloat 3.4s ease-in-out infinite;
+}
+@keyframes iconFloat { 50% { transform: translateY(-10px) rotate(-6deg); } }
+.hero-title {
+  font-family: var(--display);
+  font-size: clamp(30px, 4.6vw, 52px);
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 5px 0 rgba(0, 0, 0, .35);
+  margin-bottom: 8px;
+}
+.hero-desc {
+  font-weight: 700;
+  font-size: clamp(14px, 1.8vw, 17px);
+  line-height: 1.45;
+  color: #e8e2ff;
+  max-width: 62ch;
+}
+.hero-chips { list-style: none; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.hero-chips li {
+  font-weight: 900;
+  font-size: 13px;
+  background: rgba(255, 255, 255, .12);
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-radius: 99px;
+  padding: 5px 12px;
+  color: #fff;
+}
+.hero-cta {
+  margin-top: 18px;
+  position: relative;
+  background: #b56cff;
+  color: #fff;
+  font-size: clamp(24px, 3.2vw, 34px);
+  padding: 12px 44px;
+  box-shadow: 0 7px 0 var(--ink), 0 0 26px rgba(181, 108, 255, .55);
+}
+.hero-cta:hover { filter: brightness(1.08); box-shadow: 0 9px 0 var(--ink), 0 0 34px rgba(181, 108, 255, .75); }
+.hero-cta:active { box-shadow: 0 2px 0 var(--ink); }
+
+/* ── THE ARCADE: secondary mini-game row ── */
+.hub-arcade { width: 100%; }
+.arcade-head { text-align: center; margin-bottom: 12px; animation: hubFade .45s .15s ease both; }
+.arcade-title {
+  font-family: var(--display);
+  font-size: clamp(22px, 3vw, 34px);
+  color: var(--cream);
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 5px 0 var(--ink);
+  letter-spacing: 2px;
+}
+.arcade-sub { font-weight: 900; font-size: 14px; color: #cfc6ee; letter-spacing: .5px; margin-top: 4px; }
+.arcade-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+.arcade-card {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -384,17 +489,48 @@
   background: var(--cream);
   border: 4px solid var(--ink);
   border-radius: 22px;
-  box-shadow: 0 8px 0 var(--ink);
-  padding: 20px 14px 16px 14px;
-  transition: transform .14s ease, box-shadow .14s ease;
+  box-shadow: 0 7px 0 var(--ink);
+  padding: 16px 12px 14px;
+  gap: 8px;
+  animation: cardIn .5s cubic-bezier(.2, 1.3, .4, 1) both;
+  animation-delay: calc(var(--i) * 85ms + 150ms);
+  transition: transform .16s ease, box-shadow .16s ease;
 }
-.mall-card:hover {
-  transform: translateY(-5px) scale(1.02);
-  box-shadow: 0 13px 0 var(--ink);
+@keyframes cardIn { from { opacity: 0; transform: translateY(28px) scale(.95); } }
+.arcade-card:hover { transform: translateY(-6px); box-shadow: 0 13px 0 var(--ink); }
+.arcade-card-top { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.arcade-icon { font-size: 38px; filter: drop-shadow(0 3px 0 rgba(27, 16, 48, .2)); }
+
+/* Difficulty badges — one per arcade cabinet, three tiers. */
+.diff-badge {
+  font-family: var(--display);
+  font-size: 10px;
+  letter-spacing: 1.6px;
+  padding: 4px 10px;
+  border: 3px solid var(--ink);
+  border-radius: 99px;
+  box-shadow: 0 3px 0 var(--ink);
 }
+.diff-easy { background: #5ee06a; color: var(--ink); }
+.diff-medium { background: #ffd23f; color: var(--ink); }
+.diff-intense { background: #ff4d5e; color: #fff; }
+
+.arcade-card-title { font-family: var(--display); font-size: 19px; color: var(--ink); line-height: 1.1; }
+.arcade-card-desc { font-weight: 700; font-size: 12.5px; color: #475569; line-height: 1.4; flex-grow: 1; }
+.arcade-subgames { display: flex; gap: 6px; width: 100%; }
+.arcade-sub-btn { flex: 1; font-size: 12px; padding: 6px 4px; min-width: 0; }
+.arcade-sub-btn.pink { background: var(--pink); color: #fff; }
+.arcade-sub-btn.blue { background: var(--blue); color: #fff; }
+.arcade-btn { width: 100%; font-size: 16px; padding: 8px 10px; }
+.arcade-btn.green { background: var(--green); }
+.arcade-btn.blue { background: var(--blue); color: #fff; }
+.arcade-btn.pink { background: var(--pink); color: #fff; }
+
+.hub-footer { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; animation: hubFade .45s .3s ease both; }
+.hub-footer .btn { font-size: 17px; padding: 8px 20px; }
+
+/* Genre badges, kept from the old mall cards (the hero reuses them). */
 .mall-badge {
-  position: absolute;
-  top: -12px;
   background: var(--yellow);
   border: 3px solid var(--ink);
   border-radius: 10px;
@@ -408,58 +544,30 @@
 .mall-badge.badge-blue { background: var(--blue); color: var(--cream); }
 .mall-badge.badge-purple { background: #b56cff; color: var(--cream); }
 .mall-badge.badge-red { background: var(--red); color: var(--cream); }
-.mall-icon {
-  font-size: 46px;
-  margin: 10px 0 6px 0;
-  filter: drop-shadow(0 4px 0 rgba(27, 16, 48, 0.2));
+
+/* ── Launch state: a tap should feel answered before the shell hands off. ── */
+.btn.is-launching { position: relative; pointer-events: none; }
+.btn.is-launching::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 22px;
+  background: linear-gradient(110deg, transparent 35%, rgba(255, 255, 255, .55) 50%, transparent 65%);
+  background-size: 220% 100%;
+  animation: launchSheen .45s linear infinite;
 }
-.mall-card-title {
-  font-family: var(--display);
-  font-size: 21px;
-  color: var(--ink);
-  margin-bottom: 6px;
-  line-height: 1.1;
+@keyframes launchSheen { to { background-position: -220% 0; } }
+
+/* The hub honours reduced motion (and the player-facing toggle in Settings). */
+@media (prefers-reduced-motion: reduce) {
+  .hub-header, .hub-hero, .arcade-card, .arcade-head, .hub-footer,
+  .hub-wordmark span, .hero-glow, .hero-icon, .hero-main-badge,
+  .btn.is-launching::after { animation: none; }
 }
-.mall-card-desc {
-  font-family: var(--body);
-  font-weight: 700;
-  font-size: 13px;
-  color: #475569;
-  line-height: 1.35;
-  flex-grow: 1;
-  margin-bottom: 14px;
-}
-.mall-btn {
-  width: 100%;
-  font-size: 18px;
-  padding: 8px 12px;
-}
-.mall-subgames {
-  display: flex;
-  gap: 6px;
-  width: 100%;
-  margin-bottom: 8px;
-}
-.mall-sub-btn {
-  flex: 1;
-  font-size: 13px;
-  padding: 6px 4px;
-  min-width: 0;
-  white-space: nowrap;
-}
-.mall-sub-btn.yellow { background: var(--yellow); }
-.mall-sub-btn.pink { background: var(--pink); color: #fff; }
-.mall-sub-btn.blue { background: var(--blue); color: #fff; }
-.mall-btn.green { background: var(--green); }
-.mall-btn.purple { background: #b56cff; color: #fff; }
-.mall-footer {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: center;
-  margin-top: 10px;
-}
-.mall-footer .btn {
-  font-size: 18px;
-  padding: 8px 20px;
-}
+:root[data-reduced-motion="on"] .hub-wordmark span,
+:root[data-reduced-motion="on"] .hub-hero,
+:root[data-reduced-motion="on"] .arcade-card,
+:root[data-reduced-motion="on"] .hero-glow,
+:root[data-reduced-motion="on"] .hero-icon,
+:root[data-reduced-motion="on"] .hero-main-badge,
+:root[data-reduced-motion="on"] .btn.is-launching::after { animation: none; }

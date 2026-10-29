@@ -186,6 +186,17 @@ function wireTitle({ nodes, router, toast }) {
   });
   nodes.title.querySelector('#app-btn-settings')?.addEventListener('click', () => router.go('/settings'));
 
+  // Launch shimmer: the shell hands off to the game immediately, but the tap
+  // should feel answered first. Purely cosmetic — the shell hides on route
+  // change, which also removes the state. Keyboard/gamepad activation goes
+  // through the same click path, so no input mode is special-cased.
+  nodes.title.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-launch]');
+    if (!b || b.disabled) return;
+    b.classList.add('is-launching');
+    b.setAttribute('aria-busy', 'true');
+  });
+
   // Main menu button to return to The Dweeb Mall
   document.getElementById('btn-back-to-mall')?.addEventListener('click', () => {
     router.go('/');

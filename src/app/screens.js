@@ -15,62 +15,111 @@ import { el } from './dom.js';
 import { BINDING_LABELS } from './settings.js';
 
 export function buildScreens() {
+  // ── Title: the builder-first hub ──────────────────────────────────────────
+  // Build-A-Dweeb is the hero (MAIN EVENT banner, biggest CTA). The mini-games
+  // live below it in THE ARCADE: compact cabinets, each with a difficulty
+  // badge. Every game-launch button carries data-launch so boot.js can show a
+  // launch shimmer; every id here must stay wired in wireTitle() (see
+  // test/app-hub.test.js, which cross-checks both files).
   const title = el(`
-    <section id="app-title" class="app-screen hidden" aria-label="The Dweeb Mall">
-      <div class="mall-container">
-        <header class="mall-header">
-          <h1 class="mall-title">THE DWEEB MALL</h1>
-          <p class="mall-subtitle">4 massive physics experiences — one living universe</p>
+    <section id="app-title" class="app-screen hidden" aria-label="Dweebs hub">
+      <div class="hub-container">
+        <header class="hub-header">
+          <h1 class="hub-wordmark" aria-label="DWEEBS"><span style="--c:#f47a3a;--i:0">D</span><span style="--c:#ffc53d;--i:1">W</span><span style="--c:#ffd84a;--i:2">E</span><span style="--c:#6cc35a;--i:3">E</span><span style="--c:#56aee8;--i:4">B</span><span style="--c:#a98be0;--i:5">S</span></h1>
+          <p class="hub-tagline">emotionally unstable. Collectibly adorable.</p>
         </header>
 
-        <div class="mall-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 1040px; margin: 0 auto;">
-          <!-- Game 1: Classic Brawler -->
-          <article class="mall-card card-classic" id="mall-card-1">
-            <div class="mall-badge">STADIUM BRAWLER</div>
-            <div class="mall-icon">🥊</div>
-            <h3 class="mall-card-title">Knockout Arena</h3>
-            <p class="mall-card-desc">The original 4-player stadium brawler. Dumb ways to die, crazy physics weapons & sudden death.</p>
-            <div class="mall-subgames">
-              <button class="btn mall-sub-btn yellow" id="app-btn-derby" title="Dumb Ways to Die">☠️ Derby</button>
-              <button class="btn mall-sub-btn yellow" id="app-btn-walldrop" title="Wall Drop PVP">🧱 Wall Drop</button>
-              <button class="btn mall-sub-btn yellow" id="app-btn-brawl" title="Knockout Brawl">🥊 Brawl</button>
+        <!-- HERO: Build-A-Dweeb is the main experience -->
+        <article class="hub-hero" id="hub-hero-builder" aria-label="Build-A-Dweeb, the main experience">
+          <div class="hero-glow" aria-hidden="true"></div>
+          <div class="hero-badges">
+            <span class="hero-main-badge">⭐ MAIN EVENT</span>
+            <span class="mall-badge badge-purple">CREATURE LAB &amp; AI ARENA</span>
+          </div>
+          <div class="hero-body">
+            <div class="hero-icon" aria-hidden="true">🧬</div>
+            <div class="hero-copy">
+              <h2 class="hero-title">Build-A-Dweeb</h2>
+              <p class="hero-desc">Sculpt a custom 3D creature — body shapes, eyes, appendages, colors, AI combat DNA — then send it into the autonomous colosseum and watch zero-input battles unfold.</p>
+              <ul class="hero-chips">
+                <li>🧪 3D creature sculpting</li>
+                <li>🧠 AI combat DNA</li>
+                <li>🤖 Autonomous battles</li>
+              </ul>
             </div>
-            <button class="btn mall-btn yellow" id="app-btn-classic">PLAY BRAWLER</button>
-          </article>
+          </div>
+          <button class="btn big purple hero-cta" id="app-btn-builder" data-launch>ENTER THE 3D LAB</button>
+        </article>
 
-          <!-- Game 2: Expedition & Dynasty -->
-          <article class="mall-card card-dynasty" id="mall-card-2">
-            <div class="mall-badge badge-green">LIVING CIVILIZATION</div>
-            <div class="mall-icon">🌱</div>
-            <h3 class="mall-card-title">Expedition &amp; Dynasty</h3>
-            <p class="mall-card-desc">Open-world colony in The Meadowlands. Assign citizen roles, build toy contraptions, solve ruin vaults, and guide your dynasty.</p>
-            <button class="btn mall-btn green" id="app-btn-dynasty">ENTER EXPEDITION</button>
-          </article>
+        <!-- THE ARCADE: the mini-games, secondary row -->
+        <section class="hub-arcade" aria-label="The arcade: mini-games">
+          <div class="arcade-head">
+            <h2 class="arcade-title">🕹️ THE ARCADE</h2>
+            <p class="arcade-sub">mini-games · quick physics chaos</p>
+          </div>
+          <div class="arcade-row">
+            <article class="arcade-card" style="--i:0" id="arcade-card-arena">
+              <div class="arcade-card-top">
+                <span class="arcade-icon" aria-hidden="true">🥊</span>
+                <span class="diff-badge diff-easy" title="Pick-up-and-play chaos">EASY</span>
+              </div>
+              <h3 class="arcade-card-title">Knockout Arena</h3>
+              <p class="arcade-card-desc">The original stadium brawler. Dumb ways to die, wild physics weapons, sudden death.</p>
+              <div class="arcade-subgames">
+                <button class="btn arcade-sub-btn yellow" id="app-btn-derby" data-launch title="Dumb Ways to Die">☠️ Derby</button>
+                <button class="btn arcade-sub-btn yellow" id="app-btn-walldrop" data-launch title="Wall Drop PVP">🧱 Wall Drop</button>
+                <button class="btn arcade-sub-btn yellow" id="app-btn-brawl" data-launch title="Knockout Brawl">🥊 Brawl</button>
+              </div>
+              <button class="btn arcade-btn yellow" id="app-btn-classic" data-launch>PLAY BRAWLER</button>
+            </article>
 
-          <!-- Game 3: Dweeb Warfare -->
-          <article class="mall-card card-warfare" id="mall-card-5">
-            <div class="mall-badge badge-red">PHYSICS BATTLE SIM</div>
-            <div class="mall-icon">⚔️</div>
-            <h3 class="mall-card-title">Dweeb Warfare</h3>
-            <p class="mall-card-desc">Massive army combat. Tactical commander abilities, artillery barrages, supply drops, unit counters, and 100v100 warfare.</p>
-            <div class="mall-subgames">
-              <button class="btn mall-sub-btn pink" id="app-btn-warfare-defense" title="Defend Fort 20 Waves">🛡️ Defend Fort</button>
-              <button class="btn mall-sub-btn blue" id="app-btn-warfare-versus" title="100v100 Duel vs AI">⚔️ Versus AI</button>
-            </div>
-            <button class="btn mall-btn pink" id="app-btn-warfare">START WARFARE</button>
-          </article>
+            <article class="arcade-card" style="--i:1" id="arcade-card-dynasty">
+              <div class="arcade-card-top">
+                <span class="arcade-icon" aria-hidden="true">🌱</span>
+                <span class="diff-badge diff-easy" title="Peaceful and slow-paced">EASY</span>
+              </div>
+              <h3 class="arcade-card-title">Expedition &amp; Dynasty</h3>
+              <p class="arcade-card-desc">Open-world colony in The Meadowlands. Citizen roles, toy contraptions, ruin vaults.</p>
+              <button class="btn arcade-btn green" id="app-btn-dynasty" data-launch>ENTER EXPEDITION</button>
+            </article>
 
-          <!-- Game 4: Build-A-Dweeb -->
-          <article class="mall-card card-builder" id="mall-card-builder">
-            <div class="mall-badge badge-purple">CREATURE LAB &amp; AI ARENA</div>
-            <div class="mall-icon">🧬</div>
-            <h3 class="mall-card-title">Build-A-Dweeb</h3>
-            <p class="mall-card-desc">Sculpt a custom 3D creature with body shapes, eyes, appendages, colors, and AI combat DNA. Watch them clash in autonomous colosseum battles!</p>
-            <button class="btn mall-btn purple" id="app-btn-builder">ENTER 3D LAB</button>
-          </article>
-        </div>
+            <article class="arcade-card" style="--i:2" id="arcade-card-warfare">
+              <div class="arcade-card-top">
+                <span class="arcade-icon" aria-hidden="true">⚔️</span>
+                <span class="diff-badge diff-intense" title="Big battles, real tactics">INTENSE</span>
+              </div>
+              <h3 class="arcade-card-title">Dweeb Warfare</h3>
+              <p class="arcade-card-desc">Mass physics army combat. Commander abilities, artillery, supply drops, 100v100.</p>
+              <div class="arcade-subgames">
+                <button class="btn arcade-sub-btn pink" id="app-btn-warfare-defense" data-launch title="Defend the Fort: 20 waves">🛡️ Defend</button>
+                <button class="btn arcade-sub-btn blue" id="app-btn-warfare-versus" data-launch title="100v100 versus AI">⚔️ Versus</button>
+              </div>
+              <button class="btn arcade-btn pink" id="app-btn-warfare" data-launch>START WARFARE</button>
+            </article>
 
-        <footer class="mall-footer">
+            <article class="arcade-card" style="--i:3" id="arcade-card-escape">
+              <div class="arcade-card-top">
+                <span class="arcade-icon" aria-hidden="true">🏝️</span>
+                <span class="diff-badge diff-medium" title="Puzzles and parkour">MEDIUM</span>
+              </div>
+              <h3 class="arcade-card-title">Dweebscape Island</h3>
+              <p class="arcade-card-desc">Combatless co-op escape. Parkour, haul heavy batteries, flip gate switches, power the portal.</p>
+              <button class="btn arcade-btn blue" id="app-btn-escape" data-launch>START ESCAPE</button>
+            </article>
+
+            <article class="arcade-card" style="--i:4" id="arcade-card-mimic">
+              <div class="arcade-card-top">
+                <span class="arcade-icon" aria-hidden="true">🪞</span>
+                <span class="diff-badge diff-medium" title="Sandbox antics">MEDIUM</span>
+              </div>
+              <h3 class="arcade-card-title">Mimic &amp; Mutate Lab</h3>
+              <p class="arcade-card-desc">First-person toy lab. Show off physical antics — crowds of Dweebs copy and mutate them.</p>
+              <button class="btn arcade-btn" id="app-btn-mimic" data-launch>ENTER THE LAB</button>
+            </article>
+          </div>
+        </section>
+
+        <footer class="hub-footer">
           <button class="btn white" id="app-btn-offline">CUSTOM LOBBY</button>
           <button class="btn pink" id="app-btn-online">PLAY ONLINE</button>
           <button class="btn white" id="app-btn-how">HOW TO PLAY</button>
