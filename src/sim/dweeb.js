@@ -105,7 +105,12 @@ export class SimDweeb {
     this.style = 0;
     this.styleTier = 0;
     this.styleTimer = 0;
+    this.stylePeak = 0;       // highest style this match: the showman award
     this.superArmed = false;
+    this.team = 0;            // team battle: index into config.teams
+    this.hillScore = 0;       // king of the hill: points this round
+    this.lavaCd = 0;          // volcano: grace after a lava spit before a dip dunks
+    this._gravOverride = null; // set by preStep paths that need a non-arena gravity this tick
 
     // Previous tick's input, for edge detection.
     this.prev = { jump: false, attack: false, grab: false, dodge: false, superYeet: false, drop: false };
@@ -159,6 +164,8 @@ export class SimDweeb {
    *        onReleaseAttack, onReleaseThrow, onDrop, onTech }
    */
   preStep(f, api) {
+    this._gravOverride = null; // Sim applies arena gravity after preStep unless we overrode it
+    this._arenaGrav = api?.arena?.profile?.gravity ?? 1;
     this.input.moveX = clamp(num(f?.moveX), -1, 1);
     this.input.moveZ = clamp(num(f?.moveZ), -1, 1);
     this.input.aimYaw = Number.isFinite(f?.aimYaw) ? f.aimYaw : null;
@@ -192,6 +199,7 @@ export class SimDweeb {
     this.landLagT = Math.max(0, this.landLagT - TICK_DT);
     this.swing = Math.max(0, this.swing - TICK_DT);
     this.diveTimer = Math.max(0, this.diveTimer - TICK_DT);
+    this.lavaCd = Math.max(0, this.lavaCd - TICK_DT);
     this.megaT = Math.max(0, this.megaT - TICK_DT);
     this.zoomT = Math.max(0, this.zoomT - TICK_DT);
     this.bubbleT = Math.max(0, this.bubbleT - TICK_DT);
@@ -205,7 +213,7 @@ export class SimDweeb {
     // splash-KO check forever — an immortal dweeb falling out of the world, still "active".
     if (this.grabbedBy && this.swimFlail > 0) {
       this.swimFlail -= TICK_DT;
-      if (this.swimFlail <= 0) this.physics.setGravityScale(this.id, 1);
+      if (this.swimFlail <= 0) this._gravOverride = this._arenaGrav;
     }
 
     // Ragdoll clock (live postStep parity): without this a tumbled dweeb that lands never
@@ -280,22 +288,22 @@ export class SimDweeb {
     // ── Air-dodge glide: ignore most gravity, then special-fall ──
     if (this.airDodgeT > 0) {
       this.airDodgeT -= TICK_DT;
-      this.physics.setGravityScale(this.id, 0.15);
+      this._gravOverride = 0.15;
       const k = Math.exp(-5 * TICK_DT);
       this._write(vx * k, vy * k, vz * k);
       this._remember(f);
       return;
     }
-    this.physics.setGravityScale(this.id, 1);
+    this._gravOverride = this._arenaGrav;
 
     // ── Water flail: hang at the waterline; one jump buys a big splash-jump back toward stage ──
     if (this.swimFlail > 0) {
       this.swimFlail -= TICK_DT;
-      this.physics.setGravityScale(this.id, 0);
+      this._gravOverride = 0;
       if (jumpUp) {
         const r = Math.hypot(p.x, p.z) || 1;
         this.swimFlail = 0;
-        this.physics.setGravityScale(this.id, 1);
+        this._gravOverride = this._arenaGrav;
         // Inward speed is timed so the capsule reaches the lip only once it has risen above the
         // tiles; without that it bonks the rim and the comeback dies, which is why the live code
         // divides by flailClearTime here.
@@ -346,8 +354,18 @@ export class SimDweeb {
         speed = MV.speed * 1.5;
       }
 
-      const tx = this.input.moveX * speed, tz = this.input.moveZ * speed;
-      const accel = (this.grounded ? MV.groundAccel : MV.airAccel * this.stats.airAccel) * TICK_DT;
+      // Arena movement modifiers: the iceberg is slick, the moon is floaty. The profile
+      // lives on the arena; api may be a bare stub in unit tests, so default to stadium.
+      const prof = api?.arena?.profile;
+      speed *= (prof?.slide ?? 1);
+      let tx = this.input.moveX * speed, tz = this.input.moveZ * speed;
+      // Stage pushes fold into the movement target: belts carry, wind shoves, the magnet
+      // drags. Shifting what "standing still" means composes with input instead of fighting
+      // the ground approach, which would zero a post-hoc push every tick.
+      const push = api?.arena?.stagePush?.(p.x, p.z, this.grounded);
+      if (push) { tx += push.x; tz += push.z; }
+      const traction = this.grounded ? (prof?.traction ?? 1) : 1;
+      const accel = (this.grounded ? MV.groundAccel * traction : MV.airAccel * this.stats.airAccel) * TICK_DT;
       const soft = this.specialFall && !this.grounded ? accel * 0.6 : accel;
       vx = approach(vx, tx, soft);
       vz = approach(vz, tz, soft);
@@ -482,7 +500,7 @@ export class SimDweeb {
     this.styleTimer = 0;
     this.superArmed = false;
     this.physics.lockRotations(this.id, true);
-    this.physics.setGravityScale(this.id, 1);
+    this._gravOverride = 1;
     this.physics.setPos(this.id, pos.x, pos.y, pos.z);
     this.physics.setVel(this.id, 0, 0, 0);
     this.sync();
@@ -519,6 +537,7 @@ export class SimDweeb {
       active: this.active, out: this.out, eliminated: this.eliminated,
       grounded: this.grounded, holding: this.held > 0, held: this.held, heldBy: this.grabbedBy,
       style: this.style, styleTier: this.styleTier, isBot: this.isBot, isLocal,
+      team: this.team, hillScore: this.hillScore,
       // Read by bots; not required by the wire contract.
       canAct: this.canAct, jumpsLeft: this.jumpsLeft, isCharging: this.isCharging,
       charge: this.charge, mega: this.megaT > 0, bubble: this.bubbleT > 0,
@@ -546,6 +565,7 @@ export class SimDweeb {
       swimFlail: this.swimFlail, flailUsed: this.flailUsed,
       megaT: this.megaT, zoomT: this.zoomT, bubbleT: this.bubbleT,
       style: this.style, styleTier: this.styleTier, styleTimer: this.styleTimer,
+      stylePeak: this.stylePeak, team: this.team, hillScore: this.hillScore, lavaCd: this.lavaCd,
       superArmed: this.superArmed, prev: { ...this.prev },
     };
   }
@@ -569,6 +589,7 @@ function num(v, dflt = 0) { return Number.isFinite(v) ? v : dflt; }
 function addStyle(d, api, amount) {
   const STYLE = BALANCE.style;
   d.style = Math.min(STYLE.max, d.style + amount);
+  d.stylePeak = Math.max(d.stylePeak || 0, d.style);
   d.styleTimer = STYLE.hold;
   const tier = d.style >= STYLE.tiers[3] ? 3
     : d.style >= STYLE.tiers[2] ? 2

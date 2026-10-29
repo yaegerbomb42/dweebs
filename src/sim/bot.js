@@ -26,6 +26,16 @@ export const DIFFICULTY = {
 // Who's worth chasing: spikies fly far (glass cannons), blobs are a slog until they're high.
 const TYPE_BIAS = { spiky: 1, cube: 0, blob: -1 };
 
+/**
+ * Brutal: a fourth difficulty the sim offers headless lobbies. It is deliberately NOT in
+ * DIFFICULTY — that table must stay identical to the live src/ai/Bot.js table (parity test) —
+ * so brutal is a param overlay merged over hard at construction time.
+ */
+export const BRUTAL = {
+  reaction: 0.08, aggression: 1.0, recover: 1.0, dodge: 0.9, hazard: 1.0,
+  edgeCare: 1.0, smash: 0.9, aim: 0.03, range: 15, di: 1.0, tech: 0.95, airDodge: 1.0,
+};
+
 const yawTo = (dx, dz) => Math.atan2(dx, dz);
 const secs = t => Math.max(1, Math.round(t * TICK_HZ));
 
@@ -45,7 +55,9 @@ export class Bot {
   constructor({ slot = 0, difficulty = 'normal', rng }) {
     this.slot = slot;
     this.level = difficulty;
-    this.p = DIFFICULTY[difficulty] || DIFFICULTY.normal;
+    this.p = difficulty === 'brutal'
+      ? { ...DIFFICULTY.hard, ...BRUTAL }
+      : DIFFICULTY[difficulty] || DIFFICULTY.normal;
     this.rng = rng;
     // Personalities drawn once from the seeded stream, so they survive a restore.
     this.grudge = 0.5 + rng.next();
@@ -127,9 +139,30 @@ export class Bot {
     if (this._dodgeHazard(f, state)) return f;         // priority 2
     if (this._dodgeRival(f, state, pos)) return f;     // priority 3
     if (me.held) { this._useHeld(f, state, me, pos); return f; }   // priority 4
+    if (state.mode === 'hill' && this._hillRun(f, state, me, pos)) return f;  // priority 4.5
     if (this._goFetch(f, state, pos)) return f;        // priority 5
     this._brawl(f, state, me, pos);                    // priority 6
     return f;
+  }
+
+  /**
+   * King of the hill objective. If a rival is close, brawl takes over (return false); if we
+   * hold the hill, drift to its centre; otherwise run at it. Difficulty gates the commitment:
+   * easy bots wander off, brutal bots live on the hill.
+   */
+  _hillRun(f, state, me, pos) {
+    const hill = state.hill;
+    if (!hill) return false;
+    for (const o of state.dweebs) {
+      if (o.slot === this.slot || !o.active) continue;
+      if (state.mode === 'teams' && o.team === me.team) continue;
+      const dist = Math.hypot(o.pos[0] - pos[0], o.pos[2] - pos[2]);
+      if (dist < 3.5) return false;   // someone to fight: let _brawl handle it
+    }
+    if (!this.rng.chance(0.35 + this.p.aggression * 0.65)) return false;
+    this._steerTo(f, hill.x, hill.z, 1);
+    this._edgeGuard(f, pos);
+    return true;
   }
 
   _tickTimers() {
@@ -159,7 +192,7 @@ export class Bot {
       const dx = this.pos[0] - h.x, dz = this.pos[2] - h.z;
       const d2 = dx * dx + dz * dz;
       if (d2 > (h.dangerR || 3.2) ** 2) continue;
-      if (h.kind === 'pendulum') { this._steerTo(f, h.x + dx, h.z + dz, 1); return true; }
+      if (h.kind === 'pendulum' || h.kind === 'lightning') { this._steerTo(f, h.x + dx, h.z + dz, 1); return true; }
       if (this.jumpCd <= 0) { f.jump = true; this.jumpCd = secs(0.6); return true; }
     }
     return false;
@@ -167,8 +200,11 @@ export class Bot {
 
   /** Sidestep a rival who is winding up at us. */
   _dodgeRival(f, state, pos) {
+    const me = state.dweebs[this.slot];
+    const teamsOn = state.mode === 'teams';
     for (const o of state.dweebs) {
       if (o.slot === this.slot || !o.active || !o.isCharging || o.charge < 0.3) continue;
+      if (teamsOn && o.team === me.team) continue;
       const dx = pos[0] - o.pos[0], dz = pos[2] - o.pos[2];
       const dist = Math.sqrt(dx * dx + dz * dz) || 1;
       if (dist > 2.6) continue;
@@ -190,9 +226,12 @@ export class Bot {
 
   _pickTarget(state) {
     const pos = this.pos;
+    const me = state.dweebs[this.slot];
+    const teamsOn = state.mode === 'teams';
     let best = -1, bestScore = -Infinity;
     for (const o of state.dweebs) {
       if (o.slot === this.slot || !o.active) continue;
+      if (teamsOn && o.team === me.team) continue;   // no friendly fire, no friendly chasing
       const dx = o.pos[0] - pos[0], dz = o.pos[2] - pos[2];
       let score = -Math.sqrt(dx * dx + dz * dz);
       score += o.percent * 0.03 * this.p.aggression;

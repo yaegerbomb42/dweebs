@@ -597,8 +597,7 @@ export class Fx {
   }
 
   /** A hard ground turn: dust kicked sideways plus a tiny tactile tick for the player. */
-  skid(d, speed = 6) {
-    const pos = d.getPosition();
+  skid(d, speed = 6) {    const pos = d.getPosition();
     const v = d.velocity || { x: 0, z: 0 };
     this.particles.dust({ x: pos.x - v.x * 0.03, y: pos.y - 0.45, z: pos.z - v.z * 0.03 }, Math.min(6, 2 + Math.floor(speed * 0.35)));
     if (d.isPlayer) this.haptics?.pulse(0.1 + Math.min(0.12, speed * 0.012), 45, 0.18);
@@ -687,5 +686,54 @@ export class Fx {
 
   update(dt) {
     this.hitStop = Math.max(0, this.hitStop - dt);
+  }
+
+  // ─── Atmosphere: crowd, arena events, victory ───
+
+  /** The crowd crosses a hype level: swell the cheer and show the chant. */
+  crowdRoar(level, kind) {
+    this.audio.playCheer(0.25 + level * 0.2);
+    const words = ['…', 'OOOOH!', 'ROAR!', 'DEAFENING!', 'PANDEMONIUM!'];
+    this.hud.popup(words[Math.min(4, level)] ?? 'OOOOH!', { x: 0, y: 9, z: 0 }, level >= 3 ? 'big' : 'small', 0xffd23f);
+    if (level >= 3) this.cam.shake(0.12 * level);
+  }
+
+  /** The podium: champion banner, victory sting, confetti over the winner. */
+  victoryCelebration(d) {
+    const pos = d.getPosition();
+    this.audio.playVictory();
+    this.audio.playBanner(true);
+    this.audio.playCheer(1);
+    this.particles.emit({ x: pos.x, y: pos.y + 3, z: pos.z },
+      { count: 60, colors: [0xffd23f, 0xff6fb5, 0x8fe9ff, 0x48bb78], speed: 8, up: 4, size: 0.16, life: 1.6, gravity: -6 });
+    this.hud.popup('CHAMPION!', { x: pos.x, y: pos.y + 2.2, z: pos.z }, 'big', 0xffd23f);
+  }
+
+  /** Storm Spire lightning strike at (x, z). */
+  lightningStrike(x, z) {
+    const pos = { x, y: 0.4, z };
+    this.particles.bigHit(pos, 0xbfe9ff);
+    this.particles.emit(pos, { count: 26, colors: [0xbfe9ff, 0xffffff, 0x7c6cf0], speed: 9, up: 10, size: 0.14, life: 0.5, gravity: -20 });
+    this.audio.playExplosion(this._pan(pos));
+    this.cam.shake(0.5);
+  }
+
+  /** Sky Turbine gust: a wall of wind rolling across the arena. */
+  windGustFx(dirAngle) {
+    this.audio.playWhoosh(0, 0.9);
+    this.cam.shake(0.18);
+  }
+
+  /** Magnet Core pulse: the whole arena shudders toward the middle. */
+  magnetPulseFx(active) {
+    this.audio.playMagnet(0);
+    if (active) this.cam.shake(0.3);
+  }
+
+  /** King of the hill: someone banks a 10-point milestone. */
+  hillScoreFx(d, score) {
+    const pos = d.getPosition();
+    this.hud.popup(`${score} PTS!`, { x: pos.x, y: pos.y + 1.6, z: pos.z }, 'small', 0x7cffb2);
+    this.audio.playTrickshot(1, this._pan(pos));
   }
 }

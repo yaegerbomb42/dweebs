@@ -67,6 +67,29 @@ const PLAYER_GOT = {
   star: ['STAR KO!', 'ORBITAL!', 'MOONSHOT!'],
 };
 
+// Crowd hype levels: 1 buzz, 2 roar, 3 frenzy, 4 pandemonium.
+const HYPE_LINES = {
+  1: ['The crowd is warming up…', 'A murmur rolls through the stands', 'The dweeblets are leaning forward'],
+  2: ['The crowd is BUZZING!', 'Listen to that roar!', 'The stands are shaking!'],
+  3: ['The crowd is in a FRENZY!', 'Absolute bedlam in the arena!', 'Nobody is sitting down anymore!'],
+  4: ['PANDEMONIUM!!', 'THE CROWD HAS LOST ITS MIND!', 'THIS IS THE LOUDEST THE ARENA HAS EVER BEEN!'],
+};
+
+const AWARD_LINES = {
+  mvp: ['{a} takes MVP with {n} KOs!', 'Most valuable dweeb: {a} ({n} KOs)', '{a} did the most deleting today · {n} KOs'],
+  yeet: ['Biggest yeet: {a} at {n} m/s!', '{a} launched someone at {n} m/s · physics filed a complaint'],
+  showman: ['{a} wins Showman with peak style {n}!', 'Style crown: {a} · {n} style points of pure chaos'],
+};
+
+const VICTORY_LINES = [
+  '{a} IS THE CHAMPION!', 'All hail {a}!', '{a} takes the whole thing!',
+  'The arena belongs to {a}!', '{a} stands alone in the rubble!',
+];
+
+const INTRO_LINES = [
+  'Welcome to {arena}! {mode}', '{arena}… {mode}', 'Tonight: {arena}! {mode}',
+];
+
 const last = new Map();
 function pick(list, key) {
   if (list.length === 1) return list[0];
@@ -99,8 +122,7 @@ export function playerKOWord(kind, gotIt) {
 }
 
 /** Win banners, loudest first. Returns an array of { title, sub } (possibly empty). */
-export function winBanners({ winner, match, isMatch }) {
-  const out = [];
+export function winBanners({ winner, match, isMatch }) {  const out = [];
   if (winner.eliminated) return out; // a "winner" who's already out has nothing to brag about
   const full = match.settings.stocks;
   const stocks = winner.stocks;
@@ -114,5 +136,27 @@ export function winBanners({ winner, match, isMatch }) {
   return out;
 }
 
+/** A crowd-hype level crossing: what the announcer says when the room erupts. */
+export function hypeLine(level) {
+  const list = HYPE_LINES[Math.max(1, Math.min(4, level))] ?? HYPE_LINES[1];
+  return pick(list, 'hype' + level);
+}
+
+/** A podium award line. kind: 'mvp' | 'yeet' | 'showman'; n = the winning number. */
+export function awardLine(kind, aTag, n) {
+  const list = AWARD_LINES[kind] ?? AWARD_LINES.mvp;
+  return pick(list, 'award' + kind).replaceAll('{a}', aTag).replaceAll('{n}', String(n));
+}
+
+/** The champion's coronation. */
+export function victoryLine(aTag) {
+  return pick(VICTORY_LINES, 'victory').replaceAll('{a}', aTag);
+}
+
+/** Match intro: arena name + mode tagline, for the walk-in. */
+export function introLine(arenaName, modeTagline) {
+  return pick(INTRO_LINES, 'intro').replaceAll('{arena}', arenaName).replaceAll('{mode}', modeTagline);
+}
+
 /** Every string, for WHY.md / tuning. */
-export const ALL_LINES = { KO_LINES, PLAYER_KO, PLAYER_GOT };
+export const ALL_LINES = { KO_LINES, PLAYER_KO, PLAYER_GOT, HYPE_LINES, AWARD_LINES, VICTORY_LINES, INTRO_LINES };

@@ -23,6 +23,8 @@ import { SimDweeb } from './dweeb.js';
 import { SimCombat } from './combat.js';
 import { SimMatch, Phase } from './match.js';
 import { Bot } from './bot.js';
+import { Crowd } from './crowd.js';
+import { BALANCE } from '../game/Balance.js';
 import { checksumOf } from './checksum.js';
 import { itemDef, ITEM_KIND_IDS, POWERUP_KEYS } from './tables.js';
 
@@ -54,12 +56,14 @@ export class Sim {
     this.itemKeys = [];
     this.powerupTimer = 0;
     this.highlight = { launch: 0, id: 0, by: 0 };
+    this.crowd = new Crowd();
+    this._awardsDone = false;
   }
 
   /** Build the world. Await exactly once before adding seats or stepping. */
   async init() {
     this.physics = await SimPhysics.create();
-    this.arena = new SimArena(this.physics, this.rng.stream('drops'));
+    this.arena = new SimArena(this.physics, this.rng.stream('drops'), { arenaId: this.config.arena });
     this.match = new SimMatch({ events: this.events, config: this.config });
     this.combat = new SimCombat({
       physics: this.physics,
@@ -75,13 +79,16 @@ export class Sim {
    * @param {object} seat { slot, name, type, color, isBot }
    * @returns {SimDweeb}
    */
-  addSeat({ slot = 0, name = 'Dweeb', type = 'cube', color = 0xffd23f, isBot = false } = {}) {
+  addSeat({ slot = 0, name = 'Dweeb', type = 'cube', color = 0xffd23f, isBot = false, difficulty = null } = {}) {
     const id = this.ids.alloc();
     const d = new SimDweeb({ physics: this.physics, id, slot, name, type, color, isBot });
     d.stocks = this.config.stocks;
+    d.team = this.match?.slotToTeam.get(slot) ?? 0;
     this.dweebs[slot] = d;
     if (isBot) {
-      this.bots[slot] = new Bot({ slot, difficulty: this.config.botDifficulty, rng: this.rng.stream('bot' + slot) });
+      this.bots[slot] = new Bot({
+        slot, difficulty: difficulty ?? this.config.botDifficulty, rng: this.rng.stream('bot' + slot),
+      });
     }
     return d;
   }
@@ -89,6 +96,7 @@ export class Sim {
   /** Start the match: seat everyone, then begin round 1. */
   startMatch() {
     this.match.startMatch(this.dweebs.filter(Boolean));
+    this._awardsDone = false;
     this.beginRound();
   }
 
@@ -107,10 +115,7 @@ export class Sim {
       d.out = false;
     });
     this.clearItems();
-    this.arena.suddenDeath = false;
-    this.arena.time = 0;
-    this.arena.itemTimer = Math.round(6 * TICK_HZ);
-    this.arena.lastRareDrop = Object.create(null);
+    this.arena.resetRound();
     this.powerupTimer = Math.round(10 * TICK_HZ);
     this.match.beginRound(this._api());
   }
@@ -170,7 +175,15 @@ export class Sim {
     this._apiObj = {
       sim: this,
       get time() { return this.sim.time; },
-      emit: (type, f) => this.events.emit(type, f),
+      emit: (type, f) => {
+        this.events.emit(type, f);
+        // The crowd watches the same event stream the view drains: a big moment swells the
+        // hype, and a level crossing emits its own 'hype' event right behind it.
+        if (type !== 'hype') {
+          const ce = this.crowd.notice(type, f);
+          if (ce) this.events.emit(ce.type, ce.fields);
+        }
+      },
       arena: this.arena,
       byId: id => this.byId(id),
       itemById: id => this.itemById(id),
@@ -271,6 +284,14 @@ export class Sim {
       else d.preStep(undefined, api);
     }
 
+    // 1.5. arena gravity, unless the dweeb overrode it this tick (air-dodge, flail, KO park).
+    // KO'd and parked bodies are inactive, so the parking gravity survives here.
+    const grav = this.arena.profile.gravity ?? 1;
+    for (const d of seated) {
+      if (!d.active) continue;
+      this.physics.setGravityScale(d.id, d._gravOverride ?? grav);
+    }
+
     // 2. physics: one fixed step, never a variable one
     this.physics.step();
 
@@ -278,8 +299,9 @@ export class Sim {
     for (const d of seated) d.sync();
     for (const it of this.items) this._syncItem(it);
 
-    // 4. the stage moves
-    if (this.arena.step() === 'drop') this.dropItem(this.match.suddenDeath ? FINALE_BIAS : null);
+    // 4. the stage moves (wind gusts, lightning, magnet pulses, crust), then its forces land
+    if (this.arena.step(api) === 'drop') this.dropItem(this.match.suddenDeath ? FINALE_BIAS : null);
+    this.arena.applyStageForces(seated, this.items, api);
     if (--this.powerupTimer <= 0) {
       this.powerupTimer = Math.round(10 * TICK_HZ);
       this._dropPowerUp();
@@ -300,8 +322,35 @@ export class Sim {
     // 6. rules
     this.match.step(seated, api);
 
+    // 6.5. the crowd's hype bleeds off, and a level crossing emits its own event
+    const ce = this.crowd.step();
+    if (ce) this.events.emit(ce.type, ce.fields);
+
+    // 6.6. the podium: once per match, right behind the matchEnd event
+    if (this.match.phase === Phase.RESULTS && !this._awardsDone) {
+      this._awardsDone = true;
+      this._emitAwards(api);
+    }
+
     // 7. events
     return this.events.drain(this.tick);
+  }
+
+  /**
+   * The victory sequence, as data: MVP (most KOs), biggest yeet (highlight launch) and
+   * showman (peak style). The view turns these into the podium; the announcer gets lines.
+   */
+  _emitAwards(api) {
+    const seated = this.dweebs.filter(Boolean);
+    if (!seated.length) return;
+    const maxBy = (fn) => seated.reduce((a, b) => (fn(b) > fn(a) ? b : a), seated[0]);
+    const mvp = maxBy(d => d.totalKos || 0);
+    api.emit('award', { kind: 'mvp', a: mvp.id, mag: mvp.totalKos || 0 });
+    if (this.highlight.id) {
+      api.emit('award', { kind: 'yeet', a: this.highlight.id, mag: Math.round(this.highlight.launch * 10) / 10 });
+    }
+    const showman = maxBy(d => d.stylePeak || 0);
+    api.emit('award', { kind: 'showman', a: showman.id, mag: Math.round(showman.stylePeak || 0) });
   }
 
   /**
@@ -393,10 +442,20 @@ export class Sim {
       phaseTimer: this.match.phaseTimer,
       suddenDeath: this.match.suddenDeath,
       blastSide: this.match.blastSide,
+      mode: this.match.mode,
+      arenaId: this.arena.arenaId,
+      hill: {
+        x: 0, z: 0, r: BALANCE.hill.radius,
+        holder: this.match.hillHolderId,
+        scores: this.dweebs.map(d => (d ? Math.floor(d.hillScore * 10) / 10 : 0)),
+      },
+      teams: this.config.teams ?? null,
+      hype: this.crowd.hype,
+      hypeLevel: this.crowd.level,
       // Read by bots; the wire contract does not require them.
       stageRadius: STAGE_RADIUS,
       groundRadius: this.arena.edgeRadius(),
-      hazards: this.arena.hazards,
+      hazards: [...this.arena.hazards, ...this.arena.warnZones],
     };
   }
 
@@ -424,11 +483,8 @@ export class Sim {
         aim: it.aim ? { ...it.aim } : null,
       })),
       itemKeys: [...this.itemKeys],
-      arena: {
-        time: this.arena.time, itemTimer: this.arena.itemTimer,
-        suddenDeath: this.arena.suddenDeath, lastRareDrop: { ...this.arena.lastRareDrop },
-        spinAngle: this.arena.spinAngle,
-      },
+      arena: this.arena.snapshot(),
+      crowd: this.crowd.snapshot(),
       match: this.match.snapshot(),
       bots: this.bots.map(b => (b ? b.snapshot() : null)).filter(Boolean),
       rng: this.rng.snapshot(),
@@ -475,7 +531,10 @@ export class Sim {
     }));
     this.itemKeys = [...(snap.itemKeys ?? [])];
 
-    Object.assign(this.arena, snap.arena, { lastRareDrop: { ...snap.arena.lastRareDrop } });
+    this.arena.restore(snap.arena);
+    if (snap.crowd) this.crowd.restore(snap.crowd);
+    else this.crowd = new Crowd();
+    this._awardsDone = false;
     this.match.dweebs = this.dweebs.filter(Boolean);
     this.match.restore(snap.match);
 

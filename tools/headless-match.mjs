@@ -16,6 +16,10 @@
 //                                                      sim, and check that resuming equals never
 //                                                      having stopped
 //   node tools/headless-match.mjs --perf              report sim step p50/p95/p99
+//   node tools/headless-match.mjs --arena gale --mode hill
+//                                                     play on an arena / in a mode
+//   node tools/headless-match.mjs --difficulty brutal --teams 0,1:2,3
+//                                                     brutal bots, 2v2 team battle
 //
 // Exit code 0 only if the match finished cleanly, no NaN appeared, nothing got stuck, and (with
 // --verify) the two runs agreed at every single tick.
@@ -34,6 +38,15 @@ const BOTS = opt('bots', 4);
 const SEED = opt('seed', 1);
 const MATCHES = opt('matches', 1);
 const MAX_TICKS = opt('ticks', 40000);
+const ARENA = (() => { const i = args.indexOf('--arena'); return i >= 0 ? args[i + 1] : 'stadium'; })();
+const MODE = (() => { const i = args.indexOf('--mode'); return i >= 0 ? args[i + 1] : 'brawl'; })();
+const DIFF = (() => { const i = args.indexOf('--difficulty'); return i >= 0 ? args[i + 1] : 'normal'; })();
+const TEAMS = (() => {
+  const i = args.indexOf('--teams');
+  if (i < 0) return null;
+  // --teams 0,1:2,3  ->  [[0,1],[2,3]]
+  return args[i + 1].split(':').map(g => g.split(',').map(Number));
+})();
 const SNAPSHOT_AT = opt('snapshot-at', 0);
 const VERIFY = flag('verify');
 const PERF = flag('perf');
@@ -43,7 +56,7 @@ const NAMES = ['Blorp', 'Squish', 'Nugget', 'Wobbles', 'Toast', 'Pickle', 'Gumbo
 
 /** Build a sim with `bots` bot seats. Identical for every run with the same seed. */
 async function makeSim(seed, bots) {
-  const sim = new Sim({ seed, items: true, botDifficulty: 'normal' });
+  const sim = new Sim({ seed, items: true, botDifficulty: DIFF, arena: ARENA, mode: MODE, teams: TEAMS });
   await sim.init();
   for (let i = 0; i < bots; i++) {
     sim.addSeat({ slot: i, name: NAMES[i % NAMES.length], type: TYPES[i % TYPES.length], isBot: true });
@@ -101,7 +114,7 @@ async function playMatch(seed, { captureChecksums = false, perf = false, snapsho
 
   const state = sim.getState();
   const report = {
-    seed, ended, ticks: state.tick, phase: state.phase, kos, maxPercent, peakItems, nan, stuck,
+    seed, arena: ARENA, mode: MODE, ended, ticks: state.tick, phase: state.phase, kos, maxPercent, peakItems, nan, stuck,
     checksum: sim.checksum(),
     winner: state.dweebs.length ? sim.match.standings(state.dweebs)[0]?.name : '?',
     stocks: state.dweebs.map(d => `${d.name}:${d.stocks}`).join(' '),

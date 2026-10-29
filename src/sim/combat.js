@@ -28,6 +28,10 @@ function scale(atk, atkDmg = 1, kb = 1) {
   return atk;
 }
 
+/** Team battle: no friendly fire. Every skip is gated on the mode, so brawl is untouched. */
+const teamsOn = api => api?.sim?.config?.mode === 'teams';
+const friendly = (a, b) => a.team === b.team;
+
 /** The sim's combat system. It holds no presentation references: everything it reports is an event. */
 export class SimCombat {
   /**
@@ -87,8 +91,10 @@ export class SimCombat {
     const fx = Math.sin(attacker.yaw), fz = Math.cos(attacker.yaw);
     let hit = false;
 
+    const noFF = teamsOn(api);
     for (const t of dweebs) {
       if (t === attacker || !t.active || t.invuln > 0) continue;
+      if (noFF && friendly(t, attacker)) continue;
       // Your own captive is not a target (live releaseAttack parity); anyone else's is.
       if (t.grabbedBy === attacker.id) continue;
       const dx = t.position[0] - p[0], dz = t.position[2] - p[2];
@@ -124,8 +130,10 @@ export class SimCombat {
   grab(attacker, dweebs, items, api) {
     const p = attacker.position;
     let best = null, bestD = GRAB_RANGE;
+    const noFF = teamsOn(api);
     for (const t of dweebs) {
       if (t === attacker || !t.active || t.grabbedBy) continue;
+      if (noFF && friendly(t, attacker)) continue;
       const d = Math.hypot(t.position[0] - p[0], t.position[2] - p[2]);
       if (d < bestD && Math.abs(t.position[1] - p[1]) < 1.4) { bestD = d; best = t; }
     }
@@ -285,8 +293,10 @@ export class SimCombat {
       this.physics.setVel(item.id, dir.x * 21, dir.y * 21 + 0.5, dir.z * 21);
     }
 
+    const noFF = teamsOn(api);
     for (const d of dweebs) {
       if (!d.active || d.invuln > 0 || d.grabbedBy) continue;
+      if (noFF && item.thrower && api.byId?.(item.thrower)?.team === d.team) continue;
       const p = d.position;
       if (Math.hypot(p[0] - item.pos[0], p[1] - item.pos[1], p[2] - item.pos[2]) > 0.95) continue;
       const atk = A.thrown(def.heft, item.trick ? 1.4 : Math.min(1.4, speed / 22));
@@ -312,8 +322,11 @@ export class SimCombat {
     const { def } = this.itemDefFor(item.id);
     const r = def.blast || 5;
     api.emit?.('explosion', { x: item.pos[0], y: item.pos[1], z: item.pos[2], mag: r, kind: item.key });
+    const noFF = teamsOn(api);
+    const throwerTeam = item.thrower ? api.byId?.(item.thrower)?.team : -1;
     for (const d of dweebs) {
       if (!d.active) continue;
+      if (noFF && throwerTeam >= 0 && d.team === throwerTeam) continue;
       const p = d.position;
       const dist = Math.hypot(p[0] - item.pos[0], p[1] - item.pos[1], p[2] - item.pos[2]);
       if (dist > r) continue;
@@ -330,11 +343,13 @@ export class SimCombat {
 
   /** A dive tackle in flight hits whatever it runs into. */
   diveContacts(dweebs, api) {
+    const noFF = teamsOn(api);
     for (const d of dweebs) {
       if (!d.active || d.diveTimer <= 0) continue;
       const p = d.position, v = d.velocity;
       for (const t of dweebs) {
         if (t === d || !t.active || t.invuln > 0 || t.grabbedBy) continue;
+        if (noFF && friendly(t, d)) continue;
         if (Math.hypot(t.position[0] - p[0], t.position[2] - p[2]) > 1.4) continue;
         const atk = scale(A.dive);
         t.applyHit({ ...atk, dirX: v[0], dirZ: v[2], lift: 0.4, from: d }, api);
@@ -352,6 +367,7 @@ export class SimCombat {
    */
   stageHazards(dweebs, arena, api) {
     const B = BALANCE.bounce;
+    const boost = arena.profile?.bumperBoost ?? 1;
     for (const d of dweebs) {
       if (!d.active) continue;
       const p = d.position;
@@ -364,11 +380,11 @@ export class SimCombat {
           const dist = Math.hypot(dx, dz);
           const nx = dist > 0.01 ? dx / dist : 1, nz = dist > 0.01 ? dz / dist : 0;
           const along = v.x * nx + v.z * nz;
-          const out = Math.max(B.bumperMinSpeed, -along * B.bumperGain);
+          const out = Math.max(B.bumperMinSpeed, -along * B.bumperGain) * boost;
           this.physics.setVel(d.id,
-            v.x + nx * (out - along + B.bumperPush),
-            Math.max(v.y, B.bumperUp),
-            v.z + nz * (out - along + B.bumperPush));
+            v.x + nx * (out - along + B.bumperPush * boost),
+            Math.max(v.y, B.bumperUp * boost),
+            v.z + nz * (out - along + B.bumperPush * boost));
           api.emit?.('bumper', { a: d.id, x: h.x, y: 0.25, z: h.z, mag: out });
         } else if (v.y < 1) {
           this.physics.setVel(d.id, v.x, B.trampolineVel, v.z);

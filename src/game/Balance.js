@@ -156,6 +156,41 @@ export const BALANCE = {
     crustMax: 4,            // segments the volcano may eat before sudden death
     bumperBoost: 1.28,      // factory bumpers shove a little harder
     pendulumBoost: 1.3,
+    // Storm Spire lightning (telegraphed ground strikes)
+    lightningFirst: 6,      // grace before the first strike
+    lightningEvery: 9,      // seconds between strikes (jittered ±2 by the seeded stream)
+    lightningWarn: 0.8,     // telegraph time before a strike lands
+    lightningRadius: 2.6,
+    lightningDamage: 12,
+    lightningLaunch: 14,
+    // Magnet Core pulse (periodic pull toward the centre)
+    magnetIdle: 10,         // seconds between pulses
+    magnetWarn: 1.2,        // telegraph before the pull starts
+    magnetActive: 2.0,      // how long the pull lasts
+    magnetForce: 16,        // m/s² toward the centre while active
+    // Sinking Sands sticky centre
+    quicksandRadius: 5,
+    quicksandDrag: 0.88,    // horizontal velocity kept per tick, grounded in the zone
+  },
+
+  // King of the Hill.
+  hill: {
+    radius: 3.5,            // control zone radius around the centre
+    rate: 1,                // points per second for the sole holder
+    target: 60,             // points to take the round
+    milestone: 10,          // score milestones that emit an event
+  },
+
+  // The crowd. Hype 0..100; levels at 20/40/60/80.
+  crowd: {
+    decay: 4,               // hype lost per second with nothing happening
+    ko: 12, starKo: 16, selfKo: -6,
+    bigLaunch: 10, solidLaunch: 4,
+    trickShot: 8, explosion: 6, styleUp: 5, suddenDeath: 15,
+    roundEnd: 12, matchEnd: 20, award: 8, eliminated: 6,
+    lightningStrike: 10, lavaHit: 6,
+    levels: [20, 40, 60, 80],
+    names: ['murmur', 'buzz', 'roar', 'frenzy', 'pandemonium'],
   },
 
   // Pickup power-ups (the gems) and the two new gadget weapons.
