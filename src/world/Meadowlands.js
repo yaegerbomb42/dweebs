@@ -12,6 +12,7 @@ import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { ToyTown } from './ToyBuildings.js';
 import { TOY_TOWN_LAYOUT } from './ObjectRegistry.js';
+import { CITIZEN_STATES } from '../adventure/citizen.js';
 
 /** Cosmetic hats a treasure vault can hold. */
 export const HAT_POOL = ['🍓 Berry Beret', '👑 Tin Crown', '🎩 Top Hat', '🧢 Moss Cap', '⛑️ Acorn Helm'];
@@ -19,6 +20,23 @@ export const HAT_POOL = ['🍓 Berry Beret', '👑 Tin Crown', '🎩 Top Hat', '
 export const TOOL_POOL = ['🔧 Wobbly Wrench', '🔨 Plush Hammer', '✂️ Snip-Snips', '🧲 Magnet Mitt'];
 /** Cap on torch PointLights so 30+ structures stay at 60 fps. */
 export const MAX_TORCHLIGHTS = 12;
+/** Seasons: one every 4 days (starting in summer so new villages open in long,
+ *  lazy days). Spring regrows berries 1.5x, summer tires Dweebs more slowly,
+ *  autumn merchants pay +1 gold per trade, winter halves regrowth. */
+export const SEASONS = ['summer', 'autumn', 'winter', 'spring'];
+/** Mischief critter kinds: berry thieves, night gold-stealers, structure gnawers. */
+export const CRITTER_KINDS = {
+  mischief: { name: 'Mischief Critter', color: 0x475569, hp: 2, speed: 2.2 },
+  gobbler: { name: 'Shadow Gobbler', color: 0x6d28d9, hp: 3, speed: 3.4 },
+  gnawer: { name: 'Plank Gnawer', color: 0x92400e, hp: 4, speed: 1.6 },
+};
+export const MAX_CRITTERS = 5;
+/** What the traveling merchant offers at the Trading Post (autumn: +1 gold each). */
+export const TRADE_OFFERS = [
+  { give: { berries: 8 }, get: { gold: 3 }, text: '8 🍓 → 3 🪙' },
+  { give: { wood: 6 }, get: { gold: 2 }, text: '6 🪵 → 2 🪙' },
+  { give: { stone: 5 }, get: { gold: 2 }, text: '5 🪨 → 2 🪙' },
+];
 
 export class Meadowlands {
   constructor(physicsWorld, scene, options = {}) {
@@ -55,8 +73,14 @@ export class Meadowlands {
     this.critterTimer = 30;   // seconds until the first critter wanders in
     this.timeOfDay = 8;       // 0-24, starts at a bright morning
     this.dayLength = 240;     // seconds per full day
+    this.dayCount = 0;        // full days elapsed (drives seasons + moon)
+    this._lastSeason = 'summer';
     this.lightLevel = 1;      // 0 (midnight) .. 1 (noon)
     this.isNight = false;
+    // ── Trade routes: a traveling merchant visits when a Trading Post stands.
+    this.merchant = null;     // { x, z, state, mesh, ... } or null
+    this.merchantTimer = 80 + Math.random() * 40;
+    this.tradeCount = 0;
     // ── Weather: clear | rain | wind. Rain regrows berries 2x and hurries
     // critters (1.5x); wind spins windmill blades 2x (2x gather rate).
     this.weather = 'clear';
@@ -87,6 +111,17 @@ export class Meadowlands {
       this.toyTown.fx = fx;
       for (const s of this.toyTown.structures) s.fx = fx;
     }
+  }
+
+  /** Current season: one of SEASONS, changing every 4 days. */
+  get season() {
+    return SEASONS[Math.floor(this.dayCount / 4) % 4];
+  }
+
+  /** Moon phase 0-7 (0 = new, 4 = full). Full moon boosts vault loot 50%;
+   *  new moon makes critters wander in twice as often. */
+  get moonPhase() {
+    return this.dayCount % 8;
   }
 
   // ─── 1. Terrain Generation (Low-Poly Heightfield + Trimesh) ───
@@ -914,32 +949,61 @@ export class Meadowlands {
     this.fireflies = points;
   }
 
-  /** Two more ancient toy ruins, each with a 3-plate puzzle guarding a vault. */
+  /**
+   * Four ancient toy ruins, each guarding a vault with a different trial:
+   * - 'plates': the classic — three pressure plates pressed at once.
+   * - 'bounce': the Gauntlet of Springs — bounce on the ruin's pads (or any
+   *   springpad) 6 times within earshot and the vault springs open.
+   * - 'guard': the Sentry Vault — a Defender standing guard nearby for 30
+   *   cumulative seconds earns the vault's respect (night watch counts double).
+   */
   _createToyRuins() {
     const sites = [
-      { id: 'sunken', name: 'Sunken Toy Ruin', x: -20, z: 14 },
-      { id: 'bluff', name: 'Bluff Toy Ruin', x: 30, z: -6 },
+      { id: 'sunken', name: 'Sunken Toy Ruin', x: -20, z: 14, kind: 'plates', coins: [15, 30] },
+      { id: 'bluff', name: 'Bluff Toy Ruin', x: 30, z: -6, kind: 'plates', coins: [15, 30] },
+      { id: 'gauntlet', name: 'Gauntlet of Springs', x: -36, z: -22, kind: 'bounce', coins: [20, 35] },
+      { id: 'sentry', name: 'Sentry Vault Ruin', x: 26, z: 24, kind: 'guard', coins: [25, 40] },
     ];
     for (const site of sites) {
       const y = this._getHeight(site.x, site.z);
       const ruin = {
-        id: site.id, name: site.name, x: site.x, y, z: site.z,
-        plates: [], vault: null, opened: false, progress: 0,
+        id: site.id, name: site.name, kind: site.kind, x: site.x, y, z: site.z,
+        plates: [], vault: null, opened: false, progress: 0, work: 0,
         loot: {
           hat: HAT_POOL[Math.floor(Math.random() * HAT_POOL.length)],
           tool: TOOL_POOL[Math.floor(Math.random() * TOOL_POOL.length)],
-          coins: 15 + Math.floor(Math.random() * 16),
+          coins: site.coins[0] + Math.floor(Math.random() * (site.coins[1] - site.coins[0] + 1)),
         },
       };
-      // Three pressure plates in a triangle around the vault.
-      const offsets = [[-3, 2], [3, 2], [0, -3.5]];
-      offsets.forEach(([ox, oz], i) => {
-        const plate = this._createPressurePlate(site.x + ox, y + 0.1, site.z + oz, `${site.id}_plate_${i}`);
-        ruin.plates.push(plate);
-      });
+      if (site.kind === 'plates') {
+        // Three pressure plates in a triangle around the vault.
+        const offsets = [[-3, 2], [3, 2], [0, -3.5]];
+        offsets.forEach(([ox, oz], i) => {
+          const plate = this._createPressurePlate(site.x + ox, y + 0.1, site.z + oz, `${site.id}_plate_${i}`);
+          ruin.plates.push(plate);
+        });
+      } else if (site.kind === 'bounce') {
+        // Two spring pads flanking the vault — bounce on them (or any pad
+        // nearby) to work the ancient spring mechanism.
+        this._createRuinBouncePad(site.x - 4, site.z + 1);
+        this._createRuinBouncePad(site.x + 4, site.z - 1);
+      }
       ruin.vault = this._createVault(site.x, y, site.z);
       this.ruins.push(ruin);
     }
+  }
+
+  /** A spring pad owned by a bounce-trial ruin (bounces feed the stunt feed). */
+  _createRuinBouncePad(x, z) {
+    const y = this._getHeight(x, z);
+    const pad = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.3, 1.4, 0.35, 12),
+      new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.6, flatShading: true })
+    );
+    pad.position.set(x, y + 0.3, z);
+    noOutline(pad);
+    this.group.add(pad);
+    this.springPads.push({ x, y, z, radius: 1.6, boostVelocity: 15, mesh: pad, rebound: 0 });
   }
 
   _createVault(x, y, z) {
@@ -999,9 +1063,12 @@ export class Meadowlands {
     if (this.stuntFeed.length > 12) this.stuntFeed.shift();
   }
 
-  /** Spawn one mischief critter at the map edge, wandering toward the village. */
-  spawnCritter() {
-    if (this.critters.length >= 3) return null;
+  /** Spawn one critter at the map edge, wandering toward the village.
+   *  kind: 'mischief' (steals berries), 'gobbler' (night gold thief, fears
+   *  torchlight), 'gnawer' (slow, tough, chews structures with hp). */
+  spawnCritter(kind = 'mischief') {
+    if (this.critters.length >= MAX_CRITTERS) return null;
+    const def = CRITTER_KINDS[kind] || CRITTER_KINDS.mischief;
     const ang = Math.random() * Math.PI * 2;
     const r = 45 + Math.random() * 10;
     const x = Math.cos(ang) * r;
@@ -1009,9 +1076,9 @@ export class Meadowlands {
     const y = this._getHeight(x, z);
     const body = new THREE.Mesh(
       new THREE.SphereGeometry(0.7, 8, 8),
-      toonMat({ color: 0x475569, flatShading: true })
+      toonMat({ color: def.color, flatShading: true })
     );
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    const eyeMat = new THREE.MeshBasicMaterial({ color: kind === 'gobbler' ? 0xfacc15 : 0xef4444 });
     for (const ex of [-0.25, 0.25]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), eyeMat);
       eye.position.set(ex, 0.25, 0.55);
@@ -1021,7 +1088,7 @@ export class Meadowlands {
     noOutline(body);
     this.group.add(body);
     const critter = {
-      x, y, z, hp: 2, speed: 2.2, mesh: body,
+      kind, x, y, z, hp: def.hp, maxHp: def.hp, speed: def.speed, mesh: body,
       state: 'approach', stealTimer: 0, chewTarget: null, homeX: x, homeZ: z,
     };
     this.critters.push(critter);
@@ -1118,13 +1185,28 @@ export class Meadowlands {
     }
   }
 
-  _updateBushRegrowth(dt) {
-    // Rain doubles the regrowth rate.
-    const interval = this.weather === 'rain' ? 10 : 20;
+  _updateBushRegrowth(dt, colony = null) {
+    // Rain doubles the regrowth rate; spring hurries it 1.5x, winter halves it.
+    // A level-3 forager's green thumb speeds bushes within 14m by another 25%.
+    let interval = 20;
+    if (this.weather === 'rain') interval /= 2;
+    if (this.season === 'spring') interval /= 1.5;
+    else if (this.season === 'winter') interval *= 2;
+    let greenThumbs = null;
+    if (colony) {
+      greenThumbs = colony.citizens.filter(c => c.role === 'forager' && c.roleLevel >= 3 && c.dweeb && c.dweeb.body);
+    }
     for (const bush of this.berryBushes) {
       if (bush.available >= 5) continue;
+      let local = interval;
+      if (greenThumbs && greenThumbs.length > 0) {
+        for (const g of greenThumbs) {
+          const p = g.dweeb.body.translation();
+          if (Math.hypot(p.x - bush.x, p.z - bush.z) < 14) { local *= 0.75; break; }
+        }
+      }
       bush.regenTimer = (bush.regenTimer || 0) + dt;
-      if (bush.regenTimer >= interval) {
+      if (bush.regenTimer >= local) {
         bush.regenTimer = 0;
         bush.available = Math.min(5, bush.available + 1);
         if (bush.berries && bush.berries[bush.available - 1]) {
@@ -1134,35 +1216,128 @@ export class Meadowlands {
     }
   }
 
+  /**
+   * Trade routes: when a Trading Post stands, a traveling merchant walks in
+   * from the map edge, waits at the stall, trades goods for gold, and leaves.
+   * Autumn sweetens every deal by +1 gold.
+   */
+  _updateMerchant(dt, colony = null) {
+    if (!this.merchant) {
+      this.merchantTimer -= dt;
+      if (this.merchantTimer > 0) return;
+      this.merchantTimer = 90 + Math.random() * 60;
+      const posts = this.buildingManager
+        ? this.buildingManager.placedStructures.filter(s => s.id === 'tradepost')
+        : [];
+      if (posts.length === 0) return; // no trading post, no caravan
+      const post = posts[Math.floor(Math.random() * posts.length)];
+      const ang = Math.random() * Math.PI * 2;
+      const hx = Math.cos(ang) * 48;
+      const hz = Math.sin(ang) * 48;
+      const g = new THREE.Group();
+      const robe = new THREE.Mesh(
+        new THREE.BoxGeometry(0.9, 1.1, 0.6),
+        toonMat({ color: 0x7c3aed, flatShading: true })
+      );
+      robe.position.y = 0.9;
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 8, 8),
+        toonMat({ color: 0xfcd9b8, flatShading: true })
+      );
+      head.position.y = 1.75;
+      const pack = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.7, 0.3),
+        toonMat({ color: 0x92400e, flatShading: true })
+      );
+      pack.position.set(0, 1.0, -0.45);
+      g.add(robe, head, pack);
+      noOutline(g);
+      g.position.set(hx, this._getHeight(hx, hz), hz);
+      this.group.add(g);
+      this.merchant = {
+        x: hx, z: hz, homeX: hx, homeZ: hz,
+        postX: post.pos.x, postZ: post.pos.z,
+        state: 'arrive', waitTimer: 0, mesh: g,
+      };
+      if (colony) colony._addLog('🐪 A traveling merchant approaches the Trading Post!');
+      return;
+    }
+    const m = this.merchant;
+    const speed = 3;
+    const stepToward = (tx, tz) => {
+      const dx = tx - m.x;
+      const dz = tz - m.z;
+      const len = Math.hypot(dx, dz) || 1;
+      m.x += (dx / len) * speed * dt;
+      m.z += (dz / len) * speed * dt;
+      return Math.hypot(tx - m.x, tz - m.z);
+    };
+    if (m.state === 'arrive') {
+      if (stepToward(m.postX, m.postZ) < 2) {
+        m.state = 'trade';
+        m.waitTimer = 30;
+        const offer = TRADE_OFFERS[this.tradeCount % TRADE_OFFERS.length];
+        if (colony) colony._addLog(`🐪 The merchant offers: ${offer.text}. They wait by the stall…`);
+      }
+    } else if (m.state === 'trade') {
+      m.waitTimer -= dt;
+      if (m.waitTimer <= 0) {
+        const offer = TRADE_OFFERS[this.tradeCount % TRADE_OFFERS.length];
+        this.tradeCount += 1;
+        let dealt = false;
+        if (colony) {
+          const [res, n] = Object.entries(offer.give)[0];
+          if ((colony.resources[res] || 0) >= n) {
+            colony.resources[res] -= n;
+            const bonus = this.season === 'autumn' ? 1 : 0;
+            colony.addResource('gold', offer.get.gold + bonus, []);
+            colony._addLog(`🤝 Deal! Traded ${n} ${res} for ${offer.get.gold + bonus} gold.`);
+            dealt = true;
+          }
+          if (!dealt) colony._addLog('🐪 The merchant found no goods to buy and packed up.');
+        }
+        m.state = 'leave';
+      }
+    } else if (m.state === 'leave') {
+      if (stepToward(m.homeX, m.homeZ) < 3) {
+        this.group.remove(m.mesh);
+        this.merchant = null;
+      }
+    }
+    if (m.mesh) m.mesh.position.set(m.x, this._getHeight(m.x, m.z), m.z);
+  }
+
+  /** Midnight bookkeeping: seasons turn, the moon waxes and wanes. */
+  _onNewDay(colony = null) {
+    this.dayCount += 1;
+    const season = this.season;
+    if (season !== this._lastSeason) {
+      this._lastSeason = season;
+      if (colony) {
+        const msg = {
+          spring: '🌸 Spring arrives — berry bushes burst back to life (regrow 1.5x)!',
+          summer: '☀️ Summer heat settles in — long days tire Dweebs more slowly.',
+          autumn: '🍂 Autumn colors the meadow — merchants pay +1 gold for every trade.',
+          winter: '❄️ Winter settles in — berries regrow half as fast. Bundle up!',
+        }[season];
+        colony._addLog(msg);
+      }
+    }
+    if (colony) {
+      if (this.moonPhase === 4) {
+        colony._addLog('🌕 Full moon! Vault treasure glows brighter — +50% coins tonight.');
+      } else if (this.moonPhase === 0) {
+        colony._addLog('🌑 New moon — critters grow bold and wander in twice as often.');
+      }
+    }
+  }
+
   _updateRuins(dt, dweebs, colony) {
     for (const ruin of this.ruins) {
       if (ruin.opened) continue;
-      let allPressed = true;
-      for (const plate of ruin.plates) {
-        let isPressed = false;
-        for (const d of dweebs) {
-          if (!d.body) continue;
-          const p = d.body.translation();
-          if (Math.hypot(p.x - plate.x, p.z - plate.z) < 1.4 && Math.abs(p.y - plate.y) < 0.8) {
-            isPressed = true;
-            break;
-          }
-        }
-        plate.pressed = isPressed;
-        plate.depressAmount = THREE.MathUtils.lerp(plate.depressAmount, isPressed ? 0.15 : 0, dt * 10);
-        plate.mesh.position.y = plate.y + 0.15 - plate.depressAmount;
-        if (!isPressed) allPressed = false;
-      }
-      if (allPressed) {
-        ruin.opened = true;
-        this._pushStunt('vault', ruin.x, ruin.z);
-        if (colony) {
-          colony.resources.gold = (colony.resources.gold || 0) + ruin.loot.coins;
-          colony.hats.push(ruin.loot.hat);
-          colony.tools.push(ruin.loot.tool);
-          colony._addLog(`🏆 ${ruin.name} vault opened! Found ${ruin.loot.hat}, ${ruin.loot.tool} and ${ruin.loot.coins} gold coins!`);
-        }
-      }
+      if (ruin.kind === 'bounce') this._updateBounceRuin(ruin, colony);
+      else if (ruin.kind === 'guard') this._updateGuardRuin(ruin, dt, colony);
+      else this._updatePlateRuin(ruin, dt, dweebs, colony);
     }
     // Animate opened vault lids sliding open.
     for (const ruin of this.ruins) {
@@ -1173,15 +1348,97 @@ export class Meadowlands {
     }
   }
 
+  /** The classic trial: three pressure plates held down at once. */
+  _updatePlateRuin(ruin, dt, dweebs, colony) {
+    let allPressed = true;
+    for (const plate of ruin.plates) {
+      let isPressed = false;
+      for (const d of dweebs) {
+        if (!d.body) continue;
+        const p = d.body.translation();
+        if (Math.hypot(p.x - plate.x, p.z - plate.z) < 1.4 && Math.abs(p.y - plate.y) < 0.8) {
+          isPressed = true;
+          break;
+        }
+      }
+      plate.pressed = isPressed;
+      plate.depressAmount = THREE.MathUtils.lerp(plate.depressAmount, isPressed ? 0.15 : 0, dt * 10);
+      plate.mesh.position.y = plate.y + 0.15 - plate.depressAmount;
+      if (!isPressed) allPressed = false;
+    }
+    if (allPressed) this._openRuin(ruin, colony);
+  }
+
+  /**
+   * The Gauntlet of Springs: every bounce stunt within 14m of the ruin works
+   * the ancient spring mechanism. Six bounces spring the vault open. Stunts
+   * are tracked by identity (a WeakSet) so two bounces landing on the same
+   * tick still count separately.
+   */
+  _updateBounceRuin(ruin, colony) {
+    if (!ruin._seenStunts) ruin._seenStunts = new WeakSet();
+    for (const stunt of this.stuntFeed) {
+      if (stunt.type !== 'bounce' && stunt.type !== 'launch') continue;
+      if (ruin._seenStunts.has(stunt)) continue;
+      if (Math.hypot(stunt.x - ruin.x, stunt.z - ruin.z) > 14) continue;
+      ruin._seenStunts.add(stunt);
+      ruin.work += 1;
+      if (ruin.work >= 6) {
+        this._openRuin(ruin, colony);
+        break;
+      }
+    }
+  }
+
+  /**
+   * The Sentry Vault: a Defender standing guard within 14m accumulates
+   * respect for the vault — 30 cumulative seconds opens it. Night watch
+   * counts double; the old stones love moonlight.
+   */
+  _updateGuardRuin(ruin, dt, colony) {
+    let guards = 0;
+    if (colony) {
+      for (const c of colony.citizens) {
+        if (c.role !== 'defender' || c.state !== CITIZEN_STATES.GUARD) continue;
+        if (!c.dweeb || !c.dweeb.body) continue;
+        const p = c.dweeb.body.translation();
+        if (Math.hypot(p.x - ruin.x, p.z - ruin.z) < 14) guards++;
+      }
+    }
+    if (guards > 0) {
+      ruin.work += dt * guards * (this.isNight ? 2 : 1);
+      if (ruin.work >= 30) this._openRuin(ruin, colony);
+    }
+  }
+
+  /** Crack a vault open: stunt, loot, log. Full moon boosts the coin haul 50%. */
+  _openRuin(ruin, colony) {
+    ruin.opened = true;
+    this._pushStunt('vault', ruin.x, ruin.z);
+    if (colony) {
+      const coins = Math.round(ruin.loot.coins * (this.moonPhase === 4 ? 1.5 : 1));
+      colony.resources.gold = (colony.resources.gold || 0) + coins;
+      colony.hats.push(ruin.loot.hat);
+      colony.tools.push(ruin.loot.tool);
+      colony._addLog(`🏆 ${ruin.name} vault opened! Found ${ruin.loot.hat}, ${ruin.loot.tool} and ${coins} gold coins!`);
+    }
+  }
+
   _updateCritters(dt, dweebs, colony) {
     // Critters love the wet — they wander in 1.5x as often while it rains.
-    this.critterTimer -= dt * (this.weather === 'rain' ? 1.5 : 1);
+    // A new moon makes them twice as bold. Shadow gobblers only hunt at night.
+    this.critterTimer -= dt * (this.weather === 'rain' ? 1.5 : 1) * (this.moonPhase === 0 ? 2 : 1);
     if (this.critterTimer <= 0) {
       this.critterTimer = 45;
-      this.spawnCritter();
+      let kind = 'mischief';
+      const r = Math.random();
+      if (this.isNight && r < 0.35) kind = 'gobbler';
+      else if (r < 0.55) kind = 'gnawer';
+      this.spawnCritter(kind);
     }
-    const barricades = this.buildingManager
-      ? this.buildingManager.placedStructures.filter(s => s.id === 'cannon')
+    // Anything with hit points can be gnawed (cannons today, more tomorrow).
+    const chewables = this.buildingManager
+      ? this.buildingManager.placedStructures.filter(s => typeof s.hp === 'number')
       : [];
     for (let i = this.critters.length - 1; i >= 0; i--) {
       const c = this.critters[i];
@@ -1194,37 +1451,56 @@ export class Meadowlands {
         c.z += (dz / len) * c.speed * 1.5 * dt;
         if (Math.hypot(c.x - c.homeX, c.z - c.homeZ) < 2) this.removeCritter(c);
       } else {
-        // Chew the nearest barricade if one is in the way.
+        // Chew the nearest chewable if one is in the way (gnawers chew harder).
         let target = null;
         let best = 3;
-        for (const b of barricades) {
+        for (const b of chewables) {
           const d = Math.hypot(b.pos.x - c.x, b.pos.z - c.z);
           if (d < best) { best = d; target = b; }
         }
         if (target) {
           c.chewTarget = target;
-          target.hp -= 4 * dt;
+          target.hp -= (c.kind === 'gnawer' ? 8 : 4) * dt;
           if (target.hp <= 0 && this.buildingManager) {
             this.buildingManager.destroyStructure(target, colony);
           }
           // Chewing in place — don't move.
         } else {
           c.chewTarget = null;
-          const dx = 0 - c.x;
-          const dz = 0 - c.z;
-          const len = Math.hypot(dx, dz) || 1;
-          c.x += (dx / len) * c.speed * dt;
-          c.z += (dz / len) * c.speed * dt;
+          // Head for the campfire — but shadow gobblers skirt torchlight.
+          let mx = 0 - c.x;
+          let mz = 0 - c.z;
+          if (c.kind === 'gobbler' && this.torchlights.length > 0) {
+            for (const t of this.torchlights) {
+              const dx = c.x - t.x;
+              const dz = c.z - t.z;
+              const d = Math.hypot(dx, dz);
+              if (d < 6 && d > 0.01) {
+                mx += (dx / d) * 8;
+                mz += (dz / d) * 8;
+              }
+            }
+          }
+          const len = Math.hypot(mx, mz) || 1;
+          c.x += (mx / len) * c.speed * dt;
+          c.z += (mz / len) * c.speed * dt;
           c.y = this._getHeight(c.x, c.z);
         }
-        // Reached the campfire? Steal a berry, then flee.
+        // Reached the campfire? Steal, then flee.
         if (Math.hypot(c.x, c.z) < 4) {
           c.stealTimer += dt;
           if (c.stealTimer >= 3) {
             c.stealTimer = 0;
-            if (colony && colony.resources.berries > 0) {
+            if (c.kind === 'gobbler') {
+              if (colony && colony.resources.gold > 0) {
+                colony.resources.gold -= 1;
+                colony._addLog('👻 A shadow gobbler snatched a gold coin from the vault!');
+              }
+            } else if (colony && colony.resources.berries > 0) {
               colony.resources.berries -= 1;
-              colony._addLog('🦝 A mischief critter snatched a berry from the campfire!');
+              colony._addLog(c.kind === 'gnawer'
+                ? '🦫 A plank gnawer gnawed through a berry basket and stole one!'
+                : '🦝 A mischief critter snatched a berry from the campfire!');
             }
             c.state = 'flee';
           }
@@ -1240,6 +1516,7 @@ export class Meadowlands {
   serialize() {
     return {
       timeOfDay: this.timeOfDay,
+      dayCount: this.dayCount,
       ruinsOpened: this.ruins.filter(r => r.opened).map(r => r.id),
       weather: this.weather,
     };
@@ -1249,6 +1526,8 @@ export class Meadowlands {
   restore(data) {
     if (!data) return;
     if (typeof data.timeOfDay === 'number') this.timeOfDay = data.timeOfDay;
+    if (typeof data.dayCount === 'number') this.dayCount = Math.max(0, Math.floor(data.dayCount));
+    this._lastSeason = this.season;
     if (data.weather === 'clear' || data.weather === 'rain' || data.weather === 'wind') {
       this.weather = data.weather;
     }
@@ -1270,10 +1549,13 @@ export class Meadowlands {
     this.clock += dt;
 
     // Day/night cycle, weather, berry regrowth, vault puzzles and critters.
+    const prevTod = this.timeOfDay;
     this._updateDayNight(dt);
+    if (this.timeOfDay < prevTod) this._onNewDay(colony);
     this._updateWeather(dt, colony);
-    this._updateBushRegrowth(dt);
+    this._updateBushRegrowth(dt, colony);
     this._updateCritters(dt, dweebs, colony);
+    this._updateMerchant(dt, colony);
 
     // Flicker Campfire Light (brighter after dark)
     if (this.campfireLight) {

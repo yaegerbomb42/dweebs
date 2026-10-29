@@ -133,6 +133,7 @@ describe('weather', () => {
       world.weather = weather;
       world.weatherTimer = 99999;
       world.critterTimer = 10;
+      world.dayCount = 1; // moonPhase 1: neutral moon, so only weather varies
       return world;
     };
     const rainy = mk('rain');

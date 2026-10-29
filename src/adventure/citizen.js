@@ -35,6 +35,20 @@ export const MOODS = {
   hungry: { id: 'hungry', icon: '😋', text: 'My tummy is rumbling…' },
 };
 
+/**
+ * Role mastery: XP thresholds for profession levels 1-3. Citizens earn XP by
+ * doing their job — foragers banking berries, builders raising structures,
+ * defenders bonking critters, tinkerers learning verbs. Each level is a real
+ * mechanical bonus (see addRoleXp / the per-role branches in _executeGoal).
+ */
+export const ROLE_XP_LEVELS = [0, 10, 30];
+const ROLE_LEVELUP_LINES = {
+  forager: 'My berry basket runneth over! 🍓',
+  builder: 'These hands build wonders! 🔨',
+  defender: 'None shall pass! 🛡️',
+  tinkerer: 'Genius takes practice! 🔧',
+};
+
 export const CITIZEN_STATES = {
   IDLE: 'IDLE',
   WANDER: 'WANDER',
@@ -68,6 +82,10 @@ export class Citizen {
 
     // Role (null = unassigned villager, follows needs only)
     this.role = config.role || null;
+    // Role mastery: XP earned by doing the job, levels 1-3 at ROLE_XP_LEVELS.
+    this.roleXp = typeof config.roleXp === 'number' ? config.roleXp : 0;
+    this.roleLevel = 1 + ROLE_XP_LEVELS.filter(t => t > 0 && this.roleXp >= t).length;
+    this._gizmoAcc = 0; // tinkerer L3: seconds until the next gizmo sale
     // Mood + speech bubble
     this.mood = 'happy';
     this.moodTimer = 0; // seconds of forced excitement left
@@ -137,6 +155,28 @@ export class Citizen {
     return true;
   }
 
+  /**
+   * Earn profession XP. Level-ups announce themselves and hit the colony log.
+   * Bonuses: forager L2 banks 2 berries/pick, L3 is a green thumb (nearby
+   * bushes regrow 25% faster); builder L2 hammers 25% faster, L3 raises
+   * tougher structures (+25% hp); defender L2 bonks faster (1.0s), L3 scares
+   * critters off with an aura; tinkerer L2 learns 1.5x faster again, L3 sells
+   * a gizmo for 1 gold every minute.
+   */
+  addRoleXp(n, colony = null) {
+    if (!this.role || n <= 0) return this.roleLevel;
+    this.roleXp += n;
+    const level = 1 + ROLE_XP_LEVELS.filter(t => t > 0 && this.roleXp >= t).length;
+    if (level > this.roleLevel) {
+      this.roleLevel = level;
+      const line = ROLE_LEVELUP_LINES[this.role] || 'Level up!';
+      this.say(line, '⭐', 3);
+      this.moodTimer = 2;
+      if (colony) colony._addLog(`⭐ ${this.name} reached ${ROLES[this.role].name} level ${level}! ${line}`);
+    }
+    return this.roleLevel;
+  }
+
   /** Show a speech bubble for a few seconds. */
   say(text, icon = '💬', seconds = 2.5) {
     this.bubble = { icon, text, until: this.clock + seconds };
@@ -172,11 +212,12 @@ export class Citizen {
     return true;
   }
 
-  observePeer(teacherCitizen, verbId, dt) {
+  observePeer(teacherCitizen, verbId, dt, colony = null) {
     if (this.knownVerbs.has(verbId)) return;
     if (!this.learningProgress[verbId]) this.learningProgress[verbId] = 0;
 
-    const tinkererBonus = this.role === 'tinkerer' ? 1.5 : 1.0;
+    // Tinkerers learn 1.5x faster; level-2 tinkerers learn 1.5x faster again.
+    const tinkererBonus = this.role === 'tinkerer' ? (this.roleLevel >= 2 ? 2.25 : 1.5) : 1.0;
     const rate = 0.25 * (this.personality.learningSpeed || 1.0) * tinkererBonus;
     this.learningProgress[verbId] += dt * rate;
     this.state = CITIZEN_STATES.OBSERVE;
@@ -184,6 +225,7 @@ export class Citizen {
 
     if (this.learningProgress[verbId] >= 1.0) {
       this.learnVerb(verbId);
+      this.addRoleXp(2, colony);
       this.state = CITIZEN_STATES.TINKER;
       this.activityText = `Practicing ${verbId} excitedly!`;
     }
@@ -210,9 +252,22 @@ export class Citizen {
 
     // 1. Update internal needs
     this.hunger = Math.min(100, this.hunger + dt * 0.8);
-    this.energy = Math.max(0, this.energy - dt * 0.7 * (this.personality.energyDecay || 1.0));
+    // Summer's long days tire Dweebs more slowly; winter's cold bites harder.
+    const season = world ? world.season : undefined;
+    const seasonEnergyMul = season === 'summer' ? 0.85 : season === 'winter' ? 1.15 : 1;
+    this.energy = Math.max(0, this.energy - dt * 0.7 * (this.personality.energyDecay || 1.0) * seasonEnergyMul);
     this.curiosity = Math.min(100, this.curiosity + dt * 1.1 * (this.personality.curiosityBias || 1.0));
     this.social = Math.min(100, this.social + dt * 0.9 * (this.personality.socialBias || 1.0));
+
+    // Tinkerer mastery L3: sell a gizmo to a passing traveler every minute.
+    if (this.role === 'tinkerer' && this.roleLevel >= 3 && colony) {
+      this._gizmoAcc += dt;
+      if (this._gizmoAcc >= 60) {
+        this._gizmoAcc = 0;
+        colony.addResource('gold', 1, []);
+        this.say('Sold a gizmo! 🪙', '🪙', 2);
+      }
+    }
 
     // Friendships slowly cool off without contact.
     for (const [name, bond] of this.friends) {
@@ -384,6 +439,21 @@ export class Citizen {
       return;
     }
 
+    // Festival: needs and repairs already handled above — drop everything and mingle.
+    if (colony && colony.festival && colony.festival.active && otherCitizens.length > 0) {
+      const peer = otherCitizens[Math.floor(Math.random() * otherCitizens.length)];
+      if (peer !== this && peer.dweeb && peer.dweeb.body) {
+        this.state = CITIZEN_STATES.SOCIALIZE;
+        this.targetEntity = peer;
+        const pp = peer.dweeb.body.translation();
+        this.targetPos.set(pp.x + (Math.random() - 0.5) * 2, pp.y, pp.z + (Math.random() - 0.5) * 2);
+        this.stateTimer = 6 + Math.random() * 4;
+        this.activityText = 'Dancing at the Berry Harvest Festival! 🎉';
+        if (Math.random() < 0.3) this.say('Best festival ever! 🎉', '🎉', 2);
+        return;
+      }
+    }
+
     // Role: Builder -> claim and construct the next queued blueprint.
     // claimBuild() hands each Builder a different affordable blueprint, so two
     // Builders never raise (and charge for) the same blueprint twice.
@@ -407,13 +477,20 @@ export class Citizen {
       // Builder just acts like a regular villager this round.
     }
 
-    // Role: Defender -> patrol the barricades, or the village edge.
+    // Role: Defender -> patrol the barricades, the sentry vaults, or the village edge.
     if (this.role === 'defender') {
       this.state = CITIZEN_STATES.GUARD;
+      // An unopened sentry vault deserves a watch: defenders take turns
+      // standing guard there, which is exactly what opens it.
+      const sentries = world.ruins ? world.ruins.filter(r => r.kind === 'guard' && !r.opened) : [];
       const posts = world.buildingManager
         ? world.buildingManager.placedStructures.filter(s => s.id === 'cannon')
         : [];
-      if (posts.length > 0) {
+      if (sentries.length > 0 && Math.random() < 0.5) {
+        const s = sentries[Math.floor(Math.random() * sentries.length)];
+        this.targetPos.set(s.x + (Math.random() - 0.5) * 8, s.y, s.z + (Math.random() - 0.5) * 8);
+        this.activityText = `Standing sentry watch at the ${s.name} 🛡️`;
+      } else if (posts.length > 0) {
         const post = posts[Math.floor(Math.random() * posts.length)];
         this.targetPos.set(post.pos.x + (Math.random() - 0.5) * 3, post.pos.y, post.pos.z + (Math.random() - 0.5) * 3);
         this.activityText = 'Standing guard at the plush cannon 🛡️';
@@ -439,18 +516,37 @@ export class Citizen {
       return;
     }
 
-    // Priority 4: High Curiosity -> Explore Ruins or Lookout Bluff.
+    // Priority 4: High Curiosity -> Explore the wild POIs.
     // In the rain only the brave (adventurers) head out; everyone else stays dry.
     if (this.curiosity > 65 && !(raining && (this.personality.bravery || 1) < 1.2)) {
       this.state = CITIZEN_STATES.EXPEDITION;
-      if (Math.random() > 0.4) {
+      const r = Math.random();
+      // Unopened ruin sites draw the curious — the trials reward visitors.
+      const unopened = world.ruins ? world.ruins.filter(ru => !ru.opened) : [];
+      if (r > 0.88 && unopened.length > 0) {
+        const ruin = unopened[Math.floor(Math.random() * unopened.length)];
+        this.targetPos.set(ruin.x + (Math.random() - 0.5) * 6, ruin.y, ruin.z + (Math.random() - 0.5) * 6);
+        this.activityText = `Investigating the ${ruin.name}`;
+      } else if (r > 0.55) {
         // Head towards the Ancient Meadowland Ruin
         this.targetPos.set((Math.random() - 0.5) * 6, 1.2, -32 + (Math.random() - 0.5) * 4);
         this.activityText = 'Surveying the mysterious Ancient Ruin';
-      } else {
+      } else if (r > 0.35) {
         // Head towards Lookout Bluff
         this.targetPos.set(28 + (Math.random() - 0.5) * 6, 3.5, 5 + (Math.random() - 0.5) * 6);
         this.activityText = 'Hiking up to the Lookout Bluff';
+      } else if (r > 0.2) {
+        // The Crystal Hollow, deep in the gorge
+        this.targetPos.set(-2 + (Math.random() - 0.5) * 6, 2.0, -62 + (Math.random() - 0.5) * 4);
+        this.activityText = 'Exploring the glittering Crystal Hollow';
+      } else if (r > 0.1) {
+        // The Geyser Gorge steam vents
+        this.targetPos.set(1 + (Math.random() - 0.5) * 6, 2.0, -63 + (Math.random() - 0.5) * 4);
+        this.activityText = 'Hopping the steam vents of Geyser Gorge';
+      } else {
+        // The Old Wooden Bridge over the river
+        this.targetPos.set(-17 + (Math.random() - 0.5) * 6, 1.5, -14 + (Math.random() - 0.5) * 4);
+        this.activityText = 'Crossing the Old Wooden Bridge';
       }
       this.stateTimer = 10 + Math.random() * 6;
       return;
@@ -525,6 +621,14 @@ export class Citizen {
     // Defenders chase critters while on patrol. This runs before the arrival
     // check because the target moves — "arrived" doesn't apply to a critter.
     if (this.state === CITIZEN_STATES.GUARD && world.critters && world.critters.length > 0) {
+      // Defender mastery L3: a fearsome aura — critters within 6m turn tail.
+      if (this.role === 'defender' && this.roleLevel >= 3) {
+        for (const c of world.critters) {
+          if (c.state !== 'flee' && Math.hypot(c.x - pos.x, c.z - pos.z) < 6) {
+            c.state = 'flee';
+          }
+        }
+      }
       let nearest = null;
       let best = 10;
       for (const c of world.critters) {
@@ -534,15 +638,17 @@ export class Citizen {
       if (nearest) {
         this.targetPos.set(nearest.x, nearest.y, nearest.z);
         if (best < 2.5) {
-          // Bonk! One plush mallet hit every 1.5 seconds.
+          // Bonk! One plush mallet hit every 1.5 seconds (1.0 at defender L2).
           this._bonkAcc += dt;
-          if (this._bonkAcc >= 1.5) {
+          const bonkInterval = this.role === 'defender' && this.roleLevel >= 2 ? 1.0 : 1.5;
+          if (this._bonkAcc >= bonkInterval) {
             this._bonkAcc = 0;
             nearest.hp -= 1;
             this.activityText = 'Bonked a critter with a plush mallet! 💢';
             this.say('Take that, critter!', '💢', 1.5);
             if (nearest.hp <= 0) {
               if (world.removeCritter) world.removeCritter(nearest);
+              this.addRoleXp(2, colony);
               if (colony) {
                 colony.resources.gold = (colony.resources.gold || 0) + 1;
                 colony._addLog(`🛡️ ${this.name} bonked a mischief critter! +1 🪙`);
@@ -572,7 +678,10 @@ export class Citizen {
               const silos = world.buildingManager
                 ? world.buildingManager.placedStructures.filter(s => s.id === 'silo')
                 : [];
-              colony.addResource('berries', 1, silos);
+              // Forager mastery L2: expert pickers fill the basket twice as fast.
+              const perPick = this.roleLevel >= 2 ? 2 : 1;
+              colony.addResource('berries', perPick, silos);
+              this.addRoleXp(1, colony);
               this.activityText = 'Picking berries for the village stores 🍓';
             } else {
               this.hunger = Math.max(0, this.hunger - 25);
@@ -596,17 +705,19 @@ export class Citizen {
         }
       } else if (this.state === CITIZEN_STATES.SOCIALIZE && this.targetEntity) {
         this.social = Math.max(0, this.social - dt * 20);
-        // Friendships grow while chatting.
+        // Friendships grow while chatting — three times as fast at a festival.
+        const festive = !!(colony && colony.festival && colony.festival.active);
         const peer = this.targetEntity;
-        const bond = Math.min(100, (this.friends.get(peer.name) || 0) + dt * 3);
+        const bond = Math.min(100, (this.friends.get(peer.name) || 0) + dt * (festive ? 9 : 3));
         this.friends.set(peer.name, bond);
+        if (festive && Math.random() < dt * 0.4) this.say('Woo! 🎉', '🎉', 1.5);
         if (bond >= 50 && !this._bondLogged.has(peer.name)) {
           this._bondLogged.add(peer.name);
           if (colony) colony._addLog(`💛 ${this.name} and ${peer.name} are now best buds!`);
         }
         // Social knowledge diffusion! If I know Bounce and they don't, teach them
         if (this.knownVerbs.has('bounce')) {
-          this.targetEntity.observePeer(this, 'bounce', dt);
+          this.targetEntity.observePeer(this, 'bounce', dt, colony);
         }
       } else if (this.state === CITIZEN_STATES.EXPEDITION) {
         this.curiosity = Math.max(0, this.curiosity - dt * 20);
@@ -631,14 +742,20 @@ export class Citizen {
         if (Math.random() < dt * 0.3) this.say('La la la! 🎵', '🎵', 2);
         this.activityText = 'Singing the Berry Harvest song 🎵';
       } else if (this.state === CITIZEN_STATES.BUILD && colony) {
-        // Hammer away; after 6 seconds of work the blueprint is done.
+        // Hammer away; after 6 seconds of work (4.5 at builder L2) the
+        // blueprint is done. The structure rises exactly where the Builder
+        // hammered, and the builder's claim is released so the same blueprint
+        // can be queued and claimed again later.
         this._buildAcc += dt;
         this.activityText = `Hammering away at the ${this.targetEntity}! 🔨`;
-        if (this._buildAcc >= 6) {
-          const done = colony._completeBuild(this.targetEntity, world);
+        const buildTime = this.role === 'builder' && this.roleLevel >= 2 ? 4.5 : 6;
+        if (this._buildAcc >= buildTime) {
+          const site = { x: this.targetPos.x, y: this.targetPos.y, z: this.targetPos.z };
+          const done = colony._completeBuild(this.targetEntity, world, site, this);
           if (done) {
             this.say('Done! Look at it! 🔨', '🔨', 3);
             this.moodTimer = 2;
+            this.addRoleXp(3, colony);
           }
           this.stateTimer = 0;
         }
