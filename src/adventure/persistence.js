@@ -54,7 +54,11 @@ export function loadVillage(storage = defaultStorage()) {
   } catch {
     return null;
   }
-  if (!data || data.version !== SAVE_VERSION) return null;
+  // Schema check: saves are versioned plain objects; anything else (a bare
+  // number, string, array, or a wrong-version save) is rejected cleanly so a
+  // corrupt file can never freeze the boot loop.
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  if (data.version !== SAVE_VERSION) return null;
   return data;
 }
 
@@ -73,24 +77,43 @@ export function clearSave(storage = defaultStorage()) {
  * Apply a loaded save to a freshly built village.
  * Citizens must already exist on the colony (added from the spawned Dweebs);
  * they are matched to saved citizens by index.
+ * Never throws: malformed entries are skipped and counted in `errors`, so a
+ * half-corrupt save still restores whatever is salvageable.
  * Returns a summary of what was restored.
  */
 export function applySave(save, { colony, buildingManager, world }) {
-  const summary = { citizens: 0, structures: 0, gold: 0 };
-  if (!save) return summary;
+  const summary = { citizens: 0, structures: 0, gold: 0, errors: 0 };
+  if (!save || typeof save !== 'object') return summary;
   if (colony && save.colony) {
-    colony.restore(save.colony);
-    summary.citizens = colony.citizens.length;
-    summary.gold = colony.resources.gold || 0;
+    try {
+      colony.restore(save.colony);
+      summary.citizens = colony.citizens.length;
+      summary.gold = colony.resources.gold || 0;
+    } catch {
+      summary.errors += 1;
+    }
   }
   if (buildingManager && Array.isArray(save.structures)) {
     for (const data of save.structures) {
-      const s = buildingManager.placeSaved(data, world, colony);
-      if (s) summary.structures += 1;
+      try {
+        if (!data || typeof data !== 'object' || typeof data.id !== 'string') {
+          summary.errors += 1;
+          continue;
+        }
+        const s = buildingManager.placeSaved(data, world, colony);
+        if (s) summary.structures += 1;
+        else summary.errors += 1;
+      } catch {
+        summary.errors += 1;
+      }
     }
   }
   if (world && save.world && typeof world.restore === 'function') {
-    world.restore(save.world);
+    try {
+      world.restore(save.world);
+    } catch {
+      summary.errors += 1;
+    }
   }
   return summary;
 }
