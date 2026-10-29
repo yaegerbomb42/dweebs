@@ -333,15 +333,24 @@ export class SimArena {
    * spat back (no KO), false when the splash counts.
    */
   lavaDip(d, api) {
-    if (d.lavaCd > 0) return false;
+    // The third consecutive dip dunks no matter what: you can kiss the lava twice,
+    // but nobody swims in it. (The counter resets on solid ground / respawn.)
+    if (d.lavaCd > 0 || d.lavaDips >= 2) return false;
     d.lavaCd = AR.lavaCooldown;
-    d.percent = Math.round((d.percent + AR.lavaDamage) * 10) / 10;
+    d.lavaDips++;
     d.swimFlail = 0;
     d.flailUsed = false;
     const pos = d.position;
     const r = Math.hypot(pos[0], pos[2]) || 1;
-    this.physics.setVel(d.id, (pos[0] / r) * 4, AR.lavaLaunch, (pos[2] / r) * 4);
-    api.emit('lavaHit', { a: d.id, mag: AR.lavaLaunch, x: pos[0], y: pos[1], z: pos[2] });
+    // The spit-back scales with percent like a real hit: at low percent it is a comic
+    // bounce back onto the stage; at high percent the lava itself launches you out.
+    // No `from`: the lava gets no KO credit — but a rival's recent touch still does,
+    // through the normal lastHitBy window, so edge-guarding into the lagoon pays.
+    const launch = d.applyHit({
+      damage: AR.lavaDamage, base: 4, growth: 6,
+      dirX: pos[0] / r, dirZ: pos[2] / r, lift: AR.lavaLaunch, from: null,
+    }, api);
+    api.emit('lavaHit', { a: d.id, mag: Math.round(launch * 10) / 10, x: pos[0], y: pos[1], z: pos[2] });
     return true;
   }
 

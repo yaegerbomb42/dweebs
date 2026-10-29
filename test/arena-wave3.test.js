@@ -8,12 +8,13 @@ import { Bot, BRUTAL, DIFFICULTY } from '../src/sim/bot.js';
 import { Crowd } from '../src/sim/crowd.js';
 import { RngStreams } from '../src/sim/rng.js';
 import { runTournament } from '../src/sim/tournament.js';
-import { NEUTRAL_INPUT, TICK_DT } from '../src/sim/contracts.js';
+import { NEUTRAL_INPUT } from '../src/sim/contracts.js';
 import { ARENA_IDS, profileFor } from '../src/sim/arenaProfiles.js';
 import { ARENAS } from '../src/game/Arenas.js';
 import { GAME_MODES } from '../src/game/GameModes.js';
 import { BALANCE } from '../src/game/Balance.js';
 import { hypeLine, awardLine, victoryLine, introLine } from '../src/game/Announcer.js';
+import { Match } from '../src/game/Match.js';
 
 /** N seats, past the countdown. All sim options flow through. */
 async function makeSim(seats, opts = {}) {
@@ -198,6 +199,25 @@ describe('volcano lava', () => {
     stepCollect(sim, 3);
     expect(d.stocks).toBe(stocks - 1);
   });
+
+  it('the third consecutive dip dunks even off cooldown', async () => {
+    const sim = await makeSim([false, false], { arena: 'volcano' });
+    const d = sim.dweebs[0];
+    d.lavaDips = 2;
+    place(sim, d, 10, -4.5, 0);
+    const stocks = d.stocks;
+    stepCollect(sim, 3);
+    expect(d.stocks).toBe(stocks - 1);
+  });
+
+  it('landing back on stage forgives the dip counter', async () => {
+    const sim = await makeSim([false], { arena: 'volcano' });
+    const d = sim.dweebs[0];
+    d.lavaDips = 2;
+    place(sim, d, 0, 0.6, 0);
+    stepCollect(sim, 5);
+    expect(d.lavaDips).toBe(0);
+  });
 });
 
 describe('volcano crust', () => {
@@ -317,7 +337,7 @@ describe('king of the hill', () => {
 
   it('a KO costs no stock: out, then back in', async () => {
     const sim = await makeSim([false, false], { mode: 'hill', hillTarget: 500 });
-    const [a, b] = sim.dweebs;
+    const [, b] = sim.dweebs;
     place(sim, b, 40, 0.6, 0); // past the side blast line
     const stocks = b.stocks;
     stepCollect(sim, 5);
@@ -561,4 +581,78 @@ describe('arena determinism across modes', () => {
       expect(await checksum(cfg), JSON.stringify(cfg)).toBe(await checksum(cfg));
     }
   }, 60000);
+});
+
+// ─── Live engine parity: game/Match.js mirrors the sim's modes ───
+
+/** Minimal live-dweeb double: what Match.update/_ko actually touch. */
+function liveDweeb(x = 0, z = 0, y = 0.5) {
+  return {
+    stocks: 3, kos: 0, falls: 0, damageDealt: 0, totalKos: 0, totalFalls: 0,
+    trickshots: 0, maxAir: 0, stylePeak: 0, koedBy: null, percent: 0,
+    eliminated: false, out: false, isPlayer: false, team: 0, hillScore: 0,
+    respawnTimer: 0, swimFlail: 0, flailUsed: true, lastHitBy: null, lastHitTime: -99,
+    _x: x, _z: z, _y: y,
+    getPosition() { return { x: this._x, y: this._y, z: this._z }; },
+    knockOut(t) { this.out = true; this.respawnTimer = t; },
+    eliminate() { this.eliminated = true; },
+    startFlail() {},
+  };
+}
+
+function liveMatch(mode, n = 2, events = {}) {
+  const m = new Match();
+  m.settings.mode = mode;
+  m.settings.roundsToWin = 1;
+  m.events = events;
+  const dweebs = Array.from({ length: n }, () => liveDweeb());
+  m.startMatch(dweebs);
+  m.beginRound();
+  m.phase = 'playing'; // skip the countdown for unit tests
+  return { m, dweebs };
+}
+
+describe('live Match.js mode parity', () => {
+  it('hill: the sole holder scores and takes the round at target', () => {
+    const seen = [];
+    const { m, dweebs } = liveMatch('hill', 2, {
+      onHillHold: h => seen.push(['hold', h]), onHillScore: (h, s) => seen.push(['score', s]),
+    });
+    dweebs[0]._x = 0; dweebs[0]._z = 0;
+    dweebs[1]._x = 12; dweebs[1]._z = 0;
+    for (let t = 0; t < 70 * 60; t++) m.update(1 / 60); // 60 s to target + 4 s round-end
+    expect(dweebs[0].hillScore).toBeGreaterThan(55);
+    expect(seen.some(s => s[0] === 'score' && s[1] >= 10)).toBe(true);
+    expect(m.phase).toBe('results');
+    expect(m.matchWinner).toBe(dweebs[0]);
+  });
+
+  it('hill: a KO costs no stock', () => {
+    const { m, dweebs } = liveMatch('hill');
+    m._ko(dweebs[0], 'side', { x: 40, y: 0, z: 0 });
+    expect(dweebs[0].stocks).toBe(3);
+    expect(dweebs[0].out).toBe(true);
+    expect(dweebs[0].eliminated).toBe(false);
+  });
+
+  it('teams: wiping a team ends the round', () => {
+    const { m, dweebs } = liveMatch('teams', 4);
+    dweebs[0].team = 0; dweebs[1].team = 1; dweebs[2].team = 0; dweebs[3].team = 1;
+    dweebs[1].eliminate();
+    dweebs[3].eliminate();
+    m.update(1 / 60);
+    expect(m.phase).toBe('roundEnd');
+  });
+
+  it('sudden: the arena is closing in from GO', () => {
+    const { m } = liveMatch('sudden');
+    expect(m.suddenDeath).toBe(true);
+    expect(m.blastSide).toBeLessThan(34);
+  });
+
+  it('brawl is untouched: a KO still costs a stock', () => {
+    const { m, dweebs } = liveMatch('brawl');
+    m._ko(dweebs[0], 'side', { x: 40, y: 0, z: 0 });
+    expect(dweebs[0].stocks).toBe(2);
+  });
 });

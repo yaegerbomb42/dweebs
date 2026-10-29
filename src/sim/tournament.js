@@ -79,7 +79,7 @@ export async function runTournament({
       });
       const winner = res.winner === 0 ? a : b;
       const loser = res.winner === 0 ? b : a;
-      matches.push({ a: a.name, b: b.name, winner: winner.name, ticks: res.ticks, kos: res.kos });
+      matches.push({ a: a.name, b: b.name, winner: winner.name, loser: loser.name, ticks: res.ticks, kos: res.kos });
       next.push(winner);
       matchIdx++;
     }

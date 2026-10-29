@@ -110,6 +110,7 @@ export class SimDweeb {
     this.team = 0;            // team battle: index into config.teams
     this.hillScore = 0;       // king of the hill: points this round
     this.lavaCd = 0;          // volcano: grace after a lava spit before a dip dunks
+    this.lavaDips = 0;        // consecutive lava spits: the third dip in a row dunks
     this._gravOverride = null; // set by preStep paths that need a non-arena gravity this tick
 
     // Previous tick's input, for edge detection.
@@ -166,6 +167,7 @@ export class SimDweeb {
   preStep(f, api) {
     this._gravOverride = null; // Sim applies arena gravity after preStep unless we overrode it
     this._arenaGrav = api?.arena?.profile?.gravity ?? 1;
+    if (this.grounded) this.lavaDips = 0; // back on stage: the lava forgives
     this.input.moveX = clamp(num(f?.moveX), -1, 1);
     this.input.moveZ = clamp(num(f?.moveZ), -1, 1);
     this.input.aimYaw = Number.isFinite(f?.aimYaw) ? f.aimYaw : null;
@@ -493,6 +495,7 @@ export class SimDweeb {
     this.grabbedBy = 0;
     this.swimFlail = 0;
     this.flailUsed = false;
+    this.lavaDips = 0;
     this.jumpsLeft = 2;
     this.specialFall = false;
     this.invuln = 0.75;
@@ -566,6 +569,7 @@ export class SimDweeb {
       megaT: this.megaT, zoomT: this.zoomT, bubbleT: this.bubbleT,
       style: this.style, styleTier: this.styleTier, styleTimer: this.styleTimer,
       stylePeak: this.stylePeak, team: this.team, hillScore: this.hillScore, lavaCd: this.lavaCd,
+      lavaDips: this.lavaDips,
       superArmed: this.superArmed, prev: { ...this.prev },
     };
   }
