@@ -1,4 +1,4 @@
-// EscapeSandbox.js — Dweebscape: a physical escape room with four ways out.
+// EscapeSandbox.js — Dweebscape: a physical escape room with five ways out.
 //
 // The vault sits on its own little island out on the lake (offset from the stadium so none of
 // the stadium hazards leak in). Every exit is a physics problem, not a key-and-lock:
@@ -8,6 +8,7 @@
 //                     the basket sinks and the door lifts in proportion — squeeze under early.
 //   🔋 CIRCUIT      — knock the power cell off its high ledge and carry it into the socket.
 //   🪜 ROOF RUNNER  — stack crates under the high shelf, climb up and dive through the vent.
+//   🛒 CART RAM     — load the mine cart, pull the brake chock, and ride it into the door.
 // The props are ordinary arena items, so grab / carry / throw / explode all work as usual.
 
 import * as THREE from 'three';
@@ -20,6 +21,7 @@ export const EXITS = [
   { id: 'pulley', icon: '⚖️', name: 'PULLEY MASTER', hint: 'The basket wants weight. Any weight.' },
   { id: 'circuit', icon: '🔋', name: 'CIRCUIT BREAKER', hint: 'The socket is hungry. Look up.' },
   { id: 'vent', icon: '🪜', name: 'ROOF RUNNER', hint: 'There’s a draft up high.' },
+  { id: 'cart', icon: '🛒', name: 'CART RAMMER', hint: 'That cart looks like it wants to go fast.' },
 ];
 const STORE_KEY = 'dweebs.escape.v1';
 
@@ -58,7 +60,11 @@ const CEILING_MIN = 3.6;
 const CEILING_SPEED = 0.16;
 const STEAM_JETS = [{ x: SOCKET.x, z: SOCKET.z }, { x: -9, z: -10 }, { x: 6, z: 8 }, { x: -6, z: 2 }];
 const GRADE_ORDER = { C: 1, B: 2, A: 3, S: 4 };
-const METHOD_BONUS = { demolition: 0.1, pulley: 0.05, circuit: 0.08, vent: 0.12 };
+const METHOD_BONUS = { demolition: 0.1, pulley: 0.05, circuit: 0.08, vent: 0.12, cart: 0.1 };
+const CART = {
+  x: 0, y: 0.55, z: 8, hx: 1.0, hy: 0.5, hz: 1.3,
+  mass: 6, railX: 1.3, maxAccel: 18, maxSpeed: 16, impactZ: -13.8, impactSpeed: 9,
+};
 
 function loadStore() {
   try { return { found: {}, best: null, ...JSON.parse(localStorage.getItem(STORE_KEY) || '{}') }; } catch { return { found: {}, best: null }; }
@@ -132,6 +138,17 @@ export class EscapeSandbox {
     this.droneScanT = 0;
     this.droneCooldown = DRONE.startGrace;
     this.droneNextBeep = 0;
+    // Mine cart state
+    this.cartBrake = true;
+    this.cartReleased = false;
+    this.cartPushTimer = 0;
+    this.cartBounceTimer = 0;
+    this.cartBouncePending = false;
+    this.cartRammed = false;
+    this.cartHintShown = false;
+    this.cartLoadMass = 0;
+    this.cartChock = null;
+    this.cartChockStart = null;
 
     this._buildRoom();
     this._buildDoor();
@@ -141,6 +158,7 @@ export class EscapeSandbox {
     this._spawnProps();
     this._buildDrone();
     this._buildHazards();
+    this._buildCart();
     this._buildHintPanel();
     this._buildLockdownClock();
   }
@@ -299,7 +317,7 @@ export class EscapeSandbox {
     const put = (key, x, y, z) => {
       try { const o = this.arena.spawnItem(key, this.w(x, y, z)); if (o) this.items.push(o); return o; } catch { return null; }
     };
-    for (const [x, z] of [[-4, 9], [-2.5, 10.5], [3, 8], [5, 11], [-6, -4], [0, 4]]) put('crate', x, 1, z);
+    for (const [x, z] of [[-4, 9], [-2.5, 10.5], [3, 8], [5, 11], [-6, -4], [-3.5, 4]]) put('crate', x, 1, z);
     put('table', 2, 1, -6);
     put('explosiveBarrel', -10, 1.2, 14);
     put('explosiveBarrel', 10.5, 1.2, -2);
@@ -380,6 +398,221 @@ export class EscapeSandbox {
     if (ceilingBody) { this.ceilingBody = ceilingBody; this.bodyIds.push(ceilingBody.id); }
   }
 
+  _buildCart() {
+    const C = CART;
+    const railMat = toonMat({ color: 0x475569 });
+    const sleeperMat = toonMat({ color: 0x3f2a1a });
+    const midZ = (9 + (-13)) / 2;
+    const halfLen = (9 - (-13)) / 2;
+
+    // Two low guide rails + visual sleepers running straight at the vault door.
+    for (const side of [-1, 1]) {
+      const x = side * C.railX;
+      this._box(x, 0.175, midZ, 0.08, 0.175, halfLen, railMat);
+      this._static(x, 0.175, midZ, 0.08, 0.175, halfLen, 'metal');
+    }
+    for (let z = 9; z >= -13; z -= 1.5) {
+      const s = this._box(0, 0.025, z, C.railX + 0.35, 0.025, 0.16, sleeperMat);
+      noOutline(s);
+    }
+
+    // Open-top tub: base + four thin walls + four wheels, all parented to a transform proxy.
+    const g = new THREE.Group();
+    this.group.add(g);
+    this.cartMesh = g;
+    const bodyMat = toonMat({ color: 0x8b5a2b });
+    const trimMat = toonMat({ color: 0x5b3a1a });
+    const wheelMat = toonMat({ color: 0x1f2937 });
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(C.hx * 2, 0.12, C.hz * 2), bodyMat);
+    base.position.y = -C.hy + 0.06;
+    base.castShadow = true; base.receiveShadow = true;
+    g.add(base);
+
+    const wallH = C.hy * 1.8;
+    const wallY = -C.hy + 0.12 + wallH / 2;
+    const addWall = (x, z, w, d) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, d), trimMat);
+      m.position.set(x, wallY, z);
+      m.castShadow = true; m.receiveShadow = true;
+      g.add(m);
+    };
+    addWall(-(C.hx - 0.06), 0, 0.12, C.hz * 2);
+    addWall(C.hx - 0.06, 0, 0.12, C.hz * 2);
+    addWall(0, -(C.hz - 0.06), C.hx * 2, 0.12);
+    addWall(0, C.hz - 0.06, C.hx * 2, 0.12);
+
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.16, 10), wheelMat);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(sx * (C.hx + 0.03), -C.hy + 0.22, sz * (C.hz - 0.35));
+      wheel.castShadow = true;
+      g.add(wheel);
+    }
+
+    const r = this.physicsWorld?.createDynamicBody(this.O.x + C.x, C.y, this.O.z + C.z, 'box',
+      { hx: C.hx, hy: C.hy, hz: C.hz }, { material: 'metal', mass: C.mass });
+    if (r) {
+      this.cartBody = r;
+      this.bodyIds.push(r.id);
+      // Near-frictionless so a loaded cart carries its speed all the way to the door.
+      try {
+        r.collider?.setFriction?.(0.02);
+        const rule = this.physicsWorld?.RAPIER?.CoefficientCombineRule?.Min;
+        if (rule != null) r.collider?.setFrictionCombineRule?.(rule);
+      } catch { /* older Rapier build */ }
+    }
+    this._syncCartMesh();
+    this._spawnChock();
+  }
+
+  _syncCartMesh() {
+    const g = this.cartMesh, r = this.cartBody;
+    if (!g || !r?.body) return;
+    const t = r.body.translation(), q = r.body.rotation();
+    g.position.set(t.x - this.O.x, t.y, t.z - this.O.z);
+    g.quaternion.set(q.x, q.y, q.z, q.w);
+  }
+
+  _spawnChock() {
+    this._removeChock();
+    if (!this.arena) return;
+    const pos = this.w(CART.x, 0.16, CART.z - CART.hz - 0.25);
+    try {
+      const o = this.arena.spawnItem('cinderBlock', pos);
+      if (!o) return;
+      this.items.push(o);
+      this.cartChock = o;
+      const p = o.getPosition?.();
+      this.cartChockStart = p ? { x: p.x, y: p.y, z: p.z } : { ...pos };
+    } catch { /* arena unavailable */ }
+  }
+
+  _removeChock() {
+    const c = this.cartChock;
+    this.cartChock = null;
+    this.cartChockStart = null;
+    if (c && this.arena?.objects?.includes(c)) {
+      try { this.arena.removeObject(c); } catch { /* already gone */ }
+    }
+    this.items = this.items.filter(o => o !== c);
+  }
+
+  _releaseCartBrake() {
+    if (!this.cartBrake) return;
+    this.cartBrake = false;
+    this.cartReleased = true;
+    this.cartPushTimer = 1.2;
+    this.hud?.announce?.("CHOCK'S OUT!", 'small', 1.4);
+  }
+
+  _resetCart() {
+    const body = this.cartBody?.body;
+    if (body) {
+      body.setTranslation({ x: this.O.x + CART.x, y: CART.y, z: this.O.z + CART.z }, true);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      body.setRotation?.({ x: 0, y: 0, z: 0, w: 1 }, true);
+    }
+    this.cartBrake = true;
+    this.cartReleased = false;
+    this.cartPushTimer = 0;
+    this.cartBounceTimer = 0;
+    this.cartBouncePending = false;
+    this.cartRammed = false;
+    this.cartLoadMass = 0;
+    this._spawnChock();
+    this._syncCartMesh();
+  }
+
+  _updateCart(dt, dweebs) {
+    const r = this.cartBody;
+    if (!r?.body) return;
+    const body = r.body;
+    const t = body.translation();
+
+    if (!this.cartHintShown) {
+      for (const d of dweebs) {
+        const p = d?.body ? d.getPosition?.() : null;
+        if (p && Math.hypot(p.x - t.x, p.z - t.z) < 4.5) {
+          this.cartHintShown = true;
+          this.hud?.announce?.('LOAD THE CART, PULL THE CHOCK', 'small', 2.2);
+          break;
+        }
+      }
+    }
+
+    const floorY = t.y - CART.hy;
+    const inTub = p => !!p
+      && Math.abs(p.x - t.x) < CART.hx
+      && Math.abs(p.z - t.z) < CART.hz
+      && p.y > floorY - 0.1
+      && p.y < t.y + 2;
+    let load = 0;
+    for (const d of dweebs) {
+      if (!d?.body || !d.active || d.grabbedBy) continue;
+      if (inTub(d.getPosition?.())) load += d.stats?.mass ?? 3;
+    }
+    for (const o of this.items) {
+      if (!o?.body || o === this.cartChock) continue;
+      if (inTub(o.getPosition?.())) load += o.def?.mass ?? 2;
+    }
+    this.cartLoadMass = load;
+
+    // The chock is the brake: once it is yanked, kicked or destroyed, the cart is free.
+    if (this.cartBrake && this.cartChock) {
+      const c = this.cartChock;
+      const alive = this.arena ? this.arena.objects.includes(c) : true;
+      const cp = alive ? c.getPosition?.() : null;
+      const s = this.cartChockStart;
+      if (!alive || !cp) this._releaseCartBrake();
+      else if (s && Math.hypot(cp.x - s.x, cp.y - s.y, cp.z - s.z) > 1.2) this._releaseCartBrake();
+    }
+
+    if (this.cartBounceTimer > 0) {
+      this.cartBounceTimer -= dt;
+      if (this.cartBounceTimer <= 0) { this._resetCart(); return; }
+    }
+
+    let v = body.linvel();
+    if (this.cartBrake) {
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    } else {
+      if (this.cartReleased && !this.cartRammed && this.cartBounceTimer <= 0) {
+        // The track slopes toward the door: the cart rolls up to a cruise speed set by its load
+        // (riders' controllers drag on the tub, so drive the speed rather than a one-shot kick).
+        const cruise = Math.min(CART.maxSpeed, 5 + this.cartLoadMass * 1.1);
+        v = body.linvel();
+        const vz = Math.max(-cruise, v.z - CART.maxAccel * dt);
+        body.setLinvel({ x: 0, y: v.y, z: Math.min(v.z, vz) }, true);
+        this.cartPushTimer = Math.max(0, this.cartPushTimer - dt);
+      } else {
+        body.setLinvel({ x: 0, y: v.y, z: v.z }, true);
+      }
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+    body.setRotation?.({ x: 0, y: 0, z: 0, w: 1 }, true);
+
+    const now = body.translation();
+    const front = (now.z - this.O.z) - CART.hz;
+    if (!this.cartRammed && this.cartBounceTimer <= 0 && !this.doorBlown && front <= CART.impactZ) {
+      const speed = Math.abs(body.linvel().z);
+      if (speed >= CART.impactSpeed) {
+        this.cartRammed = true;
+        this._blowDoor();
+        this.hud?.announce?.('CART RAMMED THE DOOR!', 'ko', 1.6);
+        this.fx?.particles?.confetti?.(this.w(0, 3.4, -16), 30);
+      } else {
+        this.cartBounceTimer = 3.0;
+        this.cartBouncePending = true;
+        body.applyImpulse({ x: (Math.random() - 0.5) * 4, y: 9, z: 3 }, true);
+        this.hud?.announce?.('TOO SLOW!', 'small', 1.4);
+      }
+    }
+    this._syncCartMesh();
+  }
+
   _buildHintPanel() {
     if (typeof document === 'undefined') return;
     const el = document.createElement('div');
@@ -437,7 +670,7 @@ export class EscapeSandbox {
     const hinge = Math.max(0, Math.round((this.hingeHp[0] + this.hingeHp[1]) / 2));
     this.hintEl.innerHTML = `<div style="font-size:15px;letter-spacing:.04em">🔐 ESCAPE THE VAULT · ${mm}:${ss}${best}</div>`
       + `<div style="margin:2px 0 4px;font-size:16px;color:${clockColor}">⏳ LOCKDOWN ${clock}</div>`
-      + `<div style="margin:2px 0 4px">Exits found: <b>${n}/4</b></div>${rows}`
+      + `<div style="margin:2px 0 4px">Exits found: <b>${n}/${EXITS.length}</b></div>${rows}`
       + `<div style="margin-top:4px;opacity:.8">⚖️ ${this.basketWeight.toFixed(1)}/${BASKET.target} · 🚪 hinges ${hinge}%${this.batterySocketed ? ' · 🔋 ON' : ''}</div>`;
   }
 
@@ -994,6 +1227,8 @@ export class EscapeSandbox {
     pos.needsUpdate = true;
 
     if (running) this._updateHazards(dt, dweebs);
+    // 🛒 Mine cart: brake, load, launch, impact
+    try { this._updateCart(dt, dweebs); } catch { /* never break the room loop */ }
 
     // 🏁 Freedom check + fall rescue
     for (const d of dweebs) {
@@ -1004,7 +1239,7 @@ export class EscapeSandbox {
       if (!d.isPlayer || this.escaped || this.lockdown) continue;
       if (lz < -16.8 && p.y > VENT.y0 - 1.2 && lx > VENT.x0 - 0.6 && lx < VENT.x1 + 0.6) this._win(d, 'vent');
       else if (lz < -17.6 && Math.abs(lx) < 15) {
-        this._win(d, this.doorBlown ? 'demolition' : this.batterySocketed ? 'circuit' : this.pulleyLift > 0.12 ? 'pulley' : null);
+        this._win(d, this.cartRammed ? 'cart' : this.doorBlown ? 'demolition' : this.batterySocketed ? 'circuit' : this.pulleyLift > 0.12 ? 'pulley' : null);
       }
     }
 
@@ -1065,7 +1300,7 @@ export class EscapeSandbox {
     this.escapeMethod = exit ? exit.name : 'GLITCH IN THE VAULT';
     const n = EXITS.filter(e => this.store.found[e.id]).length;
     const gradeBit = `GRADE ${grade}${newBestGrade ? ' · NEW BEST GRADE!' : prevGrade ? ` · best ${prevGrade}` : ''}`;
-    const sub = `${exit ? exit.icon + ' ' : ''}${this.escapeMethod} · ${secs.toFixed(1)}s${best ? ' · NEW BEST!' : ''}${fresh ? ` · NEW EXIT ${n}/4` : ''} · ${gradeBit}`;
+    const sub = `${exit ? exit.icon + ' ' : ''}${this.escapeMethod} · ${secs.toFixed(1)}s${best ? ' · NEW BEST!' : ''}${fresh ? ` · NEW EXIT ${n}/${EXITS.length}` : ''} · ${gradeBit}`;
     this.hud?.announce?.(`FREEDOM! <b>GRADE ${grade}</b><small>${sub}</small>`, 'go', 3.4);
     const p = d.getPosition();
     this.fx?.particles?.confetti(p, 90);
@@ -1076,6 +1311,7 @@ export class EscapeSandbox {
   }
 
   dispose() {
+    this._removeChock();
     this.scene.remove(this.group);
     for (const id of this.bodyIds) this.physicsWorld?.removeBody(id);
     this.bodyIds = [];
@@ -1091,6 +1327,8 @@ export class EscapeSandbox {
     this.droneConeMat = null;
     this.droneEyeMat = null;
     this.droneLight = null;
+    this.cartBody = null;
+    this.cartMesh = null;
     this.hintEl?.remove();
     this.hintEl = null;
     this.lockdownEl?.remove();
