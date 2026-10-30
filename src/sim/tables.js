@@ -19,6 +19,7 @@ export const DROP_ITEMS = [
   { key: 'giantRubberDuck', w: 6 }, { key: 'trafficCone', w: 6 }, { key: 'box', w: 6 }, { key: 'poolRing', w: 5 },
   { key: 'teddyBear', w: 5 }, { key: 'pinata', w: 5 }, { key: 'piggyBank', w: 4 }, { key: 'gumballMachine', w: 4 },
   { key: 'fishBowl', w: 4 }, { key: 'boombox', w: 4 }, { key: 'lamp', w: 4 }, { key: 'giantDie', w: 4 },
+  { key: 'whoopeeCushion', w: 4 },
   // mid: solid throwables and furniture
   { key: 'crate', w: 5 }, { key: 'tire', w: 4 }, { key: 'tv', w: 3 }, { key: 'ladder', w: 3 }, { key: 'mattress', w: 3 },
   { key: 'shoppingCart', w: 3 }, { key: 'couch', w: 2 }, { key: 'bowlingBall', w: 3 }, { key: 'spikyBall', w: 3 },
@@ -66,6 +67,7 @@ export const ITEM_DEFS = {
   fishBowl: { shape: 'sphere', r: 0.36, mass: 1.5, heft: 0.2 },
   boombox: { shape: 'box', hx: 0.36, hy: 0.24, hz: 0.18, mass: 1.7, heft: 0.21 },
   lamp: { shape: 'cylinder', r: 0.3, hy: 0.3, mass: 1.4, heft: 0.18 },
+  whoopeeCushion: { shape: 'box', hx: 0.26, hy: 0.07, hz: 0.26, mass: 0.25, heft: 0.06 },
   giantDie: { shape: 'box', hx: 0.34, hy: 0.34, hz: 0.34, mass: 2.2, heft: 0.28 },
   crate: { shape: 'box', hx: 0.42, hy: 0.42, hz: 0.42, mass: 3.0, heft: 0.35 },
   tire: { shape: 'cylinder', r: 0.42, hy: 0.2, mass: 2.4, heft: 0.3 },
