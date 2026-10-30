@@ -166,10 +166,12 @@ export class Controller {
     if (!this.live) {
       if (d.isCharging) { d.isCharging = false; d.charging = 0; }
       this.throwCharging = false;
+      d.throwCharging = false;
       d.fastFallInput = false;
       return;
     }
 
+    d.throwCharging = this.throwCharging; // lets CombatSystem see a held RMB wind-up (Giant Swing)
     d.jumpHeld = !!this.keys.Space;
     d.fastFallInput = !!(this.keys.KeyS || this.keys.ArrowDown);
     d.moveInput.copy(this._moveDir());
