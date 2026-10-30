@@ -424,6 +424,8 @@ function buildSettings() {
             ${seg('quality', 'Quality', [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']])}
             ${seg('reducedMotion', 'Reduced motion', [['false', 'Off'], ['true', 'On']])}
             <p class="app-note">Reduced motion turns off screen shake, hit-stop and confetti.</p>
+            ${seg('colorblind', 'Colorblind', [['off', 'Off'], ['deuteranopia', 'Deuteranopia'], ['protanopia', 'Protanopia'], ['tritanopia', 'Tritanopia']])}
+            <p class="app-note">Remaps colors to a colorblind-safe palette (Okabe-Ito). Adds shape badges to HUD cards.</p>
             <h3>Input</h3>
             ${seg('gamepad', 'Gamepad', [['false', 'Off'], ['true', 'On']])}
             ${seg('invertY', 'Invert look Y', [['false', 'Off'], ['true', 'On']])}

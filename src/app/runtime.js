@@ -29,6 +29,7 @@ export function applySettings() {
   window.__dweebsGovernor?.setAuto?.(s.quality === 'auto');
   applyQuality(g?.renderer, s.quality);
   applyReducedMotion(g, s.reducedMotion);
+  applyColorblind(g, s.colorblind);
   return s;
 }
 
@@ -50,21 +51,42 @@ function applyQuality(renderer, quality) {
  * shake input. Fx.js calls cam.shake() from many places, so clamping at the
  * controller is the one place that covers all of them without editing Fx.js
  * (which the Lead owns).
+ * Also sets fx.reducedMotion and cam.reducedMotion flags for Fx.js and
+ * CameraController to gate their own effects.
  */
 function applyReducedMotion(g, on) {
   const cam = g?.cam;
-  if (!cam) return;
-  if (on) {
-    if (!cam.__appShakePatched) {
-      cam.__appShakePatched = true;
-      cam.__appShake = cam.shake.bind(cam);
-      cam.shake = () => {};               // hard stop: no shake at all
+  const fx = g?.fx;
+  if (!cam && !fx) return;
+
+  if (fx) fx.reducedMotion = !!on;
+  if (cam) cam.reducedMotion = !!on;
+
+  if (cam) {
+    if (on) {
+      if (!cam.__appShakePatched) {
+        cam.__appShakePatched = true;
+        cam.__appShake = cam.shake.bind(cam);
+        cam.shake = () => {};               // hard stop: no shake at all
+      }
+    } else if (cam.__appShakePatched) {
+      cam.shake = cam.__appShake;
+      cam.__appShakePatched = false;
     }
-  } else if (cam.__appShakePatched) {
-    cam.shake = cam.__appShake;
-    cam.__appShakePatched = false;
   }
   document.documentElement.dataset.reducedMotion = on ? 'on' : 'off';
+}
+
+/**
+ * Apply colorblind mode to the live game.
+ * Sets the colorblind mode on Fx and Hud so they can remap colors.
+ */
+function applyColorblind(g, mode) {
+  const fx = g?.fx;
+  const hud = g?.hud;
+  if (fx) fx.colorblindMode = mode;
+  if (hud) hud.colorblindMode = mode;
+  document.documentElement.dataset.colorblind = mode;
 }
 
 /** Wire settings changes to the game, for as long as the app is alive. */

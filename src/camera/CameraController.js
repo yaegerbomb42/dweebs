@@ -68,6 +68,7 @@ export class CameraController {
     this.shakeIntensity = 0;
     this.shakeDecay = 8;
     this.shakeScale = 1;              // player setting: off / subtle / full
+    this.reducedMotion = false;       // accessibility: skip shake, zoom, FOV kicks, kill-cam
 
     // Collision probe for occlusion-aware camera
     this._collisionProbe = null;
@@ -213,6 +214,7 @@ export class CameraController {
   /** Add camera shake (scaled by the player's motion-comfort setting). */
   shake(intensity) {
     if (this.shakeScale <= 0) return;
+    if (this.reducedMotion) return;   // accessibility: no shake at all
     this.shakeIntensity = Math.max(this.shakeIntensity, intensity * this.shakeScale);
   }
 
@@ -224,6 +226,7 @@ export class CameraController {
   /** Ease toward a KO point (victim → blast direction) for `dur` seconds. */
   killCam(pos, dur = 0.75) {
     if (this.multiFraming) return;
+    if (this.reducedMotion) return;   // accessibility: no kill-cam
     if (!(dur > 0)) return; // guard: dur <= 0 would make kcT/kcDur divide by zero
     this.kc.set(pos.x, Math.max(pos.y, this.minCameraY + 1), pos.z);
     this.kcT = dur;
@@ -232,11 +235,13 @@ export class CameraController {
 
   /** Dynamic FOV impulse on high velocity dives or throws */
   kickFov(amount = 12) {
+    if (this.reducedMotion) return;   // accessibility: no FOV kick
     this.targetFov = Math.min(85, this.baseFov + amount);
   }
 
   /** Punch zoom on dramatic impacts */
   punchZoom(amount = 1.2) {
+    if (this.reducedMotion) return;   // accessibility: no punch zoom
     this.distance = Math.max(this.minDistance, this.distance - amount);
   }
 

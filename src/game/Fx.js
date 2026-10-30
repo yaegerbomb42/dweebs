@@ -28,6 +28,8 @@ export class Fx {
     this.arena = arena;
     this.hitStop = 0;
     this.player = null;
+    this.reducedMotion = false;     // accessibility: skip hit-stop, confetti, cam effects, flash, halve particles
+    this.colorblindMode = 'off';    // accessibility: colorblind mode for particle colors
     this.voices = new DweebVoices(audio);
   }
 
@@ -64,6 +66,8 @@ export class Fx {
     if (launch > 0.5) this.voice(victim, tier >= 2 ? 'yeet' : 'ow');
     const color = attacker ? attacker.color : 0xffffff;
 
+    const particleCount = this.reducedMotion ? 0.5 : 1;
+
     if (attacker?.isPlayer) this.tutorial?.note('hit');
 
     if (tier >= 1) this.reactions.emit('gasp', pos, { exclude: [victim, attacker], cheerFor: attacker, intensity: 0.6 + tier * 0.4 });
@@ -74,7 +78,9 @@ export class Fx {
     if (launch >= 14) this.audio.playLaunch(this._pan(pos));
 
     // Hit-stop, shake and squash come from the tier table (softened when the player isn't involved)
-    this.hitStop = Math.max(this.hitStop, J.hitStop[tier] * (involvesPlayer ? 1 : 0.6));
+    if (!this.reducedMotion) {
+      this.hitStop = Math.max(this.hitStop, J.hitStop[tier] * (involvesPlayer ? 1 : 0.6));
+    }
     this.cam.shake(J.shake[tier] * (involvesPlayer ? 1 : 0.4 + this._near(pos) * 0.6));
     this.haptics?.hit(tier, this._near(pos, 24), involvesPlayer);
     victim.landSquash = Math.max(victim.landSquash || 0, J.squash[tier]);
@@ -86,11 +92,16 @@ export class Fx {
 
     // Fireworks tier: confetti pop, colour ring, impact frame — a toybox gag, not gore
     if (tier === 3) {
-      this.particles.confetti(pos, 36);
+      if (!this.reducedMotion) this.particles.confetti(pos, 36);
       this.particles.ring(pos, { color, size: 4.5, life: 0.45 });
       this.particles.sparkle(pos, 0xffd23f);
       this.bursts.spawn(pos, 2.6, 0xffd23f);
-      if (involvesPlayer) { this.hud.flashImpact?.(); this.cam.punchZoom(0.8); }
+      if (involvesPlayer) {
+        if (!this.reducedMotion) {
+          this.hud.flashImpact?.();
+          this.cam.punchZoom(0.8);
+        }
+      }
       this.arena.excite(0.7);
     } else if (launch >= 14) this.arena.excite(0.4);
 
@@ -120,9 +131,10 @@ export class Fx {
   /** Heavy throws telegraph their heft: grunt popup, dust, a tiny freeze. */
   heavyThrow(d, obj, mass) {
     const pos = d.getPosition();
-    this.particles.dust({ x: pos.x, y: pos.y - 0.45, z: pos.z }, 8);
+    const particleCount = this.reducedMotion ? 0.5 : 1;
+    this.particles.dust({ x: pos.x, y: pos.y - 0.45, z: pos.z }, Math.round(8 * particleCount));
     this.cam.shake(d.isPlayer ? 0.18 : 0.06);
-    this.hitStop = Math.max(this.hitStop, d.isPlayer ? 0.04 : 0.02);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, d.isPlayer ? 0.04 : 0.02);
     if (d.isPlayer) this.haptics?.throwHeavy();
     if (d.isPlayer || this._near(pos, 12) > 0) this.hud.popup(mass >= 5 ? 'HNNNGH!' : 'HUP!', pos, 'small', d.color);
   }
@@ -138,12 +150,12 @@ export class Fx {
       this.hud.announce(`${title}<small>${detail}${Math.round(dist)}m</small>`, 'trick', 1.3);
       this.cam.kickFov(7);
     }
-    this.particles.confetti(pos, 24 + tags.length * 12);
+    if (!this.reducedMotion) this.particles.confetti(pos, 24 + tags.length * 12);
     this.particles.ring(pos, { color, size: 3 + tags.length, life: 0.45 });
     this.bursts.spawn(pos, 1.6 + tags.length * 0.4, color);
     this.audio.playTrickshot(tags.length, this._pan(pos));
     this.arena.excite(0.5 + tags.length * 0.25);
-    this.hitStop = Math.max(this.hitStop, 0.1 + tags.length * 0.02);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.1 + tags.length * 0.02);
     if (attacker) attacker.trickshots = (attacker.trickshots || 0) + 1;
   }
 
@@ -179,13 +191,13 @@ export class Fx {
 
   superYeet(victim, attacker) {
     const pos = victim.getPosition();
-    this.particles.confetti(pos, 80);
+    if (!this.reducedMotion) this.particles.confetti(pos, 80);
     this.particles.ring(pos, { color: attacker?.color ?? 0xffd23f, size: 6, life: 0.6 });
     this.bursts.spawn(pos, 3, attacker?.color ?? 0xffd23f);
     this.hud.popup('SUPER YEET!', { x: pos.x, y: pos.y + 1, z: pos.z }, 'big', attacker?.color ?? 0xffd23f);
     this.audio.playSuperYeet(this._pan(pos));
     this.audio.playTrickshot(3, this._pan(pos));
-    this.hitStop = Math.max(this.hitStop, 0.2);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.2);
     this.cam.shake(0.8);
     this.cam.kickFov(12);
     this.arena.excite(1);
@@ -198,27 +210,28 @@ export class Fx {
   rareHit(pos, key, launch) {
     const p = this.particles;
     const power = Math.min(1, launch / 20);
+    const particleCount = this.reducedMotion ? 0.5 : 1;
     if (key === 'giantHammer') {
       // cartoon clang: gold ring + sparks
       p.ring(pos, { color: 0xffd23f, size: 3.5 + power * 2, life: 0.5 });
       p.sparkle(pos, 0xffe9a8);
-      p.emit(pos, { count: 18, colors: [0xffd23f, 0xffffff], speed: 8, up: 4, size: 0.1, life: 0.5 });
+      p.emit(pos, { count: Math.round(18 * particleCount), colors: [0xffd23f, 0xffffff], speed: 8, up: 4, size: 0.1, life: 0.5 });
       this.bursts.spawn(pos, 1.6, 0xffd23f);
       this.audio.playClang?.(this._pan(pos));
     } else if (key === 'anvil') {
       // heavy blacksmith thud: iron ring + dust
       p.ring(pos, { color: 0x9aa4b5, size: 3 + power * 2, life: 0.45 });
-      p.dust(pos, 10);
-      p.emit(pos, { count: 14, colors: [0x9aa4b5, 0x5a626e], speed: 5, up: 2, size: 0.14, life: 0.6 });
+      p.dust(pos, Math.round(10 * particleCount));
+      p.emit(pos, { count: Math.round(14 * particleCount), colors: [0x9aa4b5, 0x5a626e], speed: 5, up: 2, size: 0.14, life: 0.6 });
       this.bursts.spawn(pos, 2, 0x9aa4b5);
       this.audio.playThud?.(this._pan(pos));
     } else {
       // fallback for future rares: a gold confetti pop
-      p.confetti(pos, 30);
+      if (!this.reducedMotion) p.confetti(pos, 30);
       p.ring(pos, { color: 0xffd23f, size: 3, life: 0.4 });
     }
     this.cam.shake(0.15 + power * 0.35);
-    this.hitStop = Math.max(this.hitStop, 0.05 + power * 0.06);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.05 + power * 0.06);
     this.haptics?.hit(2, this._near(pos, 24), false);
   }
 
@@ -488,7 +501,7 @@ export class Fx {
     this.audio.playExplosion(this._pan(pos));
     this.cam.shake(0.3 + this._near(pos, 20) * 0.9);
     this.haptics?.explosion(this._near(pos, 26));
-    this.hitStop = Math.max(this.hitStop, 0.08);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.08);
     this.arena.excite(0.6);
   }
 
@@ -498,41 +511,42 @@ export class Fx {
     const color = def.color ?? 0xc4a06a;
     this.reactions.emit('wince', pos, { exclude: obj.thrownBy });
     const p = this.particles;
+    const particleCount = this.reducedMotion ? 0.5 : 1;
     let word = def.breakWord ?? 'CRUNCH!';
     switch (def.material) {
       case 'glass':
-        p.emit(pos, { count: 24, colors: [0xffffff, 0xbff4ff, color], speed: 7, up: 3, size: 0.09, life: 0.6 });
+        p.emit(pos, { count: Math.round(24 * particleCount), colors: [0xffffff, 0xbff4ff, color], speed: 7, up: 3, size: 0.09, life: 0.6 });
         p.sparkle(pos, 0xbff4ff);
         word = def.breakWord ?? 'SHATTER!';
         break;
       case 'ceramic':
-        p.emit(pos, { count: 16, colors: [color, 0xf3e6cf], speed: 5, up: 3, size: 0.12, life: 0.6 });
-        p.dust(pos, 5);
+        p.emit(pos, { count: Math.round(16 * particleCount), colors: [color, 0xf3e6cf], speed: 5, up: 3, size: 0.12, life: 0.6 });
+        p.dust(pos, Math.round(5 * particleCount));
         word = def.breakWord ?? 'CRASH!';
         break;
       case 'fruit':
-        p.emit(pos, { count: 30, colors: def.breakColors ?? [0xff4d6a, 0xff8a9a, 0xffd0d8, 0x2f8f3a], speed: 6, up: 4, size: 0.15, life: 0.7, gravity: -18 });
+        p.emit(pos, { count: Math.round(30 * particleCount), colors: def.breakColors ?? [0xff4d6a, 0xff8a9a, 0xffd0d8, 0x2f8f3a], speed: 6, up: 4, size: 0.15, life: 0.7, gravity: -18 });
         word = def.breakWord ?? 'SPLAT!';
         break;
       case 'cardboard':
-        p.emit(pos, { count: 14, colors: [color, 0xefdfb0], speed: 4, up: 3, size: 0.2, life: 0.8, gravity: -6 });
+        p.emit(pos, { count: Math.round(14 * particleCount), colors: [color, 0xefdfb0], speed: 4, up: 3, size: 0.2, life: 0.8, gravity: -6 });
         word = def.breakWord ?? 'RIIP!';
         break;
       case 'metal':
-        p.emit(pos, { count: 16, colors: [0xffd23f, 0xffffff, color], speed: 8, up: 3, size: 0.08, life: 0.35, gravity: -4 });
+        p.emit(pos, { count: Math.round(16 * particleCount), colors: [0xffd23f, 0xffffff, color], speed: 8, up: 3, size: 0.08, life: 0.35, gravity: -4 });
         break;
       default:
-        p.emit(pos, { count: 16, color, speed: 5, up: 3, size: 0.18, life: 0.7 });
-        p.dust(pos, 6);
+        p.emit(pos, { count: Math.round(16 * particleCount), color, speed: 5, up: 3, size: 0.18, life: 0.7 });
+        p.dust(pos, Math.round(6 * particleCount));
     }
     // Treasure-filled props (piñata, gumballs, piggy bank) spray their contents
-    if (def.breakColors && def.material !== 'fruit') p.emit(pos, { count: 36, colors: def.breakColors, speed: 7, up: 6, size: 0.13, life: 1.1, gravity: -16 });
+    if (def.breakColors && def.material !== 'fruit') p.emit(pos, { count: Math.round(36 * particleCount), colors: def.breakColors, speed: 7, up: 6, size: 0.13, life: 1.1, gravity: -16 });
     const splat = def.splat ?? (def.material === 'fruit' ? 0xff4d6a : null);
     if (splat != null) this.decals.spawnOnGround('splat', pos, 2, splat, 0.9);
     this.bursts.spawn(pos, 1.8, 0xffffff);
     this.particles.ring(pos, { color, size: 2.2, life: 0.3 });
     this.cam.shake(0.12 + this._near(pos, 14) * 0.2);
-    this.hitStop = Math.max(this.hitStop, 0.03);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.03);
     if (this._near(pos, 22) > 0) this.hud.popup(word, pos, 'big', color);
     this.audio.playBreak(def.material, this._pan(pos));
   }
@@ -563,7 +577,7 @@ export class Fx {
     this.particles.ring(pos, { color: 0xffd23f, size: 5, life: 0.42 });
     this.bursts.spawn(pos, 2.2, 0xffd23f);
     this.particles.sparkle(pos, 0xffffff);
-    this.hitStop = Math.max(this.hitStop, J.hitStop[2]);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, J.hitStop[2]);
     this.cam.shake(J.shake[2] * 0.7);
     if (d.isPlayer || attacker?.isPlayer) this.cam.punchZoom(0.4);
     this.audio.playParry(this._pan(pos));
@@ -581,13 +595,14 @@ export class Fx {
 
   /** Ground-slam landing: a fat dust ring, radial sparks and a bassy thud. */
   slam(pos, color, hit, involved = false) {
+    const particleCount = this.reducedMotion ? 0.5 : 1;
     this.particles.ring(pos, { color, size: 7, life: 0.4 });
     this.particles.ring({ x: pos.x, y: pos.y + 0.05, z: pos.z }, { color: 0xffffff, size: 4.5, life: 0.28 });
-    this.particles.dust({ x: pos.x, y: pos.y - 0.3, z: pos.z }, 18);
-    this.particles.emit(pos, { count: 26, colors: [color, 0xffd23f, 0xffffff], speed: 8, up: 5, size: 0.14, life: 0.6, gravity: -12 });
+    this.particles.dust({ x: pos.x, y: pos.y - 0.3, z: pos.z }, Math.round(18 * particleCount));
+    this.particles.emit(pos, { count: Math.round(26 * particleCount), colors: [color, 0xffd23f, 0xffffff], speed: 8, up: 5, size: 0.14, life: 0.6, gravity: -12 });
     this.bursts.spawn(pos, 2.6, color);
     this.audio.playSlam(this._pan(pos));
-    this.hitStop = Math.max(this.hitStop, BALANCE.air.slamHitStop);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, BALANCE.air.slamHitStop);
     this.cam.shake(0.3 + this._near(pos, 22) * 0.7);
     this.haptics?.slam(!!involved, this._near(pos, 24));
     this.arena.excite(0.6);
@@ -624,14 +639,15 @@ export class Fx {
   /** Deep-freeze power-up: a big frost nova and every rival locked in place. */
   freezeBurst(d, radius, n) {
     const pos = d.getPosition();
+    const particleCount = this.reducedMotion ? 0.5 : 1;
     this.particles.ring(pos, { color: 0x8fe9ff, size: radius * 2, life: 0.6 });
     this.particles.ring(pos, { color: 0xffffff, size: radius * 1.2, life: 0.4 });
-    this.particles.emit(pos, { count: 46, colors: [0xbff4ff, 0xffffff, 0x8fe9ff], speed: radius * 1.3, up: 3, size: 0.16, life: 0.85, gravity: 0 });
+    this.particles.emit(pos, { count: Math.round(46 * particleCount), colors: [0xbff4ff, 0xffffff, 0x8fe9ff], speed: radius * 1.3, up: 3, size: 0.16, life: 0.85, gravity: 0 });
     this.bursts.spawn(pos, 2.4, 0x8fe9ff);
     this.audio.playFreeze(this._pan(pos), true);
     this.cam.shake(0.3 + this._near(pos, 20) * 0.4);
     this.haptics?.freeze(true);
-    this.hitStop = Math.max(this.hitStop, 0.06);
+    if (!this.reducedMotion) this.hitStop = Math.max(this.hitStop, 0.06);
     this.arena.excite(0.5);
     if (n) this.hud.popup('DEEP FREEZE!', pos, 'big', 0x8fe9ff);
   }
@@ -766,7 +782,8 @@ export class Fx {
       this.bursts.spawn(pos, Math.min(1.7, 0.35 + speed * 0.045), 0xffffff);
       if (speed > 13 && src.mass >= 2 && other.kind === 'stage') this.decals.spawnOnGround('crack', pos, 1.2 + src.mass * 0.25, 0x1b1030, 0.5, 7);
     }
-    if (speed > 9) this.particles.dust({ x: pos.x, y: pos.y - 0.2, z: pos.z }, Math.min(8, Math.floor(speed / 3)));
+    const particleCount = this.reducedMotion ? 0.5 : 1;
+    if (speed > 9) this.particles.dust({ x: pos.x, y: pos.y - 0.2, z: pos.z }, Math.round(Math.min(8, Math.floor(speed / 3)) * particleCount));
 
     // Physical crashes carry weight too: a small camera jolt and rumble when they're close.
     const near = this._near(pos, 26);
@@ -804,7 +821,8 @@ export class Fx {
       // Water entry reads: double plume, foam ring, white spray
       this.particles.splash(_v);
       this.particles.ring(_v, { color: 0xffffff, size: 3.2, life: 0.5 });
-      this.particles.emit(_v, { count: 18, colors: [0xffffff, 0x8fe9ff, 0x6ff0ee], speed: 5, up: 9, size: 0.2, life: 0.9, gravity: -20 });
+      const particleCount = this.reducedMotion ? 0.5 : 1;
+      this.particles.emit(_v, { count: Math.round(18 * particleCount), colors: [0xffffff, 0x8fe9ff, 0x6ff0ee], speed: 5, up: 9, size: 0.2, life: 0.9, gravity: -20 });
       this.bursts.spawn(_v, 1.6, 0x8fe9ff);
     }
     this.audio.playSplash(this._pan(pos));
@@ -832,7 +850,7 @@ export class Fx {
     if (credited && credited !== victim) this.voice(credited, 'cheer', 0.35);
     if (kind === 'splash') this.splash(pos);
     else {
-      this.particles.confetti(pos, 50);
+      if (!this.reducedMotion) this.particles.confetti(pos, 50);
       this.audio.playLaunch(this._pan(pos));
     }
     this.audio.playKO();
@@ -841,7 +859,7 @@ export class Fx {
     const sd = suddenDeath ? 1.6 : 1;
     this.cam.shake((victim.isPlayer ? 0.7 : 0.35) * sd);
     this.haptics?.ko(!!(victim.isPlayer || credited?.isPlayer), suddenDeath);
-    if (victim.isPlayer || credited?.isPlayer || suddenDeath) this.hud.flashImpact?.();
+    if (!this.reducedMotion && (victim.isPlayer || credited?.isPlayer || suddenDeath)) this.hud.flashImpact?.();
   }
 
   respawn(d) {
@@ -871,8 +889,9 @@ export class Fx {
     this.audio.playVictory();
     this.audio.playBanner(true);
     this.audio.playCheer(1);
+    const particleCount = this.reducedMotion ? 0.5 : 1;
     this.particles.emit({ x: pos.x, y: pos.y + 3, z: pos.z },
-      { count: 60, colors: [0xffd23f, 0xff6fb5, 0x8fe9ff, 0x48bb78], speed: 8, up: 4, size: 0.16, life: 1.6, gravity: -6 });
+      { count: Math.round(60 * particleCount), colors: [0xffd23f, 0xff6fb5, 0x8fe9ff, 0x48bb78], speed: 8, up: 4, size: 0.16, life: 1.6, gravity: -6 });
     this.hud.popup('CHAMPION!', { x: pos.x, y: pos.y + 2.2, z: pos.z }, 'big', 0xffd23f);
   }
 
@@ -880,7 +899,8 @@ export class Fx {
   lightningStrike(x, z) {
     const pos = { x, y: 0.4, z };
     this.particles.bigHit(pos, 0xbfe9ff);
-    this.particles.emit(pos, { count: 26, colors: [0xbfe9ff, 0xffffff, 0x7c6cf0], speed: 9, up: 10, size: 0.14, life: 0.5, gravity: -20 });
+    const particleCount = this.reducedMotion ? 0.5 : 1;
+    this.particles.emit(pos, { count: Math.round(26 * particleCount), colors: [0xbfe9ff, 0xffffff, 0x7c6cf0], speed: 9, up: 10, size: 0.14, life: 0.5, gravity: -20 });
     this.audio.playExplosion(this._pan(pos));
     this.cam.shake(0.5);
   }

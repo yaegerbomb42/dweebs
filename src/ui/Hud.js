@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { STYLE } from '../combat/CombatSystem.js';
 import { statsFor } from '../game/Balance.js';
+import { accessColor, getShapeBadge } from '../render/ColorAccess.js';
 
 const _p = new THREE.Vector3();
 const PCT_PUNCH = [50, 100, 150]; // the damage number punch-scales as it crosses these
@@ -50,6 +51,7 @@ export class Hud {
     this.cards = new Map();
     this.plates = new Map();
     this.announceTimer = 0;
+    this.colorblindMode = 'off';
   }
 
   setup(dweebs) {
@@ -59,13 +61,18 @@ export class Hud {
     this.platesEl.innerHTML = '';
     this.cards.clear();
     this.plates.clear();
-    for (const d of dweebs) {
+    for (let i = 0; i < dweebs.length; i++) {
+      const d = dweebs[i];
+      const displayColor = this.colorblindMode !== 'off' ? accessColor(d.color, this.colorblindMode) : d.color;
       const card = document.createElement('div');
       card.className = 'card' + (d.isPlayer ? ' you' : '');
-      card.style.setProperty('--c', hex(d.color));
+      card.style.setProperty('--c', hex(displayColor));
+      const shapeBadge = getShapeBadge(i);
+      const nameHtml = d.isPlayer ? 'YOU' : `${d.name} <span class="shape-badge" aria-hidden="true">${shapeBadge}</span>`;
       card.innerHTML = `
         <div class="portrait"><span class="shape ${d.type}"><i class="brow"></i><i class="mouth"></i></span></div>
         <div class="card-body">
+          <div class="card-name">${nameHtml}</div>
           <div class="card-name">${d.isPlayer ? 'YOU' : d.name}</div>
           <div class="sig"></div>
           <div class="pct"><span class="pct-num">0</span><span class="pct-sign">%</span></div>
@@ -85,8 +92,9 @@ export class Hud {
 
       const plate = document.createElement('div');
       plate.className = 'plate' + (d.isPlayer ? ' you' : '');
-      plate.style.setProperty('--c', hex(d.color));
-      plate.textContent = d.isPlayer ? 'YOU' : d.name;
+      plate.style.setProperty('--c', hex(displayColor));
+      const plateName = d.isPlayer ? 'YOU' : `${d.name} ${shapeBadge}`;
+      plate.textContent = plateName;
       this.platesEl.appendChild(plate);
       this.plates.set(d, plate);
     }
