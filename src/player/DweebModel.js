@@ -774,6 +774,7 @@ export function animateDweebFace(d, dt, time) {
 
   if (d.kos > d._seenKOs) { d._seenKOs = d.kos; d.gloatTimer = 2.5; }
   d.gloatTimer -= dt;
+  if (d.emoteT > 0 && d.emoteMood) { d.idleMood = d.emoteMood; d.moodTimer = Math.max(d.moodTimer, 0.3); } // emote face
   d.moodTimer -= dt;
   if (d.moodTimer < 0) {
     d.moodTimer = 2.5 + Math.random() * 5;

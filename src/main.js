@@ -19,6 +19,7 @@ import { CombatSystem, DEFAULT_LOFT } from './combat/CombatSystem.js';
 import { Bot } from './ai/Bot.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { Match, Phase } from './game/Match.js';
+import { EmoteSystem } from './game/Emotes.js';
 import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
 import { ModeDirector } from './game/ModeDirector.js';
@@ -104,6 +105,7 @@ let haptics;
 let physics, arena, sky, water, particles, audio, cam, combat, match, fx, hud, deathCinema = null;
 let trails, bursts, decals, aimGuide;
 let dweebs = [], bots = [], player = null, controller = null;
+let emotes = null; // 1–6 quick emotes (game/Emotes.js)
 let paused = false;
 let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
@@ -195,6 +197,7 @@ async function init() {
   combat.status = new StatusSystem({ particles, decals, hud, audio });
   combat.status.combat = combat;
   match = new Match();
+  emotes = new EmoteSystem({ hud, combat, arena, audio });
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
 
@@ -1060,6 +1063,7 @@ function startRound() {
   } catch (e) { console.error('[Mutator] startRound error:', e); }
   hud.setRound(match.round, winsHtml());
   controller.enabled = false;
+  if (match.round === 1 && !currentMeadowlands) hud.feed('<b>EMOTES</b> · 1 Taunt · 2 Cheer · 3 Dance · 4 Sweat · 5 GG · 6 Flex');
   cam.targetDistance = 9;
   cam.pitch = -0.42;
   const pp = player.getPosition();
@@ -1109,6 +1113,7 @@ const matchEvents = {
     audio.musicIntense = true;
   },
   onKO(d, credited, kind, pos) {
+    emotes?.onKO(d, credited);
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
     comboDirector?.registerKO?.(d, credited, performance.now() / 1000);
@@ -1409,6 +1414,7 @@ function loop() {
     if (match.running) {
       try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
       for (const b of bots) b.update(dt, dweebs);
+      if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled && !currentMeadowlands /* adventure uses 1–6 for camera/tools */; emotes.update(dt); }
       for (const b of builderBots) b.update(dt, dweebs);
       try { mutatorDirector.update(dt, mutatorCtx()); } catch (e) { console.error('[Mutator] update error:', e); }
     }
