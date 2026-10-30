@@ -41,9 +41,9 @@ import { saveVillage, loadVillage, applySave } from './adventure/persistence.js'
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
-import { BuildADweebLab } from './builder/BuildADweebLab.js';
+import { BuildADweebLab, mutateRandomPart, MUTATION_INTERVAL } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
-import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebModel.js';
+import { buildCustomDweebModel, ARCHETYPE_PRESETS, applyBuildToFighter } from './builder/CustomDweebModel.js';
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
 import { defaultUrl } from './net/NetClient.js';
@@ -53,6 +53,7 @@ const hex = c => '#' + c.toString(16).padStart(6, '0');
 
 let lastBuilderPlayerConfig = null;
 let lastBuilderOppType = 'random';
+let lastBuilderRoulette = false;
 
 let currentMeadowlands = null;
 let colony = null;
@@ -103,6 +104,12 @@ let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
 let rematch = null;
+// Mutation Roulette state
+let rouletteMode = false;
+let roulettePlayerConfig = null;
+let rouletteOppConfig = null;
+let rouletteTimer = 0;
+let rouletteRebuilding = false;
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
 
@@ -399,7 +406,7 @@ function setupMenu() {
     audio.playUIClick();
     $('results-screen')?.classList.add('hidden');
     if (lastBuilderPlayerConfig) {
-      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType);
+      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType, lastBuilderRoulette);
     } else {
       startBuildLab();
     }
@@ -484,6 +491,12 @@ function toMenu() {
   arena.hazardsActive = false;
   controller && (controller.enabled = false);
   resetSuddenDeathFx();
+  // Reset Mutation Roulette state
+  rouletteMode = false;
+  roulettePlayerConfig = null;
+  rouletteOppConfig = null;
+  rouletteTimer = 0;
+  rouletteRebuilding = false;
   cam.unlock();
   audio.stopMusic();
   audio.setCharge(0);
@@ -714,6 +727,10 @@ function startBuildLab() {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
     },
+    onLaunchMutationArena: oppType => {
+      if (!currentBuildLab) return;
+      launchMutationArena(currentBuildLab.config, oppType);
+    },
   });
 
   currentBuildHud.syncForm(currentBuildLab.config);
@@ -738,9 +755,10 @@ function exitBuildLab() {
   setTimeout(() => { location.hash = '#/'; }, 0);
 }
 
-function launchBuilderArena(playerConfig, oppType = 'random') {
+function launchBuilderArena(playerConfig, oppType = 'random', roulette = false) {
   lastBuilderPlayerConfig = playerConfig;
   lastBuilderOppType = oppType;
+  lastBuilderRoulette = roulette;
 
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
@@ -756,23 +774,35 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   spectateTarget = null;
   currentMode = 'build_arena';
 
+  // Mutation Roulette setup
+  rouletteMode = roulette;
+  rouletteTimer = 0;
+  rouletteRebuilding = false;
+  if (roulette) {
+    roulettePlayerConfig = JSON.parse(JSON.stringify(playerConfig));
+    rouletteOppConfig = JSON.parse(JSON.stringify(generateOpponentConfig(playerConfig, oppType)));
+  } else {
+    roulettePlayerConfig = null;
+    rouletteOppConfig = null;
+  }
+
   for (const id of ['game-switcher-modal', 'pause-screen', 'main-menu', 'results-screen']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden');
 
   const spawn0 = arena.getSpawnPoint(0, 2);
   player = new Dweeb(scene, physics, {
     isPlayer: true,
-    name: playerConfig.name || 'Your Dweeb',
-    type: playerConfig.shape || 'blob',
+    name: roulette ? roulettePlayerConfig.name : (playerConfig.name || 'Your Dweeb'),
+    type: roulette ? roulettePlayerConfig.shape : (playerConfig.shape || 'blob'),
     color: 0xffffff,
     index: 0,
     position: spawn0,
   });
   dweebs.push(player);
   wireDweeb(player);
-  applyCustomDweebToBrawler(player, playerConfig);
+  applyCustomDweebToBrawler(player, roulette ? roulettePlayerConfig : playerConfig);
 
-  const oppConfig = generateOpponentConfig(playerConfig, oppType);
+  const oppConfig = roulette ? rouletteOppConfig : generateOpponentConfig(playerConfig, oppType);
   const spawn1 = arena.getSpawnPoint(1, 2);
   const oppDweeb = new Dweeb(scene, physics, {
     isPlayer: false,
@@ -787,7 +817,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   applyCustomDweebToBrawler(oppDweeb, oppConfig);
 
   builderBots = [
-    new BuilderBot(player, arena, combat, playerConfig.dna),
+    new BuilderBot(player, arena, combat, (roulette ? roulettePlayerConfig : playerConfig).dna),
     new BuilderBot(oppDweeb, arena, combat, oppConfig.dna),
   ];
 
@@ -804,14 +834,102 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
 
   cam.unlock();
   cam.snapTo(0, 2, 9);
-  hud.setSuddenDeath('🤖 100% AUTONOMOUS AI ARENA DUEL 🤖');
+  hud.setSuddenDeath(roulette ? '🎲 MUTATION ROULETTE! PARTS CHANGE EVERY 10s! 🎲' : '🤖 100% AUTONOMOUS AI ARENA DUEL 🤖');
   setTimeout(() => { if (match.running) hud.setSuddenDeath(''); }, 3500);
 
-  showSpectatorOverlay(playerConfig, oppConfig);
+  showSpectatorOverlay(roulette ? roulettePlayerConfig : playerConfig, oppConfig);
 
   audio.init();
   audio.resume();
   applyAudioSettings();
+}
+
+/** Launch the builder arena in Mutation Roulette mode. */
+function launchMutationArena(playerConfig, oppType = 'random') {
+  launchBuilderArena(playerConfig, oppType, true);
+}
+
+/**
+ * Mutate a random part on both fighters in Mutation Roulette mode.
+ * Uses applyBuildToFighter to rebuild the model, collider, and appendage gameplay.
+ */
+function mutateRouletteFighters() {
+  if (!rouletteMode || dweebs.length !== 2 || rouletteRebuilding) return;
+  if (!match.running || match.phase === Phase.RESULTS) return;
+
+  rouletteRebuilding = true;
+
+  // Mutate player config
+  const playerMutation = mutateRandomPart(roulettePlayerConfig);
+  roulettePlayerConfig = playerMutation.config;
+  const playerField = playerMutation.field;
+
+  // Mutate opponent config
+  const oppMutation = mutateRandomPart(rouletteOppConfig);
+  rouletteOppConfig = oppMutation.config;
+  const oppField = oppMutation.field;
+
+  // Rebuild both fighters using the new configs
+  const playerDweeb = dweebs[0];
+  const oppDweeb = dweebs[1];
+
+  // Apply mutations to live fighters
+  if (playerDweeb && playerDweeb.active) {
+    applyBuildToFighter(playerDweeb, roulettePlayerConfig, () => ({
+      rivals: dweebs.filter(d => d !== playerDweeb && d.active),
+      objects: arena.objects || [],
+    }));
+  }
+  if (oppDweeb && oppDweeb.active) {
+    applyBuildToFighter(oppDweeb, rouletteOppConfig, () => ({
+      rivals: dweebs.filter(d => d !== oppDweeb && d.active),
+      objects: arena.objects || [],
+    }));
+  }
+
+  // Update builder bots with new DNA
+  if (builderBots.length === 2) {
+    Object.assign(builderBots[0].dna, roulettePlayerConfig.dna);
+    Object.assign(builderBots[1].dna, rouletteOppConfig.dna);
+  }
+
+  // Show mutation banner
+  const fieldLabels = {
+    shape: 'body shape',
+    appendage: 'appendage',
+    feet: 'feet',
+    eyeCount: 'eye count',
+    eyeSize: 'eye size',
+    eyeSpacing: 'eye spacing',
+    brows: 'eyebrows',
+    mouth: 'mouth',
+    primaryColor: 'primary color',
+    accentColor: 'accent color',
+    width: 'width',
+    height: 'height',
+    depth: 'depth',
+    speed: 'speed',
+    mass: 'mass',
+    jump: 'jump power',
+    armor: 'armor',
+    confidence: 'confidence',
+    aimAccuracy: 'aim',
+    scavenge: 'scavenge',
+    agility: 'agility',
+  };
+  const playerLabel = fieldLabels[playerField] || playerField;
+  const oppLabel = fieldLabels[oppField] || oppField;
+  const playerName = playerDweeb?.name || 'Your Dweeb';
+  const oppName = oppDweeb?.name || 'Rival Bot';
+  hud.announce(`MUTATION! ${playerName.toUpperCase()} grew ${playerLabel}!`, 'danger', 1.5);
+  hud.feed(`<b>${playerName}</b> mutated: <b>${playerLabel}</b> · <b>${oppName}</b> mutated: <b>${oppLabel}</b>`, 'style');
+  hud.popup('MUTATION!', { x: 0, y: 2, z: 0 }, 'big', 0xffd23f);
+  audio.playCheer(0.6);
+  audio.playTech(0);
+  fx.crowdRoar(1, 'mutation');
+
+  // Brief rebuild guard
+  setTimeout(() => { rouletteRebuilding = false; }, 500);
 }
 
 function startMatch() {
@@ -1156,6 +1274,12 @@ const matchEvents = {
     arena.hazardsActive = false;
     spectateTarget = null;
     hud.setSpectator('');
+    // Reset Mutation Roulette state on match end
+    rouletteMode = false;
+    roulettePlayerConfig = null;
+    rouletteOppConfig = null;
+    rouletteTimer = 0;
+    rouletteRebuilding = false;
     const you = winner.isPlayer;
     if (currentMode === 'build_arena') {
       $('result-title').textContent = `${winner.name.toUpperCase()} WINS!`;
@@ -1386,6 +1510,16 @@ function loop() {
     combat.update(dt, match.time);
     updateDrops(dt);
     match.update(dt);
+
+    // Mutation Roulette: mutate a random part on both fighters every ~10s
+    if (rouletteMode && match.running && match.phase !== Phase.RESULTS && !rouletteRebuilding && dweebs.length === 2) {
+      rouletteTimer += dt;
+      if (rouletteTimer >= MUTATION_INTERVAL) {
+        rouletteTimer = 0;
+        mutateRouletteFighters();
+      }
+    }
+
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
       for (const d of dweebs) deathCinema.recordFrame(d, match.time);
     }
