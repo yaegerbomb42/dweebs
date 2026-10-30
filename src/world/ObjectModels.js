@@ -856,15 +856,6 @@ const BUILDERS = {
     k.sticker(S.textSticker('HUNNY', { bg: '#f3e6cf', w: 192, h: 96 }), 0.24, 0.12, { p: [0, -0.04, 0.2] });
   },
 
-  snowGlobe(k) {
-    k.add(Cyl(0.2, 0.24, 0.12, 12), 0xb56cff, { p: [0, -0.22, 0] });
-    k.add(Ico(0.24, 2), 0xcff6ff, { p: [0, 0.05, 0] }, { transparent: true, opacity: 0.35 });
-    k.add(Cone(0.09, 0.2, 6), 0x2f8f3a, { p: [0, 0.0, 0] }); // tiny tree
-    k.add(Ico(0.05, 1), 0xffffff, { p: [0.08, -0.08, 0.05] }); // snowman
-    k.add(Ico(0.035, 1), 0xffffff, { p: [0.08, -0.01, 0.05] });
-    for (let i = 0; i < 9; i++) k.add(Ico(0.012, 0), 0xffffff, { p: [Math.cos(i * 1.9) * 0.15, 0.05 + Math.sin(i * 3.1) * 0.12, Math.sin(i * 1.9) * 0.15] });
-  },
-
   pepperBomb(k) {
     k.add(Ico(0.13, 2), 0xff3b2f, { p: [0, -0.02, 0], s: [1, 1.9, 1] });
     k.add(Cyl(0.03, 0.04, 0.1, 6), 0x2f8f3a, { p: [0, 0.27, 0], r: [0, 0, 0.4] });

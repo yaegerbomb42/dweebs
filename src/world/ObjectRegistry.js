@@ -416,6 +416,8 @@ export const OBJECT_DEFS = {
     material: 'glass', mass: 1.3, grabbable: true, throwable: true,
     breakable: true, breakForce: 500, damage: 0.9, color: 0xbff4ff,
     breakWord: 'BRRR!', breakColors: [0xffffff, 0xbff4ff, 0x8fe9ff], status: 'frost', statusOnHit: 'chill',
+    // Shatters into a slippery ice patch (#119) on top of the frost status burst.
+    icePatch: { radius: 3.2, life: 7, traction: 0.12 },
   },
   pepperBomb: {
     name: 'Ghost Pepper',
@@ -457,15 +459,6 @@ export const OBJECT_DEFS = {
     material: 'glass', mass: 1.3, grabbable: true, throwable: true,
     breakable: true, breakForce: 500, damage: 0.9, color: 0x8fe3ff,
     breakWord: 'SPLOOSH!', splat: 0x3fa9ff, breakColors: [0xbff4ff, 0xffffff, 0xff9a3c],
-  },
-  snowGlobe: {
-    name: 'Snow Globe',
-    shape: 'sphere', dims: { radius: 0.26 },
-    visualScale: [0.52, 0.58, 0.52],
-    material: 'glass', mass: 1.0, grabbable: true, throwable: true,
-    breakable: true, breakForce: 500, damage: 0.8, color: 0xbfe9ff,
-    breakWord: 'SHATTER!', breakColors: [0xbfe9ff, 0xffffff, 0x8fd3ff],
-    icePatch: { radius: 3.2, life: 7, traction: 0.12 },
   },
   teddyBear: {
     name: 'Teddy Bear',

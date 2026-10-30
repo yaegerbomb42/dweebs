@@ -58,7 +58,7 @@ export const DROP_ITEMS = [
   { key: 'beachBall', w: 8 }, { key: 'rubberChicken', w: 8 }, { key: 'bubbleGum', w: 4 }, { key: 'watermelon', w: 7 }, { key: 'cake', w: 6 },
   { key: 'giantRubberDuck', w: 6 }, { key: 'trafficCone', w: 6 }, { key: 'box', w: 6 }, { key: 'poolRing', w: 5 },
   { key: 'teddyBear', w: 5 }, { key: 'pinata', w: 5 }, { key: 'piggyBank', w: 4 }, { key: 'gumballMachine', w: 4 },
-  { key: 'fishBowl', w: 4 }, { key: 'snowGlobe', w: 4 }, { key: 'boombox', w: 4 }, { key: 'lamp', w: 4 }, { key: 'giantDie', w: 4 },
+  { key: 'fishBowl', w: 4 }, { key: 'boombox', w: 4 }, { key: 'lamp', w: 4 }, { key: 'giantDie', w: 4 },
   { key: 'hoverboard', w: 5 },
   { key: 'whoopeeCushion', w: 4 },
   { key: 'partyBalloon', w: 4 },
