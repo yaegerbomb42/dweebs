@@ -68,6 +68,10 @@ export class Dweeb {
     this.catchWindow = 0;       // brief window after a timed catch (HUD callout)
     this.catchFlash = 0;        // flash timer for catch juice
     this.escapeTimer = 0;
+    // Thrown-Dweeb bowling: while this body is a flying projectile it can clip others
+    this.thrownBy = null;
+    this.thrownTimer = 0;
+    this.bowlingHits = null;    // Set of Dweebs already clipped by this thrown body
     this.shieldPoint = null;    // world point a held Dweeb uses to block throws
     this.flashTimer = 0;
     this.diBudget = 0;          // Δv left to steer this launch with (directional influence)
@@ -1131,6 +1135,9 @@ export class Dweeb {
     this.out = true;
     this.respawnTimer = respawnDelay;
     this.held = null;
+    this.thrownBy = null;
+    this.thrownTimer = 0;
+    this.bowlingHits = null;
     this.charging = 0;
     this.megaTimer = 0;
     this.zoomTimer = 0;
@@ -1214,6 +1221,9 @@ export class Dweeb {
     this.sugarTimer = 0;
     this.lastHitBy = null;
     this.grabbedBy = null;
+    this.thrownBy = null;
+    this.thrownTimer = 0;
+    this.bowlingHits = null;
     this.punchStreak = 0;
     this.punchStreakT = -99;
     this.signaturePunchCount = 0;

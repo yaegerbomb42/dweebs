@@ -924,6 +924,13 @@ export class CombatSystem {
         this.fx.hit(t, d, launch, 'throw');
         if (yeet) this.fx.superYeet(t, d);
         this.addStyle(d, 6 + launch * 0.4);
+        // The flying Dweeb is now a short-lived bowling projectile (see _updateThrownDweebs)
+        const bowling = BALANCE.dweebThrow?.bowling;
+        if (bowling) {
+          t.thrownBy = d;
+          t.thrownTimer = bowling.life;
+          t.bowlingHits = new Set([d, t]);
+        }
       }
       this.fx.throw(d);
       return true;
@@ -1819,6 +1826,7 @@ export class CombatSystem {
     this._updateFuses(dt);
     this._updateBurning(dt);
     this._updateProjectiles(dt);
+    this._updateThrownDweebs(dt);
     this._updateBananaPeels();
     this._updateHazards();
     this._updatePickups();
@@ -2210,6 +2218,54 @@ export class CombatSystem {
         if (this.damageObject(obj, 2500, by, { dir: { x: v.x, y: 0, z: v.z }, speed: Math.hypot(v.x, v.z) })) break;
       }
     }
+  }
+
+  /** Thrown Dweebs bowl through nearby rivals for a short window after a throw. */
+  _updateThrownDweebs(dt) {
+    const B = BALANCE.dweebThrow?.bowling;
+    if (!B || !this.dweebs?.length) return;
+    for (const d of this.dweebs) {
+      if (!d || !d.active || !(d.thrownTimer > 0) || !d.thrownBy) continue;
+      d.thrownTimer -= dt;
+      // Landing, a timeout, or being grabbed ends the projectile state.
+      // (grounded is ignored for the first beat: the flag can still be stale from the throw frame)
+      if ((d.grounded && d.thrownTimer < B.life - 0.15) || d.grabbedBy || d.thrownTimer <= 0) {
+        this._stopBowling(d);
+        continue;
+      }
+      const p = d.getPosition();
+      const by = d.thrownBy;
+      for (const t of this.dweebs) {
+        if (!t || t === d || !t.active || t.grabbedBy || t === by) continue;
+        // No friendly fire: neither the thrower's team nor the flying Dweeb's team.
+        if (this._sameTeam(by, t) || this._sameTeam(d, t)) continue;
+        if (d.bowlingHits?.has(t)) continue;
+        const tp = t.getPosition();
+        if (Math.hypot(tp.x - p.x, tp.y - p.y, tp.z - p.z) > B.radius) continue;
+        (d.bowlingHits ??= new Set()).add(t);
+        _dir.set(tp.x - p.x, 0.35, tp.z - p.z);
+        if (_dir.lengthSq() < 1e-4) _dir.set(0, 1, 0);
+        const atk = A.thrown(B.damage, 1);
+        const launch = t.receiveHit({ dir: _dir.normalize(), ...atk, attacker: by, time: this.time });
+        if (launch <= 0) continue;
+        const hits = Math.max(1, d.bowlingHits.size - 2);
+        if (typeof this.fx.bowlingHit === 'function') this.fx.bowlingHit(t, by, launch, hits);
+        else this.fx.hit(t, by, launch, 'throw');
+        if (by && by !== t) this.addStyle(by, 8 + launch * 0.4, hits >= 2 ? 'DOUBLE STRIKE' : 'STRIKE');
+      }
+    }
+  }
+
+  /** Cancel a thrown Dweeb's projectile state and forget its hit list. */
+  _stopBowling(d) {
+    d.thrownBy = null;
+    d.thrownTimer = 0;
+    if (d.bowlingHits) d.bowlingHits.clear();
+  }
+
+  /** Teams are optional; only matching non-null team tags count as friendly. */
+  _sameTeam(a, b) {
+    return !!(a && b && a.team != null && b.team != null && a.team === b.team);
   }
 
   /** A held Dweeb intercepts an incoming thrown prop: redirect ~60% of the hit to the shield. */
