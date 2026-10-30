@@ -2271,7 +2271,6 @@ export class Meadowlands {
     this._updateDayNight(dt);
     if (this.timeOfDay < prevTod) this._onNewDay(colony);
     this._updateWeather(dt, colony);
-    this._updateBushRegrowth(dt);
     this._updateSupplyPiles(dt, dweebs);
     this._updateHaulProps(dt);
     this._updateBushRegrowth(dt, colony);

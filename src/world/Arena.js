@@ -73,8 +73,7 @@ export const DROP_ITEMS = [
   { key: 'slimeBomb', w: 2 },
   // gadget weapons: uncommon, capped by the live-item guard rather than RARE
   { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'extinguisher', w: 2 },
-  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'leafBlower', w: 2 },
-  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'grappleGlove', w: 2 },
+  { key: 'leafBlower', w: 2 }, { key: 'grappleGlove', w: 2 },
   // fast hands: low launch, huge cadence
   { key: 'boxingGlove', w: 3 },
   // element props: combine them (water + tesla = shock, oil + pepper = inferno, snow twice = frozen)
