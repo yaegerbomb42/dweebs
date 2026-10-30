@@ -368,6 +368,7 @@ export const OBJECT_DEFS = {
     material: 'cardboard', mass: 0.8, grabbable: true, throwable: true,
     breakable: true, breakForce: 700, damage: 0.7, color: 0xff6fb5,
     breakWord: 'CANDY!', breakColors: [0xff4d5e, 0xffd23f, 0x3fa9ff, 0x5ee06a, 0xb56cff, 0xff9a3c],
+    spill: { key: 'candy', count: 6 },
   },
   boombox: {
     name: 'Boombox',
@@ -438,6 +439,16 @@ export const OBJECT_DEFS = {
     material: 'ceramic', mass: 1.4, grabbable: true, throwable: true,
     breakable: true, breakForce: 900, damage: 1.0, color: 0xff8fc0,
     breakWord: 'CHA-CHING!', breakColors: [0xffd23f, 0xffc21f, 0xff8fc0],
+  },
+
+  // ─── Piñata Loot Burst ───
+  candy: {
+    name: 'Candy',
+    shape: 'sphere', dims: { radius: 0.1 },
+    visualScale: [0.2, 0.2, 0.2],
+    material: 'fruit', mass: 0.25, grabbable: true, throwable: true,
+    breakable: false, breakForce: 99999, damage: 0.3, color: 0xff4d5e,
+    isPickup: true,
   },
 };
 

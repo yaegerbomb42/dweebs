@@ -1459,7 +1459,7 @@ export class Arena {
 
   /** Drop a random item from the sky somewhere over solid ground. */
   dropRandomItem(time = 0, bias = null) {
-    const live = this.objects.filter(o => !o.isDebris && !o.broken).length;
+    const live = this.objects.filter(o => !o.isDebris && !o.broken && !o.def?.isPickup).length;
     if (live >= 10) return null;
     const key = this.pickDropItem(time, bias);
     const p = this.randomGroundPoint(8.5);
