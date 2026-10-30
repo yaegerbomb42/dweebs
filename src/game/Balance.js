@@ -209,6 +209,21 @@ export const BALANCE = {
     magnetWarn: 1.2,        // telegraph before the pull starts
     magnetActive: 2.0,      // how long the pull lasts
     magnetForce: 16,        // m/s² toward the centre while active
+    // Bubble Wrap Ring: a grid of poppable bubbles over the whole island
+    bubble: {
+      spacing: 0.78,        // grid pitch (m)
+      radius: 0.3,          // bubble radius (m)
+      floorRadius: 10.6,    // bubbles cover the island out to here
+      stepReach: 0.42,      // a walking Dweeb pops bubbles this close to its feet
+      slamReach: 1.7,       // a hard landing pops a crater this wide
+      slamSpeed: 7,         // downward speed (m/s) that counts as a hard landing
+      propSpeed: 2.5,       // a skidding/landing prop pops bubbles when moving this fast
+      hop: 1.5,             // tiny upward pop per bubble under a grounded Dweeb
+      hopCooldown: 0.16,    // seconds between hops for one Dweeb
+      regrow: 7,            // seconds before a popped bubble re-inflates
+      maxPopsPerTick: 24,   // cap on pops handled per frame
+      soundsPerSec: 22,     // cap on pop sounds
+    },
     // Sinking Sands sticky centre
     quicksandRadius: 5,
     quicksandDrag: 0.88,    // horizontal velocity kept per tick, grounded in the zone

@@ -620,11 +620,11 @@ export class AudioManager {
     this._noiseBurst(out, t, 0.5, 0.2, { type: 'bandpass', freq: 800, endFreq: 3000, Q: 1.5, attack: 0.15 });
   }
 
-  playBubblePop(pan = 0) {
+  playBubblePop(pan = 0, pitch = 1) {
     if (!this._ok) return;
     const t = this.ctx.currentTime;
     const out = this._out(pan, 0.25);
-    this._toneAt(out, t, 380, 0.09, 0.4, 'sine', 1600);
+    this._toneAt(out, t, 380 * pitch, 0.09, 0.4, 'sine', 1600 * pitch);
     this._noiseBurst(out, t, 0.03, 0.3, { type: 'highpass', freq: 3000 });
   }
 
