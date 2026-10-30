@@ -5,7 +5,7 @@
 // and hilariously mutate that action.
 
 import * as THREE from 'three';
-import { toonMat, noOutline } from '../render/Toon.js';
+import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
 
 export const MUTATION_TYPES = [
   { id: 'overachiever', name: 'OVER-ACHIEVER', blurb: 'Winds up 300% too hard and spins like a tornado!' },
@@ -183,8 +183,13 @@ export class MimicLab {
     }
 
     // Starting toys, as real arena items so the player can grab, throw and blow them up
-    for (const [key, x, z] of [['watermelon', 0, -8], ['bowlingBall', -2.5, -7], ['crate', 2.5, -7],
-      ['rubberChicken', -1.2, -6], ['explosiveBarrel', 1.5, -6], ['giantDie', -3.5, -5]]) this._spawnItem(key, x, 1.6, z);
+    // In the game they're real arena items; without an arena (standalone lab) they're local physics props.
+    const toys = [['watermelon', 0, -8, 'fruit', 2.0], ['bowlingBall', -2.5, -7, 'metal', 4.5], ['crate', 2.5, -7, 'wood', 3.0],
+      ['rubberChicken', -1.2, -6, 'rubber', 0.8], ['explosiveBarrel', 1.5, -6, 'toy', 2.5], ['giantDie', -3.5, -5, 'toy', 2.0]];
+    for (const [key, x, z, mat, mass] of toys) {
+      if (this.arena) this._spawnItem(key, x, 1.6, z);
+      else this._spawnProp(key, x, 1.5, z, mat, mass, key === 'explosiveBarrel');
+    }
   }
 
   _spawnItem(key, x, y, z) {
@@ -328,7 +333,7 @@ export class MimicLab {
     this.audio?.playCheer?.(Math.min(1, 0.3 + this.chain * 0.12));
 
     // Choose a Dweeb pupil to execute the mutated copycat action.
-    const pupils = dweebs.filter(d => !d.isPlayer && d.active && d.body && !d.mimicGhost);
+    const pupils = dweebs.filter(d => !d.isPlayer && d.active !== false && d.body && !d.mimicGhost);
     if (pupils.length === 0) return true;
 
     const pupil = pupils[Math.floor(Math.random() * pupils.length)];
@@ -348,7 +353,7 @@ export class MimicLab {
   /** The mutation's comedic payoff (applied on the copied beat, or instantly if nothing was taped). */
   _punchline(mut, pupil, pupils) {
     const boost = this.boost || 1;
-    if (!pupil?.body || !pupil.active) return;
+    if (!pupil?.body || pupil.active === false) return;
 
     // The rest of the crowd cheers the performer with a little hop.
     const cheer = () => {
