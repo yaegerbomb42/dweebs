@@ -9,6 +9,7 @@ import { buildUnit, buildShell, buildRing, buildTrap, teamMat, flashMat, TEAM_CO
 import { WarfareFx } from './WarfareFx.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
+const TETHER_POINTS = 10;
 
 export class WarfareView {
   constructor(scene, camera) {
@@ -24,6 +25,12 @@ export class WarfareView {
     this.fx = new WarfareFx(this.group, camera);
     this.entries = new Map();   // unit id → entry
     this.shells = new Map();    // shell obj → mesh
+    this.tethers = new Map();   // `${carrierId}>${victimId}` → tether
+    this._tetherPool = [];
+    this._tetherMats = {
+      blue: new THREE.LineBasicMaterial({ color: TEAM_COLORS.blue, transparent: true, opacity: 0.95, depthWrite: false }),
+      red: new THREE.LineBasicMaterial({ color: TEAM_COLORS.red, transparent: true, opacity: 0.95, depthWrite: false }),
+    };
     this.traps = new Map();     // trap obj → mesh
     this.rally = {};
     for (const team of ['blue', 'red']) {
@@ -64,6 +71,7 @@ export class WarfareView {
   }
 
   reset() {
+    this._clearTethers();
     for (const e of this.entries.values()) this.dyn.remove(e.m.root);
     this.entries.clear();
     for (const m of this.shells.values()) this.dyn.remove(m);
@@ -71,6 +79,99 @@ export class WarfareView {
     for (const m of this.traps.values()) this.dyn.remove(m);
     this.traps.clear();
     this.fx.clear();
+  }
+
+  _acquireTether() {
+    let t = this._tetherPool.pop();
+    if (!t) {
+      const positions = new Float32Array(TETHER_POINTS * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const line = new THREE.Line(geo, this._tetherMats.blue);
+      line.frustumCulled = false;
+      line.renderOrder = 2;
+      t = { line, geo, positions };
+    }
+    t.line.visible = true;
+    this.dyn.add(t.line);
+    return t;
+  }
+
+  _releaseTether(t) {
+    this.dyn.remove(t.line);
+    t.line.visible = false;
+    this._tetherPool.push(t);
+  }
+
+  _clearTethers() {
+    for (const t of this.tethers.values()) this._releaseTether(t);
+    this.tethers.clear();
+  }
+
+  /** Keeps pooled capture tethers in sync with the sim's carrier → victim pairs. */
+  _syncTethers(st, events = null, allowEnd = false) {
+    if (!st || !st.units) return;
+    const converted = new Set();
+    if (events) for (const ev of events) if (ev.type === 'convert') converted.add(ev.id);
+    const live = new Map();
+    const byId = st.byId || new Map(st.units.map(u => [u.id, u]));
+    for (const u of st.units) {
+      if (!u.alive || !u.carrying) continue;
+      const v = byId.get(u.carrying);
+      if (!v || !v.alive || v.carriedBy !== u.id) continue;
+      live.set(`${u.id}>${v.id}`, { carrierId: u.id, victimId: v.id, team: u.team });
+    }
+    if (allowEnd) {
+      for (const [key, t] of this.tethers) {
+        if (live.has(key)) continue;
+        if (!converted.has(t.victimId)) {
+          const ve = this.entries.get(t.victimId);
+          if (ve) this.fx.number(ve.x, 2.7, ve.z, 'SNAP!', 'word');
+        }
+        this._releaseTether(t);
+        this.tethers.delete(key);
+      }
+    }
+    for (const [key, info] of live) {
+      let t = this.tethers.get(key);
+      if (!t) {
+        t = { ...this._acquireTether(), ...info, key, phase: (info.carrierId * 1.7 + info.victimId * 0.9) % (Math.PI * 2) };
+        this.tethers.set(key, t);
+      } else {
+        t.team = info.team;
+      }
+      t.line.material = this._tetherMats[t.team] || this._tetherMats.blue;
+    }
+  }
+
+  /** Redraws every tether as a sagging, wobbling elastic curve between both unit roots. */
+  _updateTethers(t) {
+    for (const th of this.tethers.values()) {
+      const ce = this.entries.get(th.carrierId);
+      const ve = this.entries.get(th.victimId);
+      if (!ce || !ve) { th.line.visible = false; continue; }
+      th.line.visible = true;
+      const a = ce.m.root.position, b = ve.m.root.position;
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001;
+      const dh = Math.hypot(dx, dz);
+      const nx = dh > 0.001 ? -dz / dh : 1;
+      const nz = dh > 0.001 ? dx / dh : 0;
+      const taut = Math.min(1, dist / 8);
+      const sag = (1 - taut) * 0.9 + 0.05;
+      const pts = th.positions;
+      for (let i = 0; i < TETHER_POINTS; i++) {
+        const f = i / (TETHER_POINTS - 1);
+        const arc = Math.sin(Math.PI * f);
+        const wob = Math.sin(t * 9 + f * 7 + th.phase) * 0.1 * (1 - taut * 0.6);
+        const bulge = arc * (sag + wob);
+        const o = i * 3;
+        pts[o] = a.x + dx * f + nx * bulge;
+        pts[o + 1] = a.y + dy * f - bulge * 0.35;
+        pts[o + 2] = a.z + dz * f + nz * bulge;
+      }
+      th.geo.attributes.position.needsUpdate = true;
+    }
   }
 
   /** Call after every sim step: roll interpolation buffers and react to events. */
@@ -102,6 +203,7 @@ export class WarfareView {
     for (const [id, e] of this.entries) {
       if (!seen.has(id)) { this.dyn.remove(e.m.root); this.entries.delete(id); }
     }
+    this._syncTethers(st, st.events, true);
     // shells
     const live = new Set(st.shells);
     for (const sh of st.shells) {
@@ -174,8 +276,28 @@ export class WarfareView {
         }
         case 'slam': fx.shockwave(ev.x, ev.z, ev.r * 1.3, 0xd4a73a); fx.addShake(ev.unit === 'boss' ? 0.7 : 0.25); fx.puff(ev.x, ev.z); break;
         case 'fire': if (e) { fx.puff(ev.x, ev.z); fx.muzzle(ev.x, ev.z); e.leanX -= (ev.tx - ev.x) * 0.01; e.leanZ -= (ev.tz - ev.z) * 0.01; } break;
-        case 'grab': fx.number(ev.x, 2.6, ev.z, 'GRAB!', 'word'); break;
-        case 'convert': fx.number(ev.x, 2.8, ev.z, ev.flip ? 'FUSE FLIP!' : 'CONVERTED!', 'word'); fx.shockwave(ev.x, ev.z, 3, TEAM_COLORS[ev.team]); break;
+        case 'grab': {
+          fx.number(ev.x, 2.6, ev.z, 'GRAB!', 'word');
+          fx.shockwave(ev.x, ev.z, 2.6, TEAM_COLORS[ev.team] || 0xffffff);
+          fx.dustCloud(ev.x, ev.z, 2.4);
+          fx.addShake(0.08);
+          const victim = ev.victim ? this.entries.get(ev.victim) : null;
+          if (victim) victim.flash = 0.12;
+          break;
+        }
+        case 'convert': {
+          const ve = this.entries.get(ev.id);
+          if (ve) {
+            ve.team = ev.team;
+            ve.m.body.material = teamMat(ev.team);
+            ve.flash = 0.18;
+          }
+          fx.number(ev.x, 2.8, ev.z, ev.flip ? 'FUSE FLIP!' : 'CONVERTED!', 'word');
+          fx.shockwave(ev.x, ev.z, 4, TEAM_COLORS[ev.team]);
+          fx.shockwave(ev.x, ev.z, 2.2, 0xffffff);
+          fx.addShake(0.12);
+          break;
+        }
         case 'retreat': fx.number(ev.x, 2.4, ev.z, 'RETREAT!', 'weak'); break;
         case 'fortHit': {
           const f = this.board.forts[ev.team];
@@ -222,17 +344,21 @@ export class WarfareView {
       const tilt = e.m.tilt;
       if (e.carried) {
         root.position.y = 1.5 + e.y;
-        tilt.rotation.x = Math.sin(t * 14 + e.x) * 0.5;
-        tilt.rotation.z = Math.PI * 0.45;
+        const struggle = Math.sin(t * 16 + e.x * 2.3);
+        e.struggle = struggle;
+        tilt.rotation.x = Math.sin(t * 14 + e.x) * 0.5 + struggle * 0.12;
+        tilt.rotation.z = Math.PI * 0.45 + Math.sin(t * 12 + e.z) * 0.18;
       } else {
+        e.struggle = 0;
         const bob = sp > 0.5 ? Math.abs(Math.sin(t * (8 + sp))) * 0.14 : 0;
         root.position.y = e.y + bob;
         e.leanX *= Math.max(0, 1 - dt * 6); e.leanZ *= Math.max(0, 1 - dt * 6);
         tilt.rotation.z = (sp > 0.5 ? Math.sin(t * (8 + sp)) * 0.12 : 0) - e.leanX * 0.5;
         tilt.rotation.x = e.leanZ * 0.5;
       }
-      // squash on spawn, flash on hit
+      // squash on spawn, flash on hit, struggle squash while carried
       if (e.spawnT > 0) { e.spawnT -= dt; const p = 1 - Math.max(0, e.spawnT) / 0.35; tilt.scale.set(1 + (1 - p) * 0.4, p, 1 + (1 - p) * 0.4); }
+      else if (e.carried) { const s = e.struggle || 0; tilt.scale.set(1 + s * 0.07, 1 - s * 0.09, 1 + s * 0.07); }
       else tilt.scale.set(1, 1, 1);
       if (e.flash > 0) { e.flash -= dt; e.m.body.material = flashMat(); tilt.scale.multiplyScalar(1.12); }
       else if (e.m.body.material !== teamMat(e.team)) e.m.body.material = teamMat(e.team);
@@ -257,6 +383,8 @@ export class WarfareView {
       } else if (!e.retreat && e.flag) { tilt.remove(e.flag); e.flag = null; }
       if (e.flag) e.flag.rotation.y = Math.sin(t * 9) * 0.4;
     }
+    this._syncTethers(st, null, false);
+    this._updateTethers(t);
     for (const [sh, m] of this.shells) {
       const p = Math.min(1, (sh.t + alpha) / sh.T);
       const dx = sh.x1 - sh.x0, dz = sh.z1 - sh.z0;
@@ -286,6 +414,9 @@ export class WarfareView {
 
   dispose() {
     this.reset();
+    for (const t of this._tetherPool) t.geo.dispose();
+    this._tetherPool.length = 0;
+    for (const m of Object.values(this._tetherMats)) m.dispose();
     this.fx.dispose();
     this.scene.remove(this.group);
   }
