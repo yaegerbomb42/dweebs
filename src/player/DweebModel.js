@@ -833,6 +833,7 @@ export function animateDweebFace(d, dt, time) {
 
   if (d.kos > d._seenKOs) { d._seenKOs = d.kos; d.gloatTimer = 2.5; }
   d.gloatTimer -= dt;
+  if (d.emoteT > 0 && d.emoteMood) { d.idleMood = d.emoteMood; d.moodTimer = Math.max(d.moodTimer, 0.3); } // emote face
   d.moodTimer -= dt;
   if (d.moodTimer < 0) {
     d.moodTimer = 2.5 + Math.random() * 5;
@@ -840,6 +841,7 @@ export function animateDweebFace(d, dt, time) {
     d.idleMood = r < 0.6 ? L.mood : r < 0.85 ? (L.mood === 'grumpy' ? 'calm' : 'grumpy') : 'smug';
   }
   d.mood = d.gloatTimer > 0 ? 'smug' : d.percent >= 100 ? 'worried' : d.idleMood;
+  if (d.reactT > 0 && !(d.reactDelay > 0)) d.mood = d.reactKind === 'cheer' ? 'smug' : d.reactKind === 'dread' || d.reactKind === 'wince' ? 'worried' : d.mood;
   const m = MOODS[d.mood];
   const browTarget = screaming || gritting ? 1.15 : m.brow;
   d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);
@@ -852,15 +854,30 @@ export function animateDweebFace(d, dt, time) {
     blink = 0.1;
     if (d.blinkTimer < -0.1) d.blinkTimer = 1.5 + Math.random() * 3.5;
   }
-  const lookX = Math.max(-0.35, Math.min(0.35, d.velocity.x * 0.04)) + Math.sin(time * 1.7 + d.index) * 0.12;
-  const lookY = Math.max(-0.3, Math.min(0.3, d.velocity.y * 0.03));
+  let lookX = Math.max(-0.35, Math.min(0.35, d.velocity.x * 0.04)) + Math.sin(time * 1.7 + d.index) * 0.12;
+  let lookY = Math.max(-0.3, Math.min(0.3, d.velocity.y * 0.03));
+  // Bystander reaction (game/Reactions.js): eyes snap to the event, eyes go wide, mouth reacts.
+  const reacting = d.reactT > 0 && !(d.reactDelay > 0) && !screaming && d.reactPos;
+  let eyeWide = 1;
+  if (reacting) {
+    const p = d.mesh.position, rp = d.reactPos;
+    const dx = rp.x - p.x, dz = rp.z - p.z;
+    const sy = Math.sin(d.yaw), cy = Math.cos(d.yaw);
+    const side = dx * cy - dz * sy, fwd = dx * sy + dz * cy;
+    const ang = Math.atan2(side, Math.max(0.2, fwd));
+    lookX = Math.max(-0.42, Math.min(0.42, -ang * 0.45));
+    lookY = Math.max(-0.3, Math.min(0.3, (rp.y - p.y) * 0.08));
+    eyeWide = d.reactKind === 'gasp' || d.reactKind === 'flinch' ? 1.3 : d.reactKind === 'dread' ? 1.15 : 1;
+    blink = 1;
+  }
   const squeeze = screaming && !knocked;
 
   for (const eye of d.eyes) {
     eye.group.visible = !screaming;
     eye.lid.visible = squeeze;
     eye.xEye.visible = knocked;
-    eye.group.scale.y = blink * (gritting ? 0.8 : 1);
+    eye.group.scale.y = blink * (gritting ? 0.8 : 1) * eyeWide;
+    eye.group.scale.x = eyeWide > 1 ? 1 + (eyeWide - 1) * 0.6 : 1;
     eye.pupil.position.x = lookX * eye.r;
     eye.pupil.position.y = lookY * eye.r;
   }
@@ -872,21 +889,33 @@ export function animateDweebFace(d, dt, time) {
   }
 
   // Mouths
-  d.mouth.visible = !screaming && !gritting;
+  const oMouth = !screaming && !gritting && d.reactT > 0 && !(d.reactDelay > 0) && (d.reactKind === 'gasp' || d.reactKind === 'flinch' || d.reactKind === 'cheer');
+  d.mouth.visible = !screaming && !gritting && !oMouth;
   d.mouth.scale.y = d._mouthCurve;
-  d.screamMouth.visible = screaming || gritting;
+  d.screamMouth.visible = screaming || gritting || oMouth;
   if (d.screamMouth.visible) {
-    const open = gritting ? 0.35 + d.charging * 0.15 : 1.3 + Math.sin(time * 38) * 0.1;
-    d.screamMouth.scale.set(gritting ? 1.3 : 1.45, open, 1);
+    const open = oMouth ? (d.reactKind === 'cheer' ? 0.9 + Math.sin(time * 20) * 0.15 : 0.75) : gritting ? 0.35 + d.charging * 0.15 : 1.3 + Math.sin(time * 38) * 0.1;
+    d.screamMouth.scale.set(oMouth ? 0.8 : gritting ? 1.3 : 1.45, open, 1);
   }
 
   // Appendage dynamic physics wobble (ears, stalks, tails, antenna)
   if (d.wiggleItems) {
     const speedMult = screaming ? 2.5 : 1.0;
+    // Each appendage is a damped spring around a gentle idle sway, pushed by the body's
+    // acceleration in its own frame: dash and the ears fold back, stop and they flop forward.
+    const drv = d.appendageDrive;
+    const h = Math.min(Math.max(dt || 0, 1e-3), 1 / 30);
     for (const item of d.wiggleItems) {
       const axis = item.axis || 'z';
-      const rot = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
-      item.obj.rotation[axis] = rot;
+      const idle = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
+      const sign = Math.sign(item.amp) || 1;
+      let push = 0;
+      if (drv) push = axis === 'x' ? -drv.fwd * 0.004 : (drv.side * 0.003 + drv.up * 0.0015) * sign - drv.fwd * 0.0015;
+      item.a = item.a || 0; item.v = item.v || 0;
+      const k = 160, c = 7;
+      item.v += (k * (idle + THREE.MathUtils.clamp(push, -0.6, 0.6) - item.a) - c * item.v) * h;
+      item.a = THREE.MathUtils.clamp(item.a + item.v * h, -1.1, 1.1);
+      item.obj.rotation[axis] = item.a;
     }
   }
 

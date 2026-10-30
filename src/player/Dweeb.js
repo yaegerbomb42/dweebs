@@ -7,6 +7,7 @@ import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { STAGE_RADIUS } from '../world/Arena.js';
 import { BALANCE, statsFor } from '../game/Balance.js';
 import { buildDweebModel, animateDweebFace, animateDweebIdle } from './DweebModel.js';
+import { makeLocomotionState, updateLean } from './locomotionJuice.js';
 
 const RADIUS = 0.36;
 const HALF_HEIGHT = 0.14;
@@ -18,6 +19,7 @@ const DI = BALANCE.di;
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
+const _zero3 = { x: 0, y: 0, z: 0 };
 
 export class Dweeb {
   constructor(scene, physicsWorld, options = {}) {
@@ -28,6 +30,11 @@ export class Dweeb {
     this.name = options.name || 'Dweeb';
     this.type = options.type || 'cube';
     this.stats = statsFor(this.type);
+    this.signature = this.stats.signature || null;
+    this.signatureEvent = null;        // one-shot landing/move message for CombatSystem juice
+    this.signaturePunchCount = 0;      // Boxer: landed punches since the streak broke
+    this.pogoUsed = false;             // Boing: already spent this airtime
+    this.ghostDodgeUsed = false;       // Ghosty: free air-dodge spent this stock
     this.color = options.color ?? 0xffd23f;
     this.index = options.index || 0;
 
@@ -58,7 +65,17 @@ export class Dweeb {
     this.isCharging = false;
     this.held = null;           // { kind: 'object'|'dweeb', ref }
     this.grabbedBy = null;
+    this.catchWindow = 0;       // brief window after a timed catch (HUD callout)
+    this.catchFlash = 0;        // flash timer for catch juice
     this.escapeTimer = 0;
+    this.escapeMash = 0;        // built up by mashing while grabbed; speeds the escape
+    this.escapeMashDecay = 2.5;   // how fast escapeMash bleeds off (per second)
+    this.mashWordCd = 0;
+    // Thrown-Dweeb bowling: while this body is a flying projectile it can clip others
+    this.thrownBy = null;
+    this.thrownTimer = 0;
+    this.bowlingHits = null;    // Set of Dweebs already clipped by this thrown body
+    this.shieldPoint = null;    // world point a held Dweeb uses to block throws
     this.flashTimer = 0;
     this.diBudget = 0;          // Δv left to steer this launch with (directional influence)
     this.landLag = 0;
@@ -77,6 +94,7 @@ export class Dweeb {
     this.traction = 1;          // arena ground acceleration multiplier
     this.slide = 1;             // arena top-speed multiplier
     this.skidTimer = 0;         // dust/haptic cooldown while carving a hard turn
+    this.slipCd = 0;            // banana-peel grace so piles cannot stun-lock
     this.techBuffer = 0;        // tech pressed just before impact
     this.techGrace = 0;         // …or just after
     this.missedTech = false;
@@ -472,7 +490,7 @@ export class Dweeb {
         }
       }
 
-      let speed = MV.speed * this.stats.move * (this.grounded ? this.slide : 1);
+      let speed = MV.speed * this.stats.move * (this.grounded ? this.slide : 1) * (this.statusMove ?? 1);
       if (this.zoomTimer > 0) speed *= 1.5;
       if (this.sugarTimer > 0) speed *= BALANCE.powerups.sugar.speed;
       if (this.megaTimer > 0) speed *= 0.9;
@@ -489,7 +507,7 @@ export class Dweeb {
       // Accel and brake are separate: quick to get going, even quicker to stop. On ice the
       // arena's low traction scales both, so you commit to a slide.
       const rate = this.grounded
-        ? (braking ? MV.groundBrake : MV.groundAccel) * this.traction
+        ? (braking ? MV.groundBrake : MV.groundAccel) * this.traction * (this.statusTraction ?? 1)
         : (braking ? MV.airBrake : MV.airAccel) * this.stats.airAccel;
       let accel = rate * dt;
       if (this.grounded && hSpeed > MV.skidSpeed && facing < -0.3 && this.skidTimer <= 0) {
@@ -516,8 +534,10 @@ export class Dweeb {
         vz = approach(vz, tz, accel);
       }
 
+      const lift = this.held?.kind === 'object' && this.held.ref.def.floaty ? this.held.ref.def.floaty.liftHop : 1;
       if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
-        vy = MV.jumpVel * this.stats.jump * this.jumpScale;
+        vy = MV.jumpVel * this.stats.jump * this.jumpScale * lift;
+        vy = MV.jumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
         this.jumpsLeft = 1;
         this.coyote = 0;
         this.jumpBuffer = 0;
@@ -525,7 +545,8 @@ export class Dweeb {
         this.landSquash = -0.35;
         this.onJump?.(this, false);
       } else if (this.jumpRequested && this.jumpsLeft > 0 && !this.grounded && !this.specialFall) {
-        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale;
+        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * lift;
+        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
         this.jumpsLeft = 0;
         this.jumpBuffer = 0;
         this.jumpRising = true;
@@ -613,6 +634,8 @@ export class Dweeb {
     this.diveCooldown = Math.max(0, this.diveCooldown - dt);
     this.proneTimer = Math.max(0, this.proneTimer - dt);
     this.flashTimer = Math.max(0, this.flashTimer - dt);
+    this.catchWindow = Math.max(0, this.catchWindow - dt);
+    this.catchFlash = Math.max(0, this.catchFlash - dt);
     this.megaTimer = Math.max(0, this.megaTimer - dt);
     this.zoomTimer = Math.max(0, this.zoomTimer - dt);
     this.coyote = Math.max(0, this.coyote - dt);
@@ -655,7 +678,10 @@ export class Dweeb {
     const hit = this.physicsWorld.raycast(pos, { x: 0, y: -1, z: 0 }, 40, this.collider);
     this.groundY = hit ? hit.point.y : -100;
     this.grounded = this.dropGrace <= 0 && !!hit && hit.distance < DWEEB_HALF + 0.08 && this.velocity.y < 4;
-    if (this.wasGrounded && !this.grounded) this.fastFallGrace = MV.fastFallDelay;
+    if (this.wasGrounded && !this.grounded) {
+      this.fastFallGrace = MV.fastFallDelay;
+      this.pogoUsed = false; // a fresh airtime earns one more pogo
+    }
     if (this.grounded || this.ledge) this.airTime = 0;
     else if ((this.airTime += dt) > this.maxAir) this.maxAir = this.airTime;
     if (this.grounded) {
@@ -667,9 +693,22 @@ export class Dweeb {
       if (this.dropkickTimer > 0) this.dropkickTimer = 0; // landing ends a drop-kick
       if (!this.wasGrounded && this.velocity.y < -3) {
         const fall = -this.velocity.y;
+        const sig = this.signature;
         this.landSquash = Math.min(0.5, fall * 0.03 * (this.stats.mass / 3));
+        if (fall > 6) this.jolt(Math.min(1.5, fall / 14), 0.6, 0);
         const tumbling = this.ragdolling || this.hitstun > 0;
-        if (tumbling && fall > 6) {
+        let pogo = false;
+        if (!tumbling && sig?.id === 'pogo' && this.jumpHeld && !this.pogoUsed) {
+          // Boing: one free spring bounce per airtime while jump is held.
+          pogo = true;
+          this.pogoUsed = true;
+          const bounce = sig.bounce ?? 11.5;
+          const v = this.body.linvel();
+          this.body.setLinvel({ x: v.x * 0.85, y: bounce * this.jumpScale, z: v.z * 0.85 }, true);
+          this.jumpRising = false;
+          this.landSquash = -0.5;
+          this.signatureEvent = { kind: 'pogo', fall };
+        } else if (tumbling && fall > 6) {
           // Hard slam while tumbling: tech it (pressed just before) or eat a longer knockdown
           if (this.techBuffer > 0 || (!this.isPlayer && Math.random() < this.techChance)) this._tech();
           else { this.techGrace = BALANCE.tech.buffer; this.missedTech = true; }
@@ -682,6 +721,9 @@ export class Dweeb {
           // Heavier bodies take a touch longer to gather themselves, balancing their launch armor.
           this.landLag = (LL.min + (LL.max - LL.min) * Math.min(1, (fall - LL.minSpeed) / 10)) *
             (0.85 + this.stats.mass * 0.05);
+        }
+        if (!pogo && sig?.id === 'quake' && fall >= (sig.minFall ?? 12)) {
+          this.signatureEvent = { kind: 'quake', fall };
         }
         this.onLand?.(this, fall);
       }
@@ -708,6 +750,50 @@ export class Dweeb {
     this._animate(dt, time, pos);
   }
 
+  /**
+   * Body language springs: the blob's top lags behind its feet. Speeding up tips it back, braking
+   * pitches it forward, turning banks it into the curve, and the same world acceleration (in the
+   * Dweeb's own frame) drives ears/stalks/antennae so they flop and settle instead of ticking on a
+   * metronome. Presentation only: nothing here touches physics or hitboxes.
+   */
+  _bodySprings(dt) {
+    const I = this.inertia || (this.inertia = { px: 0, pv: 0, rz: 0, rv: 0, lvx: 0, lvz: 0, lvy: 0, ax: 0, az: 0, ay: 0, loco: makeLocomotionState() });
+    const h = Math.max(1e-3, Math.min(dt, 1 / 30));
+    const v = this.velocity;
+    let ax = (v.x - I.lvx) / h, az = (v.z - I.lvz) / h, ay = (v.y - I.lvy) / h;
+    I.lvx = v.x; I.lvz = v.z; I.lvy = v.y;
+    // Ignore teleports / respawns / grabs
+    if (this.ragdolling || this.grabbedBy || Math.hypot(ax, az) > 400) { ax = az = ay = 0; }
+    const sm = 1 - Math.exp(-18 * h);
+    I.ax += (ax - I.ax) * sm; I.az += (az - I.az) * sm; I.ay += (ay - I.ay) * sm;
+    // World accel → local (forward = +z rotated by yaw, matching sin/cos yaw convention)
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const fwdA = I.ax * sy + I.az * cy;
+    const sideA = I.ax * cy - I.az * sy;
+    const heavy = (this.stats?.mass ?? 3) / 3;
+    // Pitch spring (rad): accelerating forward tips the top back (negative x = lean back)
+    const k = 120 / heavy, c = 9;
+    const pTarget = this.grounded ? THREE.MathUtils.clamp(-fwdA * 0.006, -0.32, 0.32) : 0;
+    I.pv += (k * (pTarget - I.px) - c * I.pv) * h;
+    I.px += I.pv * h;
+    // Bank: into turns (locomotion lean), plus a little sideways sway from lateral jolts
+    const lean = this.grounded && !this.ragdolling ? updateLean(I.loco, v, this.moveInput, h) : updateLean(I.loco, _zero3, _zero3, h);
+    const rTarget = lean * 0.55 + THREE.MathUtils.clamp(sideA * 0.003, -0.15, 0.15);
+    I.rv += (k * (rTarget - I.rz) - c * I.rv) * h;
+    I.rz += I.rv * h;
+    if (!this.ragdolling) this.bodyGroup.rotation.z = I.rz;
+    // Appendages read local accel; the face code integrates their springs.
+    this.appendageDrive = { fwd: fwdA, side: sideA, up: I.ay };
+  }
+
+  /** Kick every spring (body + appendages) — landings, hits, getting grabbed. */
+  jolt(strength = 1, fwd = 0, side = 0) {
+    const I = this.inertia; if (!I) return;
+    I.pv += fwd * 6 * strength;
+    I.rv += side * 6 * strength;
+    if (this.wiggleItems) for (const w of this.wiggleItems) w.v = (w.v || 0) + (Math.random() - 0.5) * 18 * strength;
+  }
+
   _animate(dt, time, pos) {
     this.mesh.position.set(pos.x, pos.y, pos.z);
 
@@ -716,15 +802,19 @@ export class Dweeb {
       this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
     } else {
       _q.setFromAxisAngle(_up, this.yaw);
-      this.mesh.quaternion.slerp(_q, 1 - Math.exp(-25 * dt));
+      // Getting up after a tumble: roll back upright over a beat instead of snapping.
+      const rate = this.getUpT > 0 ? 7 : 25;
+      if (this.getUpT > 0) this.getUpT -= dt;
+      this.mesh.quaternion.slerp(_q, 1 - Math.exp(-rate * dt));
     }
+    this._bodySprings(dt);
 
     // Double-jump flip
     if (this.flipSpin > 0) {
       this.flipSpin = Math.max(0, this.flipSpin - dt * 3.2);
-      this.bodyGroup.rotation.x = (1 - this.flipSpin) * Math.PI * 2;
+      this.bodyGroup.rotation.x = (1 - this.flipSpin) * Math.PI * 2 + this.inertia.px;
     } else {
-      this.bodyGroup.rotation.x = 0;
+      this.bodyGroup.rotation.x = this.inertia.px;
     }
 
     // Squash & stretch
@@ -769,6 +859,10 @@ export class Dweeb {
       } else {
         this.rig.rotation.x = 0;
       }
+      if (this.reactT > 0 && !(this.reactDelay > 0) && !this.held) {
+        if (this.reactKind === 'cheer') { rx = -2.9 + Math.sin(time * 14 + arm.side * 1.7) * 0.35; rz = arm.side * (0.45 + Math.sin(time * 9) * 0.1); }
+        else if (this.reactKind === 'dread' || this.reactKind === 'flinch') { rx = -1.9; rz = arm.side * 0.05; } // hands up, cover up
+      }
       if (this.charging > 0 && arm.side === 1) {
         rx = 0.6 + this.charging * 0.9;
         rz = 0.9;
@@ -782,9 +876,26 @@ export class Dweeb {
         rx = -Math.PI * 0.9;
         rz = arm.side * 0.2;
       }
+      // Emotes (game/Emotes.js)
+      if (this.emoteT > 0) {
+        const e = 1 - this.emoteT / (this.emoteMax || 1), w = time * 12;
+        switch (this.emote) {
+          case 'taunt': rx = arm.side === 1 ? -1.6 + Math.sin(w * 1.5) * 0.25 : 0.4; rz = arm.side * (arm.side === 1 ? 0.2 : 1.2); break;
+          case 'cheer': rx = -2.9 + Math.sin(w + arm.side) * 0.3; rz = arm.side * 0.5; break;
+          case 'dance': rx = -1.4 + Math.sin(w * 0.8 + arm.side * 1.6) * 1.2; rz = arm.side * (0.9 + Math.sin(w * 0.8) * 0.5); break;
+          case 'sweat': rx = -0.6 + Math.sin(w * 2) * 0.05; rz = arm.side * 0.1; break;
+          case 'gg': rx = arm.side === 1 ? -2.2 + Math.sin(w * 0.9) * 0.4 : 0.2; rz = arm.side * 0.6; break;
+          case 'flex': rx = -1.5; rz = arm.side * (1.6 + Math.sin(w * 0.7) * 0.15 + e * 0.2); break;
+        }
+      }
       if (this.ragdolling || this.hitstun > 0) {
-        rx = Math.sin(this.wobblePhase * 3 + arm.side) * 1.4;
-        rz = arm.side * 1.6;
+        // Limbs splay with how hard the body is flying/spinning: limp at rest, flailing at speed
+        const av = this.ragdolling ? this.body.angvel() : null;
+        const spinMag = av ? Math.min(1, Math.hypot(av.x, av.y, av.z) / 10) : 0.6;
+        const flyMag = Math.min(1, Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) / 16);
+        const energy = Math.max(spinMag, flyMag, 0.25);
+        rx = Math.sin(this.wobblePhase * (2 + energy * 3) + arm.side) * (0.4 + energy * 1.3) - this.velocity.y * 0.04;
+        rz = arm.side * (0.8 + energy * 1.1);
       }
       rx += arm.idleX || 0;
       rz += arm.idleZ || 0;
@@ -792,15 +903,30 @@ export class Dweeb {
       arm.pivot.rotation.z = THREE.MathUtils.lerp(arm.pivot.rotation.z, rz, 1 - Math.exp(-22 * dt));
     }
 
+    // Emote body: dance spins, bows, flex puffs up, sweat trembles, taunt wiggles
+    if (this.emoteT > 0 && this.bodyGroup) {
+      const e = 1 - this.emoteT / (this.emoteMax || 1), w = time * 12;
+      if (this.emote === 'dance') this.bodyGroup.rotation.y = e * Math.PI * 4;
+      else if (this.emote === 'taunt') this.bodyGroup.rotation.y = Math.sin(w * 1.4) * 0.6;
+      else this.bodyGroup.rotation.y = 0;
+      if (this.emote === 'gg') this.bodyGroup.rotation.x += Math.sin(Math.min(1, e * 2) * Math.PI) * 0.5;
+      if (this.emote === 'flex') this.rig.scale.multiplyScalar(1 + Math.sin(Math.min(1, e * 1.5) * Math.PI) * 0.18);
+      if (this.emote === 'sweat') this.rig.position.x = Math.sin(time * 60) * 0.02;
+      if (this.emote === 'cheer' && this.grounded) this.rig.position.y += Math.abs(Math.sin(w * 0.8)) * 0.25;
+    } else if (this.bodyGroup && this.bodyGroup.rotation.y !== 0) this.bodyGroup.rotation.y = 0;
     animateDweebFace(this, dt, time);
     animateDweebIdle(this, dt, time);
 
     // Hit flash (white) and invulnerability blink
     const frozen = this.freezeTimer > 0;
-    const flash = frozen ? 0 : this.flashTimer > 0 ? 0.9 : (this.megaTimer > 0 ? 0.15 + Math.sin(time * 10) * 0.1 : 0);
+    const flash = frozen ? 0 : this.flashTimer > 0 ? 0.9 : this.catchFlash > 0 ? 0.35 : (this.megaTimer > 0 ? 0.15 + Math.sin(time * 10) * 0.1 : 0);
     for (const m of this.flashMats) {
       if (frozen) m.emissive.setRGB(0.22, 0.5, 0.78);
-      else m.emissive.setRGB(flash, flash, flash * (this.megaTimer > 0 && this.flashTimer <= 0 ? 0.4 : 1));
+      else if (this.statusTint != null && flash === 0) {
+        // Elemental status glow (StatusEffects): a soft pulse in the status colour
+        const k = 0.22 + Math.sin(time * 9) * 0.08, c = this.statusTint;
+        m.emissive.setRGB(((c >> 16) & 255) / 255 * k, ((c >> 8) & 255) / 255 * k, (c & 255) / 255 * k);
+      } else m.emissive.setRGB(flash, flash, flash * (this.megaTimer > 0 && this.flashTimer <= 0 ? 0.4 : 1));
     }
     this.mesh.visible = this.invulnTimer > 0 && !frozen ? Math.sin(time * 30) > -0.3 : true;
 
@@ -857,6 +983,11 @@ export class Dweeb {
    */
   receiveHit({ dir, damage, base, growth, attacker = null, time = 0, freeze = 0, noParry = false }) {
     if (!this.active || this.invulnTimer > 0) return 0;
+    // No friendly fire: a teammate's punch, throw or bomb bonks off harmlessly.
+    if (attacker && attacker !== this && this.team != null && attacker.team === this.team) {
+      this.onFriendlyBonk?.(this, attacker);
+      return 0;
+    }
 
     // Timed parry: no damage, and the attacker eats a recoil hit instead.
     if (!noParry && this.parryTimer > 0) return this._counter(dir, attacker, time);
@@ -884,8 +1015,11 @@ export class Dweeb {
     this.percent = Math.min(999, this.percent + damage * dmgArmor * shieldDmg);
     // Taking a hit breaks your punch streak (super-smash meter wants consecutive landed punches).
     this.punchStreak = 0;
+    this.signaturePunchCount = 0;
     const launch = (base + growth * this.stats.growthTaken * (this.percent / 100)) * armor * shieldLaunch;
 
+    // Body reels from the blow: local-frame kick so the wobble points away from the hit.
+    { const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw); this.jolt(Math.min(2, 0.4 + launch * 0.06), -(dir.x * sy + dir.z * cy), dir.x * cy - dir.z * sy); }
     this.rollTimer = 0;
     if (this.ledge) this.releaseLedge(false);
     this.airDodgeTimer = 0;
@@ -916,7 +1050,7 @@ export class Dweeb {
       this.lastHitTime = time;
       attacker.damageDealt += damage * dmgArmor;
     }
-    if (launch > KB.ragdollAt) this.startRagdoll(this.hitstun + 0.2, launch);
+    if (launch > KB.ragdollAt) this.startRagdoll(this.hitstun + 0.2, launch, dir);
     this.onHit?.(this, launch);
     return launch;
   }
@@ -946,17 +1080,30 @@ export class Dweeb {
     return 0.01;
   }
 
-  startRagdoll(duration = 1.2, spin = 8) {
+  startRagdoll(duration = 1.2, spin = 8, dir = null) {
     if (!this.ragdolling) {
       this.ragdolling = true;
       this.body.lockRotations(false, true);
       this.body.setLinearDamping(0.15);
       this.body.setAngularDamping(KB.ragdollAngDamp); // readable tumble, not a blender
       this.collider.setFriction(0.7); // tumble and skid instead of skating
+      this._ragContactCd = 0;
     }
     this.ragdollTimer = Math.max(this.ragdollTimer, duration);
     const s = Math.min(spin, KB.ragdollSpinMax);
-    this.body.setAngvel({ x: (Math.random() - 0.5) * s, y: (Math.random() - 0.5) * s, z: (Math.random() - 0.5) * s }, true);
+    // Tumble head-over-heels along the launch: axis = up × dir, plus a little random yaw/wobble
+    const dx = dir?.x ?? 0, dz = dir?.z ?? 0, hl = Math.hypot(dx, dz);
+    if (hl > 0.05) {
+      const ax = dz / hl, az = -dx / hl;
+      const j = 0.25 * s;
+      this.body.setAngvel({
+        x: ax * s + (Math.random() - 0.5) * j,
+        y: (Math.random() - 0.5) * s * 0.35,
+        z: az * s + (Math.random() - 0.5) * j,
+      }, true);
+    } else {
+      this.body.setAngvel({ x: (Math.random() - 0.5) * s, y: (Math.random() - 0.5) * s, z: (Math.random() - 0.5) * s }, true);
+    }
   }
 
   recoverFromRagdoll() {
@@ -969,19 +1116,33 @@ export class Dweeb {
     this.body.setAngularDamping(1.5);
     this.collider.setFriction(0);
     this.landSquash = 0.3;
+    this.getUpT = 0.35;
+    this.jolt(1.2, 0.5, 0);
   }
 
   setGrabbed(holder) {
     this.grabbedBy = holder;
+    this.escapeMash = 0;
+    this.escapeMashDecay = 2.5;
+    this.mashWordCd = 0;
     if (holder) {
       this.escapeTimer = (1.4 + this.percent * 0.008) * this.stats.escape;
       this.charging = 0;
       this.body.setGravityScale(0, true);
       this.collider.setCollisionGroups(this.physicsWorld.makeGroups(CollisionGroups.OBJECT, CollisionGroups.ALL & ~CollisionGroups.PLAYER));
     } else {
+      this.shieldPoint = null;
       this.body.setGravityScale(this._grav(1), true);
       this.collider.setCollisionGroups(this.defaultGroups);
     }
+  }
+
+  /** A grab/jump/attack press while captured: build up struggle. */
+  mashEscape() {
+    if (!this.grabbedBy) return false;
+    this.escapeMash = Math.min(5, (this.escapeMash || 0) + 1);
+    this.escapeMashDecay = 2.5;
+    return true;
   }
 
   applyPowerUp(kind) {
@@ -998,6 +1159,9 @@ export class Dweeb {
     this.out = true;
     this.respawnTimer = respawnDelay;
     this.held = null;
+    this.thrownBy = null;
+    this.thrownTimer = 0;
+    this.bowlingHits = null;
     this.charging = 0;
     this.megaTimer = 0;
     this.zoomTimer = 0;
@@ -1014,6 +1178,7 @@ export class Dweeb {
     this.slamActive = false;
     this.dropkickTimer = 0;
     this.skidTimer = 0;
+    this.slipCd = 0;
     this.rollTimer = 0;
     this.fastFalling = false;
     this.shieldCharges = 0;
@@ -1046,6 +1211,10 @@ export class Dweeb {
     this.superArmed = false;
     this.punchStreak = 0;
     this.punchStreakT = -99;
+    this.signaturePunchCount = 0;
+    this.pogoUsed = false;
+    this.ghostDodgeUsed = false;
+    this.signatureEvent = null;
   }
 
   eliminate() {
@@ -1068,6 +1237,7 @@ export class Dweeb {
     this.slamActive = false;
     this.dropkickTimer = 0;
     this.skidTimer = 0;
+    this.slipCd = 0;
     this.rollTimer = 0;
     this.fastFalling = false;
     this.dropGrace = 0;
@@ -1075,8 +1245,18 @@ export class Dweeb {
     this.sugarTimer = 0;
     this.lastHitBy = null;
     this.grabbedBy = null;
+    this.escapeMash = 0;
+    this.escapeMashDecay = 2.5;
+    this.mashWordCd = 0;
+    this.thrownBy = null;
+    this.thrownTimer = 0;
+    this.bowlingHits = null;
     this.punchStreak = 0;
     this.punchStreakT = -99;
+    this.signaturePunchCount = 0;
+    this.pogoUsed = false;
+    this.ghostDodgeUsed = false;
+    this.signatureEvent = null;
     this.body.setEnabled(true);
     this.collider.setCollisionGroups(this.defaultGroups);
     if (this.ragdolling) this.recoverFromRagdoll();
