@@ -1078,6 +1078,48 @@ export class CombatSystem {
 
     const obj = held.ref;
     if (!obj.body || obj.broken) { d.held = null; return; }
+
+    // Pogo stick: auto-bounce off the floor, steer a little in the air, and stomp rivals below.
+    const pogo = obj.def.pogo;
+    if (pogo) {
+      d.pogoCd = Math.max(0, (d.pogoCd ?? 0) - dt);
+      d.pogoStompCd = Math.max(0, (d.pogoStompCd ?? 0) - dt);
+      const lv = d.body.linvel();
+      if (d.grounded && d.pogoCd <= 0 && d.hitstun <= 0 && !d.ragdolling) {
+        d.body.setLinvel({ x: lv.x, y: BALANCE.move.jumpVel * pogo.bounceVel, z: lv.z }, true);
+        d.pogoCd = pogo.minInterval;
+        d.pogoCount = (d.pogoCount ?? 0) + 1;
+        if (d.pogoCount % 3 === 0) {
+          const pp = d.getPosition();
+          this.fx.popup('BOING!', { x: pp.x, y: pp.y + 1.2, z: pp.z }, 'small', 0xff8a1f);
+        }
+        obj.pop?.(0.4);
+      } else if (!d.grounded && lv.y < 0) {
+        d.body.setLinvel({
+          x: lv.x + d.moveInput.x * pogo.airSteer * dt,
+          y: lv.y,
+          z: lv.z + d.moveInput.y * pogo.airSteer * dt,
+        }, true);
+        if (d.pogoStompCd <= 0) {
+          const pos = d.getPosition();
+          for (const t of this.dweebs) {
+            if (t === d || !t.active || t.grabbedBy) continue;
+            const tp = t.getPosition();
+            const gap = pos.y - tp.y;
+            const away = Math.hypot(tp.x - pos.x, tp.z - pos.z);
+            if (away > 0.8 || gap < 0.6 || gap > 1.6) continue;
+            const dir = new THREE.Vector3(tp.x - pos.x, -0.3, tp.z - pos.z).normalize();
+            t.receiveHit({ dir, damage: 6, base: 6, growth: 0.4, attacker: d, time: this.time });
+            d.pogoStompCd = 0.5;
+            const sv = d.body.linvel();
+            d.body.setLinvel({ x: sv.x, y: BALANCE.move.jumpVel * pogo.bounceVel, z: sv.z }, true); // bounce off their head
+            this.fx.popup('POGO STOMP!', { x: tp.x, y: tp.y + 1.2, z: tp.z }, 'small', 0xff8a1f);
+            break;
+          }
+        }
+      }
+    }
+
     let x, y, z;
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), d.yaw);
     if (obj.isWeapon) {
