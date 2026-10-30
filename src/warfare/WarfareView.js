@@ -3,9 +3,9 @@
 // turns sim events into juice via WarfareFx.
 import * as THREE from 'three';
 import { counterMult } from '../sim/warfareUnits.js';
-import { buildBoard } from './WarfareBoard.js';
+import { buildBoard, buildBarricades } from './WarfareBoard.js';
 import { getBattleground } from './Battlegrounds.js';
-import { buildUnit, buildShell, buildRing, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
+import { buildUnit, buildShell, buildRing, buildTrap, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
 import { WarfareFx } from './WarfareFx.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -31,6 +31,7 @@ export class WarfareView {
       blue: new THREE.LineBasicMaterial({ color: TEAM_COLORS.blue, transparent: true, opacity: 0.95, depthWrite: false }),
       red: new THREE.LineBasicMaterial({ color: TEAM_COLORS.red, transparent: true, opacity: 0.95, depthWrite: false }),
     };
+    this.traps = new Map();     // trap obj → mesh
     this.rally = {};
     for (const team of ['blue', 'red']) {
       const g = new THREE.Group();
@@ -59,12 +60,24 @@ export class WarfareView {
     this.group.add(this.board.group);
   }
 
+  /** Swap the barricade set (per-battle map layout). Safe to call with [] or undefined.
+   *  Also refreshes the tracked meshes so barricadeDown keeps hiding the right bundle. */
+  setBarricades(list) {
+    if (this.board.barr) this.board.group.remove(this.board.barr);
+    const barr = buildBarricades(list || []);
+    this.board.barr = barr.group;
+    this.board.barricades = barr.meshes;
+    this.board.group.add(this.board.barr);
+  }
+
   reset() {
     this._clearTethers();
     for (const e of this.entries.values()) this.dyn.remove(e.m.root);
     this.entries.clear();
     for (const m of this.shells.values()) this.dyn.remove(m);
     this.shells.clear();
+    for (const m of this.traps.values()) this.dyn.remove(m);
+    this.traps.clear();
     this.fx.clear();
   }
 
@@ -201,6 +214,17 @@ export class WarfareView {
       }
     }
     for (const [sh, m] of this.shells) if (!live.has(sh)) { this.dyn.remove(m); this.shells.delete(sh); }
+    // spike pits
+    const liveTraps = new Set(st.traps);
+    for (const t of st.traps) {
+      if (!this.traps.has(t)) {
+        const m = buildTrap(t.r);
+        m.position.set(t.x, 0, t.z);
+        this.dyn.add(m);
+        this.traps.set(t, m);
+      }
+    }
+    for (const [t, m] of this.traps) if (!liveTraps.has(t)) { this.dyn.remove(m); this.traps.delete(t); }
     for (const team of ['blue', 'red']) {
       const r = st.rally[team];
       const show = team === this.localTeam || st.mode === 'versus';
@@ -286,6 +310,9 @@ export class WarfareView {
         case 'backstab': fx.number(ev.x, 2.9, ev.z, 'BACKSTAB!', 'crit'); break;
         case 'enrage': fx.shockwave(ev.x, ev.z, 7, 0xff4d5e); fx.addShake(0.8); fx.number(ev.x, 4.5, ev.z, 'ENRAGED!', 'crit'); if (e) e.enraged = true; break;
         case 'rally': this.rally[ev.team].pulse = 0.5; break;
+        case 'warhorn': fx.shockwave(ev.x, ev.z, 12, 0xffd23f); fx.number(ev.x, 3.4, ev.z, 'WAR HORN!', 'word'); fx.addShake(0.3); break;
+        case 'repair': fx.number(ev.x, 3.2, ev.z, `+${ev.amount} FORT`, 'word'); fx.shockwave(ev.x, ev.z, 6, 0x5ee06a); break;
+        case 'trap': fx.puff(ev.x, ev.z); break;
         default: break;
       }
     }

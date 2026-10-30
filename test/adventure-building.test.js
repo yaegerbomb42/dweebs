@@ -78,10 +78,11 @@ function place(bm, colony, world, id, x = 10, y = 0, z = 10) {
 }
 
 describe('blueprints', () => {
-  it('has all 16 blueprints (5 original + 5 Expedition & Dynasty + 6 ToyTown landmarks)', () => {
-    expect(BLUEPRINTS.length).toBe(16);
+  it('has all 19 blueprints (5 original + 5 Expedition & Dynasty + 3 wave-2b + 6 ToyTown landmarks)', () => {
+    expect(BLUEPRINTS.length).toBe(19);
     for (const id of ['springboard', 'ramp', 'tent', 'firepit', 'catapult',
       'launchpad', 'ziptower', 'berrymill', 'silo', 'cannon',
+      'tradepost', 'bakery', 'garden',
       'windmill', 'watchtower', 'gazebo', 'clockwork', 'waterwheel', 'fort']) {
       expect(BLUEPRINTS.some(b => b.id === id), id).toBe(true);
     }
