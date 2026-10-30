@@ -704,6 +704,74 @@ export class AudioManager {
     this.heartbeat = rate;
   }
 
+  // ═══ Crowd reaction stings ═══
+
+  /** GASP — short filtered inhale plus a rising "ooh". For near-KO, first grab, huge launch. */
+  playCrowdGasp(pan = 0) {
+    if (!this._ok || !this._spend(2)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.25);
+    // Sharp inhale (filtered noise, rising pitch)
+    this._noiseBurst(out, t, 0.18, 0.35, { type: 'bandpass', freq: 800, endFreq: 2200, Q: 3, attack: 0.005 });
+    // Rising "ooh" vowel formants
+    this._toneAt(out, t, 440, 0.25, 0.18, 'sine', 880);
+    this._toneAt(out, t + 0.02, 520, 0.3, 0.14, 'triangle', 1040);
+    this._toneAt(out, t + 0.04, 660, 0.25, 0.1, 'sine', 1320);
+    this.duck(0.4, 0.8);
+  }
+
+  /** AWW — descending pitch bend. For whiffed throw, self-KO, early exit. */
+  playCrowdAww(pan = 0) {
+    if (!this._ok || !this._spend(2)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.2);
+    // Descending "aww" — two formants sliding down
+    this._toneAt(out, t, 520, 0.35, 0.2, 'sine', 260);
+    this._toneAt(out, t + 0.04, 440, 0.3, 0.15, 'triangle', 220);
+    // Soft breath tail
+    this._noiseBurst(out, t + 0.1, 0.25, 0.12, { type: 'lowpass', freq: 800, endFreq: 200, Q: 2 });
+    this.duck(0.5, 0.6);
+  }
+
+  /** CHANT — three syllables on a fixed pitch: "DWE-EB! DWE-EB! DWE-EB!" */
+  playCrowdChant(pan = 0) {
+    if (!this._ok || !this._spend(3)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan * 0.5, 0.35);
+    const base = 220; // A3
+    // Syllable 1: "DWE"
+    this._toneAt(out, t, base, 0.12, 0.18, 'square', 0, this._shaper());
+    this._toneAt(out, t, base * 2, 0.08, 0.08, 'sine');
+    this._noiseBurst(out, t, 0.06, 0.15, { type: 'bandpass', freq: 1800, Q: 2 });
+    // Syllable 2: "EB"
+    this._toneAt(out, t + 0.18, base, 0.12, 0.18, 'square', 0, this._shaper());
+    this._toneAt(out, t + 0.18, base * 2, 0.08, 0.08, 'sine');
+    this._noiseBurst(out, t + 0.18, 0.06, 0.15, { type: 'bandpass', freq: 1800, Q: 2 });
+    // Syllable 3: "DWE" (longer, with a little fall)
+    this._toneAt(out, t + 0.36, base, 0.18, 0.22, 'triangle', base * 0.7);
+    this._toneAt(out, t + 0.36, base * 2, 0.12, 0.1, 'sine', base);
+    this._noiseBurst(out, t + 0.36, 0.08, 0.18, { type: 'bandpass', freq: 2000, Q: 1.5 });
+    // Crowd tail: a brief cheer swell
+    this.playCheer(0.4);
+    this.duck(0.25, 1.2);
+  }
+
+  /** LAUGH — three short filtered noise bursts. For comedy KO, bonk, whiff at high damage. */
+  playCrowdLaugh(pan = 0) {
+    if (!this._ok || !this._spend(2)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.2);
+    // Three "ha" bursts — bandpass noise with vowel-ish formants
+    for (let i = 0; i < 3; i++) {
+      const dt = i * 0.14;
+      const f = 600 + i * 200;
+      this._noiseBurst(out, t + dt, 0.08, 0.25, { type: 'bandpass', freq: f, Q: 2.5 });
+      this._noiseBurst(out, t + dt, 0.06, 0.15, { type: 'bandpass', freq: f * 2.2, Q: 2 });
+      this._toneAt(out, t + dt, f * 0.8, 0.07, 0.08, 'triangle');
+    }
+    this.duck(0.5, 0.5);
+  }
+
   /** Tiny click when the throw arc locks onto a rival */
   playAimLock() {
     if (!this._ok) return;

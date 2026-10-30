@@ -12,7 +12,7 @@ const J = BALANCE.juice;
 const hitTier = launch => (launch >= J.tiers[2] ? 3 : launch >= J.tiers[1] ? 2 : launch >= J.tiers[0] ? 1 : 0);
 
 export class Fx {
-  constructor({ particles, audio, camera, cameraController, hud, arena, bursts, decals, haptics }) {
+  constructor({ particles, audio, camera, cameraController, hud, arena, bursts, decals, haptics, match }) {
     this.bursts = bursts;
     this.decals = decals;
     this.particles = particles;
@@ -22,8 +22,13 @@ export class Fx {
     this.cam = cameraController;
     this.hud = hud;
     this.arena = arena;
+    this.match = match;
     this.hitStop = 0;
     this.player = null;
+    this._lastWhiffLaugh = 0;
+    this._lastWhiffAww = 0;
+    this._lastHeavyThrowGasp = 0;
+    this._lastBonkLaugh = 0;
   }
 
   /** Stereo pan (-1..1) and a distance-based volume factor for a world position. */
@@ -88,6 +93,11 @@ export class Fx {
     this.hitStop = Math.max(this.hitStop, d.isPlayer ? 0.04 : 0.02);
     if (d.isPlayer) this.haptics?.throwHeavy();
     if (d.isPlayer || this._near(pos, 12) > 0) this.hud.popup(mass >= 5 ? 'HNNNGH!' : 'HUP!', pos, 'small', d.color);
+    // Very heavy throw: crowd gasp
+    if (mass >= 6 && this.match && this.match.time - (this._lastHeavyThrowGasp || 0) > 5) {
+      this._lastHeavyThrowGasp = this.match.time;
+      this.audio.playCrowdGasp(this._pan(pos));
+    }
   }
 
   /** A thrown hit with style: tags like LONG SHOT / BANK SHOT / AIR SHOT. */
@@ -225,16 +235,42 @@ export class Fx {
   bonk(pos, obj) {
     this.particles.hit(pos, 0xffffff);
     this.audio.playComicBonk(this._pan(pos));
+    // Comic bonk: crowd laugh
+    if (this.match && this.match.time - (this._lastBonkLaugh || 0) > 3) {
+      this._lastBonkLaugh = this.match.time;
+      this.audio.playCrowdLaugh(this._pan(pos));
+    }
   }
 
   whiff(d, weapon) {
     if (d.isPlayer || this._near(d.getPosition(), 8) > 0) this.audio.playWhoosh(this._pan(d.getPosition()));
+    // Whiff at high damage: crowd aww or laugh
+    const pct = d.percent || 0;
+    const pos = d.getPosition();
+    const pan = this._pan(pos);
+    const now = this.match?.time ?? 0;
+    if (pct >= BALANCE.crowd.laughDamage) {
+      if (!this._lastWhiffLaugh || now - this._lastWhiffLaugh > 4) {
+        this._lastWhiffLaugh = now;
+        this.audio.playCrowdLaugh(pan);
+      }
+    } else if (pct >= BALANCE.crowd.awwLaunch) {
+      if (!this._lastWhiffAww || now - this._lastWhiffAww > 3) {
+        this._lastWhiffAww = now;
+        this.audio.playCrowdAww(pan);
+      }
+    }
   }
 
   grab(d, target) {
     const pos = d.getPosition();
     this.audio.playGrab(this._pan(pos));
     if (target) this.hud.popup('GOTCHA!', target.getPosition(), 'small', d.color);
+    // First grab of the match: crowd gasp
+    if (this.match && !this.match._firstGrabDone) {
+      this.match._firstGrabDone = true;
+      this.audio.playCrowdGasp(this._pan(pos));
+    }
   }
 
   escape(t) {

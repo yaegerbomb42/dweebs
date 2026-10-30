@@ -179,10 +179,10 @@ async function init() {
   haptics = new Haptics();
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
-  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  match = new Match();
+  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics, match });
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
-  match = new Match();
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
 
@@ -1105,6 +1105,22 @@ const matchEvents = {
   },
   onFlail(d, pos) {
     fx.flail(d, pos);
+  },
+  onCrowdGasp(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdGasp(pan);
+  },
+  onCrowdAww(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdAww(pan);
+  },
+  onCrowdChant(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdChant(pan);
+  },
+  onCrowdLaugh(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdLaugh(pan);
   },
   onRespawn(d) {
     d.respawn(arena.getRespawnPoint());

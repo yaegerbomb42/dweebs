@@ -213,6 +213,12 @@ export const BALANCE = {
     lightningStrike: 10, lavaHit: 6,
     levels: [20, 40, 60, 80],
     names: ['murmur', 'buzz', 'roar', 'frenzy', 'pandemonium'],
+    // Crowd reaction thresholds
+    gaspLaunch: 16,       // launch speed that triggers a gasp
+    awwLaunch: 8,         // launch speed for aww (whiffed throw / weak hit)
+    chantStocks: 1,       // last stock triggers chant
+    chantComebackPct: 120, // damage % for comeback chant
+    laughDamage: 80,      // damage % where bonk/whiff gets a laugh
   },
 
   // Pickup power-ups (the gems) and the two new gadget weapons.
