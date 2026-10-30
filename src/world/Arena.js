@@ -1505,12 +1505,15 @@ export class Arena {
   }
 
   /** Material-shaped debris: wood splinters, glass/ceramic shards, fruit chunks, cardboard flaps. */
-  spawnDebris(position, color = 0xc4a06a, count = 5, material = 'wood', palette = null) {
+  spawnDebris(position, color = 0xc4a06a, count = 5, material = 'wood', palette = null, burst = null) {
+    // burst (optional): { vel, dir, power, size } — chunks inherit the prop's motion, blow out along
+    // the hit direction and scale with the prop, so a smashed crate reads as the crate coming apart.
+    const bv = burst?.vel, bd = burst?.dir, pw = burst?.power ?? 0, sz = burst?.size ?? 1;
     for (let i = 0; i < count; i++) {
       if (!this.physicsWorld.addDebris()) break;
       const shape = debrisShape(material, i);
       const col = palette ? palette[i % palette.length] : material === 'fruit' ? (i % 3 === 2 ? 0x2f8f3a : 0xff4d6a) : color;
-      const s = 0.7 + Math.random() * 0.6;
+      const s = (0.7 + Math.random() * 0.6) * sz;
       const mesh = new THREE.Mesh(shape.geo, debrisMat(col, material === 'glass'));
       const dx = position.x + (Math.random() - 0.5) * 0.5;
       const dy = position.y + Math.random() * 0.3;
@@ -1522,8 +1525,22 @@ export class Arena {
       const [hx, hy, hz] = shape.half;
       const result = this.physicsWorld.createDynamicBody(dx, dy, dz, 'box',
         { hx: hx * s, hy: hy * s, hz: hz * s }, { material: material === 'fruit' ? 'fruit' : 'wood', mass: 0.2, isDebris: true });
-      this.physicsWorld.applyImpulse(result.body, { x: (Math.random() - 0.5) * 0.35, y: Math.random() * 0.3 + 0.12, z: (Math.random() - 0.5) * 0.35 });
-      this.physicsWorld.applyTorqueImpulse(result.body, { x: (Math.random() - 0.5) * 0.01, y: (Math.random() - 0.5) * 0.01, z: (Math.random() - 0.5) * 0.01 });
+      if (burst) {
+        // Radial spray from the centre, biased along the blow, plus whatever velocity the prop had.
+        const rx = dx - position.x, rz = dz - position.z, rl = Math.hypot(rx, rz) || 1;
+        const spread = 2.5 + pw * 0.25 + Math.random() * 2;
+        const along = pw * (0.35 + Math.random() * 0.35);
+        result.body.setLinvel({
+          x: (bv?.x ?? 0) * 0.55 + (rx / rl) * spread + (bd?.x ?? 0) * along,
+          y: Math.abs(bv?.y ?? 0) * 0.3 + 2.5 + Math.random() * (3 + pw * 0.15),
+          z: (bv?.z ?? 0) * 0.55 + (rz / rl) * spread + (bd?.z ?? 0) * along,
+        }, true);
+        const sp = 8 + pw * 0.6;
+        result.body.setAngvel({ x: (Math.random() - 0.5) * sp, y: (Math.random() - 0.5) * sp, z: (Math.random() - 0.5) * sp }, true);
+      } else {
+        this.physicsWorld.applyImpulse(result.body, { x: (Math.random() - 0.5) * 0.35, y: Math.random() * 0.3 + 0.12, z: (Math.random() - 0.5) * 0.35 });
+        this.physicsWorld.applyTorqueImpulse(result.body, { x: (Math.random() - 0.5) * 0.01, y: (Math.random() - 0.5) * 0.01, z: (Math.random() - 0.5) * 0.01 });
+      }
       this.objects.push({
         mesh, body: result.body, physicsId: result.id, isDebris: true, life: 3 + Math.random() * 2,
         getPosition() { return this.body.translation(); },

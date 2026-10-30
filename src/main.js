@@ -1609,7 +1609,7 @@ function handleImpacts() {
       // Breakables take damage from hard impacts (energy ∝ speed² × mass)
       if (obj && !obj.broken && obj.def.breakable && imp.speed > 4 && (obj.thrownBy || imp.speed > 7)) {
         if (obj.def.explosive && imp.speed > 9) combat.explode(obj.getPosition(), obj.thrownBy, obj);
-        else if (obj.applyDamage(imp.speed * imp.speed * side.mass * 12)) combat.breakObject(obj);
+        else combat.damageObject(obj, imp.speed * imp.speed * side.mass * 12, obj.thrownBy, { speed: imp.speed });
       }
     }
     if (impactBudget-- > 0) fx.impact(imp);
