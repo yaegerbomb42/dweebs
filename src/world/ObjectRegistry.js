@@ -154,6 +154,14 @@ export const OBJECT_DEFS = {
     material: 'fruit', mass: 1.4, grabbable: true, throwable: true,
     breakable: true, breakForce: 600, damage: 0.6, color: 0x337733,
   },
+  bananaPeel: {
+    name: 'Banana Peel',
+    shape: 'box', dims: { hx: 0.18, hy: 0.045, hz: 0.14 },
+    visualScale: [0.5, 0.14, 0.4],
+    material: 'fruit', mass: 0.18, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.05, color: 0xffd93b,
+    slip: true,
+  },
   beachBall: {
     name: 'Beach Ball',
     shape: 'sphere', dims: { radius: 0.3 },

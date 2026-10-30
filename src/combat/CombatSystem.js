@@ -23,6 +23,7 @@ const ITEM_DAMP = 0.06;       // item linear damping
 export const DEFAULT_LOFT = 0.2;  // throw elevation (rad) when nobody's aiming
 const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
+const SLIP = BALANCE.slip;
 const SUPER = 1.35;           // Super Yeet: damage / base / growth multiplier
 
 // Melee weapon identity (def.weapon). Exported so test/tables-parity.test.js can pin
@@ -1024,6 +1025,7 @@ export class CombatSystem {
         continue;
       }
       d.hazardCd = Math.max(0, (d.hazardCd || 0) - dt);
+      d.slipCd = Math.max(0, (d.slipCd || 0) - dt);
       if (d.swingT > 0) d.swingT -= dt;
 
       if (d.isCharging) {
@@ -1049,6 +1051,7 @@ export class CombatSystem {
 
     this._updateFuses(dt);
     this._updateProjectiles(dt);
+    this._updateBananaPeels();
     this._updateHazards();
     this._updatePickups();
   }
@@ -1118,6 +1121,42 @@ export class CombatSystem {
       const v = d.body.linvel();
       d.body.setLinvel({ x: v.x * 0.2, y: 3, z: v.z * 0.2 }, true);
       return;
+    }
+  }
+
+  _updateBananaPeels() {
+    for (const obj of this.arena.objects) {
+      if (!obj.def?.slip || obj.isDebris || obj.isGrabbed || obj.broken || !obj.body) continue;
+      const pp = obj.getPosition();
+      for (const d of this.dweebs) {
+        if (!d.active || !d.grounded || d.grabbedBy || d.held || d.ledge) continue;
+        if ((d.slipCd || 0) > 0 || d.hitstun > 0 || d.ragdolling || d.freezeTimer > 0 || d.invulnTimer > 0) continue;
+        const dp = d.getPosition();
+        if (Math.abs(pp.y - dp.y) > 0.65) continue;
+        const dx = pp.x - dp.x, dz = pp.z - dp.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > SLIP.radius) continue;
+
+        const f = d.forward;
+        const v = d.body.linvel();
+        const side = (f.x * dz - f.z * dx) >= 0 ? 1 : -1;
+        d.hitstun = Math.max(d.hitstun, SLIP.stun);
+        d.slipCd = SLIP.cooldown;
+        d.charging = 0;
+        d.isCharging = false;
+        d.attackAnim = 0;
+        d.diveTimer = 0;
+        d.slamActive = false;
+        d.flipSpin = Math.max(d.flipSpin || 0, 0.9);
+        d.body.setLinvel({
+          x: v.x * 0.4 + f.x * SLIP.forward,
+          y: Math.max(v.y, 1.5) + SLIP.up,
+          z: v.z * 0.4 + f.z * SLIP.forward,
+        }, true);
+        d.body.setAngvel({ x: side * SLIP.spin, y: side * 2, z: side * SLIP.spin * 0.5 }, true);
+        obj.pop(0.25);
+        this.fx.slip(d);
+      }
     }
   }
 

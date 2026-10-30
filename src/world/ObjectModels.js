@@ -354,6 +354,35 @@ const BUILDERS = {
     k.eye([0.065, 0.05, 0.17], [0.35, 0.2, 1], 0.048);
   },
 
+  bananaPeel(k) {
+    const skin = 0xffd93b, flesh = 0xfff1b8, tip = 0x6a4a2a;
+    const flap = (a, len, lift, r) => {
+      const pts = [
+        new THREE.Vector3(0, 0.02, 0),
+        new THREE.Vector3(Math.cos(a) * len * 0.35, lift, Math.sin(a) * len * 0.35),
+        new THREE.Vector3(Math.cos(a) * len * 0.72, lift * 0.85, Math.sin(a) * len * 0.72),
+        new THREE.Vector3(Math.cos(a) * len, lift * 0.25, Math.sin(a) * len),
+      ];
+      return paint(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, r, 5, false),
+        c => (c.y > lift * 0.55 ? flesh : skin),
+      );
+    };
+    const flaps = [
+      [0.35, 0.25, 0.075, 0.054],
+      [PI * 0.78, 0.23, 0.065, 0.05],
+      [PI * 1.28, 0.255, 0.08, 0.055],
+      [PI * 1.74, 0.19, 0.05, 0.043],
+    ];
+    for (const [a, len, lift, r] of flaps) k.add(flap(a, len, lift, r), 'vc');
+    k.add(Ico(0.095, 1), flesh, { p: [0, 0.045, 0], s: [1.25, 0.5, 1.1] });
+    for (const [a, len, lift] of [[0.35, 0.25, 0.075], [PI * 1.28, 0.255, 0.08]]) {
+      k.add(Ico(0.035, 0), tip, { p: [Math.cos(a) * len, lift * 0.25, Math.sin(a) * len], s: [1, 0.7, 1] });
+    }
+    k.eye([-0.042, 0.095, 0.072], [-0.25, 0.35, 1], 0.038);
+    k.eye([0.042, 0.095, 0.072], [0.25, 0.35, 1], 0.038);
+  },
+
   beachBall(k) {
     const cols = [0xff4d5e, W, 0x3fa9ff, W, 0xffd23f, W];
     k.add(paint(new THREE.SphereGeometry(0.3, 12, 9), c => Math.abs(c.y) > 0.25 ? W : cols[Math.floor(((Math.atan2(c.z, c.x) + PI) / (PI * 2)) * 6 + 0.001) % 6]), 'vc');
