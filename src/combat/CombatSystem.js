@@ -25,6 +25,11 @@ const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
 const SUPER = 1.35;           // Super Yeet: damage / base / growth multiplier
 
+// Hoverboard rideable constants
+const HOVER_MOUNT_HORIZ = 0.7;    // horizontal range to mount
+const HOVER_MOUNT_VERT = 0.6;     // vertical range above board to mount
+const HOVER_RIDE_OFFSET = 0.55;   // capsule half-height+radius (0.5) + board half-thickness, so feet rest on the deck
+
 // Melee weapon identity (def.weapon). Exported so test/tables-parity.test.js can pin
 // sim/tables.js WEAPONS against this — the two must stay in step (see T6).
 export const WEAPONS = {
@@ -452,6 +457,10 @@ export class CombatSystem {
   }
 
   _holdObject(d, obj) {
+    // If grabbing a hoverboard with a rider, dismount them first
+    if (obj.def?.rideable && obj.rider) {
+      this._dismount(obj.rider, obj);
+    }
     d.held = { kind: 'object', ref: obj };
     obj.grab(d);
     // Heft: heavy props take a beat to settle and slow your walk; featherweights are instant
@@ -511,6 +520,10 @@ export class CombatSystem {
     }
 
     const obj = held.ref;
+    // If throwing a hoverboard with a rider, dismount them first
+    if (obj.def?.rideable && obj.rider) {
+      this._dismount(obj.rider, obj);
+    }
     // Player aim comes from the camera (+ gentle assist); bots solve the arc with a difficulty-based wobble
     const aim = d.isPlayer ? this.assistAim(d, obj, charge, d.yaw, d.aimLoft ?? DEFAULT_LOFT) : this._botAim(d, obj, charge);
     d.yaw = aim.yaw;
@@ -1051,6 +1064,7 @@ export class CombatSystem {
     this._updateProjectiles(dt);
     this._updateHazards();
     this._updatePickups();
+    this._updateRideables(dt);
   }
 
   _updateHeld(d, dt) {
@@ -1295,6 +1309,99 @@ export class CombatSystem {
         }
       }
     }
+  }
+
+  /** Update all rideable objects (hoverboards): mount, dismount, and riding physics. */
+  _updateRideables(dt) {
+    if (!this.dweebs?.length) return;
+    // A board that despawned, broke or got grabbed out from under its rider releases them
+    for (const d of this.dweebs) {
+      const b = d.riding;
+      if (b && (b.isGrabbed || b.broken || !b.body || !this.arena.objects.includes(b))) {
+        d.riding = null; d.hoverRiding = false; d.hoverAirT = 0;
+        if (b.rider === d) b.rider = null;
+      }
+    }
+
+    for (const obj of this.arena.objects) {
+      // Only process rideable objects that are not grabbed
+      if (!obj.def?.rideable || obj.isGrabbed || !obj.body) continue;
+
+      const board = obj;
+      const bp = board.getPosition();
+
+      // --- Dismount if rider is invalid ---
+      if (board.rider) {
+        const r = board.rider;
+        if (!r.active || r.riding !== board || r.hitstun > 0 || r.ragdolling || r.grabbedBy) {
+          this._dismount(r, board);
+        }
+      }
+
+      // --- Try to mount ---
+      if (!board.rider) {
+        for (const d of this.dweebs) {
+          // Ignore bots in first pass
+          if (!d.isPlayer) continue;
+          if (!d.active || d.riding || d.grabbedBy || d.held?.kind === 'dweeb' || d.isCharging) continue;
+          // Must be grounded to mount
+          if (!d.grounded && d.coyote <= 0) continue;
+
+          const dp = d.getPosition();
+          const dx = Math.abs(dp.x - bp.x);
+          const dz = Math.abs(dp.z - bp.z);
+          const horizDist = Math.hypot(dx, dz);
+          const vertDist = dp.y - bp.y;
+
+          // Check if Dweeb is above and near the board
+          if (horizDist <= HOVER_MOUNT_HORIZ && vertDist >= 0.3 && vertDist <= HOVER_MOUNT_VERT) {
+            this._mount(d, board);
+            break; // one rider per board
+          }
+        }
+      }
+
+      // --- Riding physics ---
+      if (board.rider) {
+        const r = board.rider;
+        if (!r.active) { this._dismount(r, board); continue; }
+
+        // The rider's own movement drives (see Dweeb.preStep: hoverRiding = faster, slidey);
+        // the board just glides along underneath their feet.
+        const rp = r.getPosition();
+        const v = r.body.linvel();
+        if (r.grounded) board.body.setTranslation({ x: rp.x, y: rp.y - HOVER_RIDE_OFFSET, z: rp.z }, true);
+        board.body.setLinvel({ x: v.x, y: 0, z: v.z }, true);
+        board.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+
+        // Jumping (or getting launched) pops the rider off after a short airborne beat
+        r.hoverAirT = r.grounded ? 0 : (r.hoverAirT || 0) + dt;
+        if (r.hoverAirT > 0.25) {
+          this._dismount(r, board);
+          continue;
+        }
+
+      }
+    }
+  }
+
+  _mount(d, board) {
+    d.riding = board;
+    board.rider = d;
+    // Dweeb.preStep reads this: faster top speed, slidey accel
+    d.hoverRiding = true;
+    d.hoverAirT = 0;
+    this.fx.hoverMount?.(d, board);
+  }
+
+  _dismount(d, board) {
+    if (d.riding !== board) return;
+    d.riding = null;
+    board.rider = null;
+    d.hoverRiding = false;
+    d.hoverAirT = 0;
+    // Pop visual feedback
+    this.fx.hoverDismount?.(d, board);
   }
 }
 

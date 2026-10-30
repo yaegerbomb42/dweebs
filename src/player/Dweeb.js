@@ -472,6 +472,7 @@ export class Dweeb {
       if (this.held?.kind === 'dweeb') speed *= 0.72;
       else if (this.held) speed *= (this.carryMul ?? 1) * (this.grabSettle > 0 ? 0.5 : 1);
       if (this.charging > 0) speed *= 0.35;
+      if (this.hoverRiding) speed *= 2.2; // hoverboard: much faster top speed
 
       const tx = this.moveInput.x * speed;
       const tz = this.moveInput.y * speed;
@@ -485,6 +486,7 @@ export class Dweeb {
         ? (braking ? MV.groundBrake : MV.groundAccel) * this.traction
         : (braking ? MV.airBrake : MV.airAccel) * this.stats.airAccel;
       let accel = rate * dt;
+      if (this.hoverRiding) accel *= 0.22; // hoverboard: slidey, slow to turn or stop
       if (this.grounded && hSpeed > MV.skidSpeed && facing < -0.3 && this.skidTimer <= 0) {
         this.skidTimer = 0.22;
         this.onSkid?.(this, hSpeed);
