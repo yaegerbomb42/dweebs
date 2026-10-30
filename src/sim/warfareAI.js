@@ -17,6 +17,7 @@ export const PREFERENCES = Object.freeze({
   shield: { kami: 2, stealer: 1 },
   brute: { shield: 2 },
   boss: {},
+  medic: { kami: 3, sneak: 2, stealer: 1 },
 });
 
 const CLUSTER_WEIGHT = { rocket: 2.5, kami: 1.5, boss: 1, brute: 0.5 };
