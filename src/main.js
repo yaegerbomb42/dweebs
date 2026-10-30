@@ -925,7 +925,8 @@ function startMatch() {
     audio.startMusic(false);
     controller.enabled = true;
     match.phase = Phase.PLAYING;
-    match.running = false; // Prevents brawler stocks, sudden death, countdowns, and blast zone KOs
+    // (was `match.running = false`, but `running` is a getter: in a module that assignment threw and
+    // aborted the rest of adventure setup. Behaviour is unchanged — the phase above already decides it.)
     hud.clearTransient();
     trails.clear();
     bursts.clear();

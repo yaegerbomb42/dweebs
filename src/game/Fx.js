@@ -80,6 +80,22 @@ export class Fx {
     }
   }
 
+  /**
+   * Footstep (Dweeb.onStep). main.js has wired this since the footstep cadence landed, but the
+   * method was missing, so every stride threw. Now: a soft, weighted pat, plus a little dust kick
+   * when sprinting near the camera.
+   */
+  step(d, speed = 0) {
+    const pos = d.getPosition();
+    const near = this._near(pos, 18);
+    if (near <= 0 && !d.isPlayer) return;
+    const w = Math.min(1, speed / 10) * 0.6 + ((d.stats?.mass ?? 3) / 3) * 0.2;
+    this.audio.playFootstep?.(this._pan(pos), w);
+    if (speed > 7 && near > 0.3 && Math.random() < 0.5) {
+      this.particles.emit({ x: pos.x, y: pos.y - 0.45, z: pos.z }, { count: 3, colors: [0xe8dcc4, 0xd2c3a3], speed: 1.2, up: 0.8, size: 0.09, life: 0.35 });
+    }
+  }
+
   /** Heavy throws telegraph their heft: grunt popup, dust, a tiny freeze. */
   heavyThrow(d, obj, mass) {
     const pos = d.getPosition();
