@@ -137,7 +137,7 @@ const CSS = `
   padding-bottom: 4px;
 }
 .bd-row { margin-bottom: 12px; }
-.bd-label { font-size: 13px; font-weight: 800; opacity: 0.9; margin-bottom: 4px; display: flex; justify-content: space-between; }
+.bd-label { font-size: 13px; font-weight: 800; opacity: 0.9; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
 .bd-seg { display: flex; flex-wrap: wrap; gap: 6px; }
 .bd-seg-btn {
   font-family: 'Lilita One', sans-serif;
@@ -166,6 +166,42 @@ const CSS = `
   padding: 0;
   background: none;
 }
+
+/* Lock buttons */
+.bd-lock-btn {
+  pointer-events: auto;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: #fff8ee;
+  opacity: 0.45;
+  transition: opacity 0.15s, transform 0.08s, background 0.15s, border-color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+}
+.bd-lock-btn:hover {
+  opacity: 1;
+  transform: scale(1.15);
+  background: rgba(255, 255, 255, 0.08);
+}
+.bd-lock-btn.locked {
+  opacity: 1;
+  color: #ffd23f;
+  border-color: #ffd23f;
+  background: rgba(255, 210, 63, 0.15);
+}
+.bd-lock-btn.locked:hover {
+  background: rgba(255, 210, 63, 0.3);
+}
+.bd-row-locked { position: relative; }
+.bd-row-locked .bd-label { padding-right: 36px; }
 
 .bd-center-action {
   pointer-events: auto;
@@ -284,6 +320,7 @@ export class BuildADweebHud {
         </div>
         <div class="bd-top-actions">
           <button class="bd-btn yellow" id="bd-btn-random">🎲 RANDOM MUTANT</button>
+          <button class="bd-btn yellow" id="bd-btn-reroll-unlocked" style="display:none;">🔁 REROLL UNLOCKED</button>
           <button class="bd-btn alt" id="bd-btn-exit">◀ DWEEB MALL</button>
         </div>
       </div>
@@ -292,34 +329,48 @@ export class BuildADweebHud {
         <!-- Left Panel: Anatomy & Style -->
         <div class="bd-panel">
           <div class="bd-sec-title">🧬 ANATOMY &amp; SHAPE</div>
-          
-          <div class="bd-row">
+
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">BODY ARCHETYPE</div>
+            <button class="bd-lock-btn" data-lock="shape" aria-pressed="false" title="Lock body shape" aria-label="Lock body shape">🔓</button>
             <div class="bd-seg" id="bd-seg-shape">
               ${BODY_SHAPES.map(s => `<button class="bd-seg-btn" data-v="${s}">${s.toUpperCase()}</button>`).join('')}
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">BODY WIDTH <span id="bd-lbl-w">1.0x</span></div>
+            <button class="bd-lock-btn" data-lock="width" aria-pressed="false" title="Lock body width" aria-label="Lock body width">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-w" min="0.5" max="1.8" step="0.05" value="1.0">
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">BODY HEIGHT <span id="bd-lbl-h">1.0x</span></div>
+            <button class="bd-lock-btn" data-lock="height" aria-pressed="false" title="Lock body height" aria-label="Lock body height">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-h" min="0.5" max="1.8" step="0.05" value="1.0">
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
+            <div class="bd-label">BODY DEPTH</div>
+            <button class="bd-lock-btn" data-lock="depth" aria-pressed="false" title="Lock body depth" aria-label="Lock body depth">🔓</button>
+            <input type="range" class="bd-slider" id="bd-slider-d" min="0.5" max="1.8" step="0.05" value="1.0">
+          </div>
+
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">COLORS</div>
+            <button class="bd-lock-btn" data-lock="primaryColor" aria-pressed="false" title="Lock primary color" aria-label="Lock primary color">🔓</button>
+            <button class="bd-lock-btn" data-lock="accentColor" aria-pressed="false" title="Lock accent color" aria-label="Lock accent color">🔓</button>
             <div style="display:flex; gap:12px; align-items:center;">
               <label style="font-size:12px; font-weight:800;">Primary: <input type="color" class="bd-color-picker" id="bd-col-primary" value="#ff4d5e"></label>
               <label style="font-size:12px; font-weight:800;">Accent: <input type="color" class="bd-color-picker" id="bd-col-accent" value="#ffd23f"></label>
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">EYE COUNT &amp; SIZE</div>
+            <button class="bd-lock-btn" data-lock="eyeCount" aria-pressed="false" title="Lock eye count" aria-label="Lock eye count">🔓</button>
+            <button class="bd-lock-btn" data-lock="eyeSize" aria-pressed="false" title="Lock eye size" aria-label="Lock eye size">🔓</button>
+            <button class="bd-lock-btn" data-lock="eyeSpacing" aria-pressed="false" title="Lock eye spacing" aria-label="Lock eye spacing">🔓</button>
             <div class="bd-seg" id="bd-seg-eyes" style="margin-bottom:6px;">
               <button class="bd-seg-btn" data-v="1">1 CYCLOPS</button>
               <button class="bd-seg-btn active" data-v="2">2 EYES</button>
@@ -327,10 +378,12 @@ export class BuildADweebHud {
               <button class="bd-seg-btn" data-v="4">4 SPIDER</button>
             </div>
             <input type="range" class="bd-slider" id="bd-slider-eyesize" min="0.5" max="1.8" step="0.05" value="1.0">
+            <input type="range" class="bd-slider" id="bd-slider-eyespacing" min="0.5" max="1.8" step="0.05" value="1.0" style="margin-top:6px;">
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">APPENDAGES &amp; GEAR</div>
+            <button class="bd-lock-btn" data-lock="appendage" aria-pressed="false" title="Lock appendage" aria-label="Lock appendage">🔓</button>
             <div class="bd-seg" id="bd-seg-app">
               ${APPENDAGES.map(a => {
                 const g = APPENDAGE_GAMEPLAY[a];
@@ -340,8 +393,9 @@ export class BuildADweebHud {
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">ELEMENTAL PALETTE <span style="opacity:0.7;">unlock via tournament</span></div>
+            <button class="bd-lock-btn" data-lock="palette" aria-pressed="false" title="Lock elemental palette" aria-label="Lock elemental palette">🔓</button>
             <div class="bd-seg" id="bd-seg-palette">
               ${Object.entries(ELEMENTAL_PALETTES).map(([id, p]) =>
                 `<button class="bd-seg-btn" data-v="${id}" title="${p.name} — ${p.unlock}">⚡ ${p.name.toUpperCase()}</button>`
@@ -349,8 +403,9 @@ export class BuildADweebHud {
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">FEET / LEGS</div>
+            <button class="bd-lock-btn" data-lock="feet" aria-pressed="false" title="Lock feet type" aria-label="Lock feet type">🔓</button>
             <div class="bd-seg" id="bd-seg-feet">
               ${FEET_TYPES.map(f => `<button class="bd-seg-btn" data-v="${f}">${f.toUpperCase()}</button>`).join('')}
             </div>
@@ -398,8 +453,9 @@ export class BuildADweebHud {
         <div class="bd-panel">
           <div class="bd-sec-title">🧠 COMBAT STATS &amp; AI DNA</div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">CONFIDENCE (STANCE) <span id="bd-lbl-conf">Rushdown</span></div>
+            <button class="bd-lock-btn" data-lock="dna.confidence" aria-pressed="false" title="Lock confidence" aria-label="Lock confidence">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-conf" min="0.1" max="1.0" step="0.05" value="0.8">
             <div style="display:flex; justify-content:space-between; font-size:10px; opacity:0.75; margin-top:2px;">
               <span>Elusive Kiter</span>
@@ -408,8 +464,9 @@ export class BuildADweebHud {
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">AIM MASTERY <span id="bd-lbl-aim">Calculated</span></div>
+            <button class="bd-lock-btn" data-lock="dna.aimAccuracy" aria-pressed="false" title="Lock aim accuracy" aria-label="Lock aim accuracy">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-aim" min="0.1" max="1.0" step="0.05" value="0.7">
             <div style="display:flex; justify-content:space-between; font-size:10px; opacity:0.75; margin-top:2px;">
               <span>Rapid Chaos Spam</span>
@@ -417,13 +474,15 @@ export class BuildADweebHud {
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">AGILITY &amp; DODGING <span id="bd-lbl-agi">Fast</span></div>
+            <button class="bd-lock-btn" data-lock="dna.agility" aria-pressed="false" title="Lock agility" aria-label="Lock agility">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-agi" min="0.3" max="1.0" step="0.05" value="0.75">
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">SCAVENGING APPETITE <span id="bd-lbl-scav">Item Hunter</span></div>
+            <button class="bd-lock-btn" data-lock="dna.scavenge" aria-pressed="false" title="Lock scavenging" aria-label="Lock scavenging">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-scav" min="0.1" max="1.0" step="0.05" value="0.6">
             <div style="display:flex; justify-content:space-between; font-size:10px; opacity:0.75; margin-top:2px;">
               <span>Fists Only</span>
@@ -431,20 +490,41 @@ export class BuildADweebHud {
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">MASS &amp; KNOCKBACK WEIGHT <span id="bd-lbl-mass">3.0 kg</span></div>
+            <button class="bd-lock-btn" data-lock="stats.mass" aria-pressed="false" title="Lock mass" aria-label="Lock mass">🔓</button>
             <input type="range" class="bd-slider" id="bd-slider-mass" min="1.8" max="4.5" step="0.1" value="3.0">
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
+            <div class="bd-label">SPEED <span id="bd-lbl-speed">1.0x</span></div>
+            <button class="bd-lock-btn" data-lock="stats.speed" aria-pressed="false" title="Lock speed" aria-label="Lock speed">🔓</button>
+            <input type="range" class="bd-slider" id="bd-slider-speed" min="0.5" max="1.6" step="0.05" value="1.0">
+          </div>
+
+          <div class="bd-row bd-row-locked">
+            <div class="bd-label">JUMP POWER <span id="bd-lbl-jump">1.0x</span></div>
+            <button class="bd-lock-btn" data-lock="stats.jump" aria-pressed="false" title="Lock jump" aria-label="Lock jump">🔓</button>
+            <input type="range" class="bd-slider" id="bd-slider-jump" min="0.5" max="1.6" step="0.05" value="1.0">
+          </div>
+
+          <div class="bd-row bd-row-locked">
+            <div class="bd-label">ARMOR <span id="bd-lbl-armor">1.0x</span></div>
+            <button class="bd-lock-btn" data-lock="stats.armor" aria-pressed="false" title="Lock armor" aria-label="Lock armor">🔓</button>
+            <input type="range" class="bd-slider" id="bd-slider-armor" min="0.5" max="1.6" step="0.05" value="1.0">
+          </div>
+
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">EYEBROW EXPRESSION</div>
+            <button class="bd-lock-btn" data-lock="brows" aria-pressed="false" title="Lock eyebrows" aria-label="Lock eyebrows">🔓</button>
             <div class="bd-seg" id="bd-seg-brows">
               ${BROW_STYLES.map(b => `<button class="bd-seg-btn" data-v="${b}">${b.toUpperCase()}</button>`).join('')}
             </div>
           </div>
 
-          <div class="bd-row">
+          <div class="bd-row bd-row-locked">
             <div class="bd-label">MOUTH STYLE</div>
+            <button class="bd-lock-btn" data-lock="mouth" aria-pressed="false" title="Lock mouth" aria-label="Lock mouth">🔓</button>
             <div class="bd-seg" id="bd-seg-mouth">
               ${MOUTH_STYLES.map(m => `<button class="bd-seg-btn" data-v="${m}">${m.toUpperCase()}</button>`).join('')}
             </div>
@@ -508,7 +588,9 @@ export class BuildADweebHud {
 
     wireSlider('#bd-slider-w', '#bd-lbl-w', 'width', v => `${v.toFixed(2)}x`);
     wireSlider('#bd-slider-h', '#bd-lbl-h', 'height', v => `${v.toFixed(2)}x`);
+    wireSlider('#bd-slider-d', null, 'depth');
     wireSlider('#bd-slider-eyesize', null, 'eyeSize');
+    wireSlider('#bd-slider-eyespacing', null, 'eyeSpacing');
 
     // DNA Sliders
     $('#bd-slider-conf').addEventListener('input', e => {
@@ -541,6 +623,16 @@ export class BuildADweebHud {
       this._notifyChange({ stats: { mass: v } });
     });
 
+    // New stat sliders
+    for (const k of ['speed', 'jump', 'armor']) {
+      $(`#bd-slider-${k}`)?.addEventListener('input', e => {
+        const v = parseFloat(e.target.value);
+        const lbl = $(`#bd-lbl-${k}`);
+        if (lbl) lbl.textContent = `${v.toFixed(2)}x`;
+        this._notifyChange({ stats: { [k]: v } });
+      });
+    }
+
     // Segmented selectors
     const wireSeg = (containerId, key, parseVal = x => x) => {
       const container = $(containerId);
@@ -560,6 +652,32 @@ export class BuildADweebHud {
     wireSeg('#bd-seg-feet', 'feet');
     wireSeg('#bd-seg-brows', 'brows');
     wireSeg('#bd-seg-mouth', 'mouth');
+
+    // Lock buttons
+    this.root.querySelectorAll('.bd-lock-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const key = btn.dataset.lock;
+        if (!key) return;
+        const locked = this.handlers.onToggleLock?.(key);
+        if (locked !== undefined) {
+          btn.classList.toggle('locked', locked);
+          btn.setAttribute('aria-pressed', locked);
+          btn.textContent = locked ? '🔒' : '🔓';
+          // Show/hide reroll unlocked button
+          const rerollBtn = this.root?.querySelector('#bd-btn-reroll-unlocked');
+          if (rerollBtn) {
+            const anyLocked = this.root.querySelectorAll('.bd-lock-btn.locked').length > 0;
+            rerollBtn.style.display = anyLocked ? 'inline-flex' : 'none';
+          }
+        }
+      });
+    });
+
+    // Reroll unlocked button
+    $('#bd-btn-reroll-unlocked').addEventListener('click', () => {
+      this.handlers.onRerollUnlocked?.();
+    });
 
     // Random button
     $('#bd-btn-random').addEventListener('click', () => {
@@ -627,6 +745,8 @@ export class BuildADweebHud {
     if ($('#bd-col-accent')) $('#bd-col-accent').value = config.accentColor || '#ffd23f';
     if ($('#bd-slider-w')) $('#bd-slider-w').value = config.width || 1.0;
     if ($('#bd-slider-h')) $('#bd-slider-h').value = config.height || 1.0;
+    if ($('#bd-slider-d')) $('#bd-slider-d').value = config.depth || 1.0;
+    if ($('#bd-slider-eyespacing')) $('#bd-slider-eyespacing').value = config.eyeSpacing || 1.0;
     if ($('#bd-lbl-w')) $('#bd-lbl-w').textContent = `${(config.width || 1.0).toFixed(2)}x`;
     if ($('#bd-lbl-h')) $('#bd-lbl-h').textContent = `${(config.height || 1.0).toFixed(2)}x`;
 
@@ -668,10 +788,26 @@ export class BuildADweebHud {
       }
     }
 
-    const mass = config.stats?.mass ?? config.mass;
-    if (mass !== undefined && $('#bd-slider-mass')) {
-      $('#bd-slider-mass').value = mass;
-      if ($('#bd-lbl-mass')) $('#bd-lbl-mass').textContent = `${Number(mass).toFixed(1)} kg`;
+    const stats = config.stats || {};
+    if ($('#bd-slider-mass')) {
+      const m = stats.mass ?? config.mass ?? 3.0;
+      $('#bd-slider-mass').value = m;
+      if ($('#bd-lbl-mass')) $('#bd-lbl-mass').textContent = `${Number(m).toFixed(1)} kg`;
+    }
+    if ($('#bd-slider-speed')) {
+      const s = stats.speed ?? 1.0;
+      $('#bd-slider-speed').value = s;
+      if ($('#bd-lbl-speed')) $('#bd-lbl-speed').textContent = `${Number(s).toFixed(2)}x`;
+    }
+    if ($('#bd-slider-jump')) {
+      const j = stats.jump ?? 1.0;
+      $('#bd-slider-jump').value = j;
+      if ($('#bd-lbl-jump')) $('#bd-lbl-jump').textContent = `${Number(j).toFixed(2)}x`;
+    }
+    if ($('#bd-slider-armor')) {
+      const a = stats.armor ?? 1.0;
+      $('#bd-slider-armor').value = a;
+      if ($('#bd-lbl-armor')) $('#bd-lbl-armor').textContent = `${Number(a).toFixed(2)}x`;
     }
 
     const presetRow = $('#bd-presets-row');
@@ -682,6 +818,25 @@ export class BuildADweebHud {
         const match = p && (config.badge === p.badge || config.name === p.name);
         b.classList.toggle('active', !!match);
       });
+    }
+  }
+
+  // ─── Lock button sync (called from lab when locks change) ───────────────────
+
+  /** Update lock button UI to match lab's lockedParts set. */
+  syncLocks(lockedParts = new Set()) {
+    if (!this.root) return;
+    this.root.querySelectorAll('.bd-lock-btn').forEach(btn => {
+      const key = btn.dataset.lock;
+      const locked = lockedParts.has(key);
+      btn.classList.toggle('locked', locked);
+      btn.setAttribute('aria-pressed', locked);
+      btn.textContent = locked ? '🔒' : '🔓';
+    });
+    const rerollBtn = this.root?.querySelector('#bd-btn-reroll-unlocked');
+    if (rerollBtn) {
+      const anyLocked = lockedParts.size > 0;
+      rerollBtn.style.display = anyLocked ? 'inline-flex' : 'none';
     }
   }
 
@@ -752,7 +907,7 @@ export class BuildADweebHud {
       </div>`).join('')}</div>`;
   }
 
-  // ─── Combat telemetry UI ───────────────────────────────────────────────────
+  // ─── Combat telemetry UI ──────────────────────────────────────────────────
 
   /** Attach a live CombatTelemetry feed; call updateTelemetry() per frame to refresh. */
   attachTelemetry(t) {
