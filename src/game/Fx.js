@@ -227,6 +227,18 @@ export class Fx {
     this.audio.playComicBonk(this._pan(pos));
   }
 
+  whoopee(pos, sitter) {
+    const p = { x: pos.x, y: pos.y + 0.1, z: pos.z };
+    this.particles.emit(p, { count: 26, colors: [0x9ccc3c, 0xb8e05a, 0x7ea832, 0xd4ef8a], speed: 3.2, up: 0.9, size: 0.34, life: 1.1, gravity: 0.6, drag: 2.4, grow: 1.6 });
+    this.particles.ring(p, { color: 0xb8e05a, size: 5.5, life: 0.45 });
+    this.particles.dust({ x: pos.x, y: pos.y, z: pos.z }, 6);
+    this.audio.playWhoopee?.(this._pan(p), 0.85 + Math.random() * 0.35);
+    this.hud.popup(Math.random() < 0.5 ? 'PFFFFT!' : 'BRAAAP!', { x: p.x, y: p.y + 1.4, z: p.z }, 'big', 0xb8e05a);
+    this.cam.shake(0.12);
+    if (sitter) this.haptics?.hit(0.8, this._near(p, 24), !!sitter.isPlayer);
+    this.arena?.excite?.(0.4);
+  }
+
   whiff(d, weapon) {
     if (d.isPlayer || this._near(d.getPosition(), 8) > 0) this.audio.playWhoosh(this._pan(d.getPosition()));
   }

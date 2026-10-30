@@ -97,6 +97,17 @@ export const BALANCE = {
     max: 0.18,
   },
 
+  // Whoopee Cushion trap: step (or land) on it and it lets rip
+  whoopee: {
+    radius: 0.62,          // metres from the cushion centre that counts as sitting on it
+    up: 11.5,              // vertical launch for the Dweeb that triggered it
+    gasRadius: 3.2,        // stink cloud shove radius
+    gasPush: 6.5,          // horizontal shove at the cushion, falling off to 0 at gasRadius
+    gasStun: 0.3,
+    refill: 4.5,           // seconds flat before it re-inflates and arms again
+    thrownSpeed: 7,        // a thrown prop or Dweeb landing on it this fast also sets it off
+  },
+
   // Recovery tools (Spec 6)
   airDodge: { speed: 11, invuln: 0.25, duration: 0.28, cooldown: 1.2 },
   tech: { buffer: 0.1, invuln: 0.3, missProne: 0.55 },
