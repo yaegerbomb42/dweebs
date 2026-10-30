@@ -1076,7 +1076,7 @@ export class CombatSystem {
           const hp = holder.getPosition();
           holder.receiveHit({ dir: new THREE.Vector3(0, 1, 0), damage, base: launch, growth: 0, attacker: obj.thrownBy, time: this.time });
           this.fx.hit(holder, obj.thrownBy, launch, 'boom');
-          this.fx.popup('POW!', hp, 'big', 0xffd23f);
+          this.fx.hud?.popup('POW!', hp, 'big', 0xffd23f);
         }
         this.arena.spawnDebris(pos, obj.def.color ?? 0xd4a86a, 8, obj.def.material, obj.def.breakColors);
         this.arena.removeObject(obj);
@@ -1102,7 +1102,7 @@ export class CombatSystem {
         if (l > 0) {
           hitAny = true;
           this.fx.hit(d, obj.thrownBy, l, 'boom');
-          this.fx.popup('BOING!', { x: dp.x, y: dp.y + 0.8, z: dp.z }, 'big', 0xffd23f);
+          this.fx.hud?.popup('BOING!', { x: dp.x, y: dp.y + 0.8, z: dp.z }, 'big', 0xffd23f);
           if (obj.thrownBy && obj.thrownBy !== d) this.addStyle(obj.thrownBy, 6 + l * 0.4);
         }
       }
@@ -1118,7 +1118,7 @@ export class CombatSystem {
 
       // FX and cleanup
       this.fx.explosion(pos); // reuse explosion FX for the pop
-      this.fx.popup('POW!', { x: pos.x, y: pos.y + 0.6, z: pos.z }, 'big', 0xffd23f);
+      this.fx.hud?.popup('POW!', { x: pos.x, y: pos.y + 0.6, z: pos.z }, 'big', 0xffd23f);
       this.arena.spawnDebris(pos, obj.def.color ?? 0xd4a86a, 10, obj.def.material, obj.def.breakColors);
       this.arena.removeObject(obj);
     }
