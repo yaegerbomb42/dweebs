@@ -243,7 +243,10 @@ export class Match {
     const ranked = this.roundStandings();
     const winner = ranked[0];
     this.roundWinner = winner;
-    this.roundWins.set(winner, (this.roundWins.get(winner) || 0) + 1);
+    // Team Battle: the whole surviving squad banks the round, not just its healthiest member.
+    const squad = this.settings.mode === 'teams' && winner.team != null
+      ? this.dweebs.filter(d => d.team === winner.team) : [winner];
+    for (const m of squad) this.roundWins.set(m, (this.roundWins.get(m) || 0) + 1);
     if (this.roundWins.get(winner) >= this.settings.roundsToWin) this.matchWinner = winner;
     this.phase = Phase.ROUND_END;
     this.phaseTimer = 4;
