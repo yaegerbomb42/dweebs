@@ -19,6 +19,18 @@ export const HAT_POOL = ['🍓 Berry Beret', '👑 Tin Crown', '🎩 Top Hat', '
 export const TOOL_POOL = ['🔧 Wobbly Wrench', '🔨 Plush Hammer', '✂️ Snip-Snips', '🧲 Magnet Mitt'];
 /** Cap on torch PointLights so 30+ structures stay at 60 fps. */
 export const MAX_TORCHLIGHTS = 12;
+/** Locust swarm tuning: a short, hungry weather event with a feel-good payoff. */
+export const LOCUST_TUNING = {
+  durationMin: 15,
+  durationMax: 20,
+  driftSpeed: 2.4,
+  eatPerSecond: 0.85,
+  grace: 2.5,
+  stuntScareRadius: 7,
+  torchScareRadius: 9,
+  towerScareRadius: 22,
+  bonusBerries: 3,
+};
 
 export class Meadowlands {
   constructor(physicsWorld, scene, options = {}) {
@@ -63,9 +75,11 @@ export class Meadowlands {
     this.toyTown = null;      // handcrafted six-building toy district
 
     // ── Expedition & Dynasty upgrade: weather & wildlife ──
-    this.weather = 'clear';   // 'clear' | 'rain' | 'fog'
+    this.weather = 'clear';   // 'clear' | 'rain' | 'fog' | 'locusts'
     this.weatherTimer = 50 + Math.random() * 40;
     this.rainDrops = null;    // rain particle cloud, visible only while raining
+    this.locustSwarm = null;  // recycled locust point cloud over the berry fields
+    this.locust = null;       // active swarm state while weather === 'locusts'
     this.beetleTimer = 20;    // seconds until the first friendly beetle wanders in
     this._baseFog = undefined; // scene fog captured lazily before a fog event
 
@@ -104,6 +118,7 @@ export class Meadowlands {
     this._createToyRuins();
     this._createDayNight();
     this._createRainDrops();
+    this._createLocustSwarm();
   }
 
   /** A cheap rain shower: one recycled Points cloud of falling drops. */
@@ -124,9 +139,34 @@ export class Meadowlands {
     this.group.add(this.rainDrops);
   }
 
+  /** A hungry locust swarm: one recycled Points cloud that drifts bush to bush. */
+  _createLocustSwarm() {
+    const count = 220;
+    const positions = new Float32Array(count * 3);
+    this._locustBaseY = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.sqrt(Math.random()) * 4.5;
+      positions[i * 3] = Math.cos(angle) * radius;
+      positions[i * 3 + 1] = Math.random() * 3.2;
+      positions[i * 3 + 2] = Math.sin(angle) * radius;
+      this._locustBaseY[i] = positions[i * 3 + 1];
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xb7d43a, size: 0.28, transparent: true, opacity: 0.9,
+      depthWrite: false,
+    });
+    this.locustSwarm = new THREE.Points(geo, mat);
+    this.locustSwarm.visible = false;
+    this.locustSwarm.frustumCulled = false;
+    this.group.add(this.locustSwarm);
+  }
+
   /**
-   * Rain showers accelerate berry growth; fog banks roll in (thicker at night)
-   * and make torchlight the village's lifeline. Wired into the day/night cycle.
+   * Rain showers accelerate berry growth, locusts devour ripe bushes, and fog
+   * banks roll in (thicker at night) to make torchlight the village's lifeline.
    */
   _updateWeather(dt, colony) {
     this.weatherTimer -= dt;
@@ -140,21 +180,28 @@ export class Meadowlands {
       }
       pos.needsUpdate = true;
     }
+    if (this.weather === 'locusts') this._updateLocusts(dt, colony);
   }
 
   _rollWeather(colony) {
     const was = this.weather;
-    if (was === 'rain' || was === 'fog') {
+    if (was === 'rain' || was === 'fog' || was === 'locusts') {
       this._endWeather();
       this.weather = 'clear';
       this.weatherTimer = 50 + Math.random() * 60;
+      if (was === 'locusts') {
+        colony?._addLog('🦗 The locust swarm buzzes off over the hills, leaving the meadow in peace.');
+      }
       return;
     }
-    // Clear skies: roll the next event. Fog creeps in more often at night.
+    // Clear skies: roll the next event. Fog creeps in more often at night;
+    // locusts are a daytime menace.
     const r = Math.random();
     const fogChance = this.isNight ? 0.3 : 0.15;
+    const locustChance = this.isNight ? 0.04 : 0.12;
     if (r < 0.35) this._startRain(colony);
     else if (r < 0.35 + fogChance) this._startFog(colony);
+    else if (r < 0.35 + fogChance + locustChance) this._startLocusts(colony);
     else this.weatherTimer = 30 + Math.random() * 40; // stays clear a while longer
   }
 
@@ -175,9 +222,148 @@ export class Meadowlands {
     colony?._addLog('🌫️ Fog rolls in — the village torches are the only light to trust!');
   }
 
+  /** A locust swarm descends on the berry fields and starts chewing. */
+  _startLocusts(colony) {
+    this.weather = 'locusts';
+    this.weatherTimer = LOCUST_TUNING.durationMin +
+      Math.random() * (LOCUST_TUNING.durationMax - LOCUST_TUNING.durationMin);
+    const target = this._pickLocustBush(0, 0);
+    const x = target ? target.x : 0;
+    const z = target ? target.z : 0;
+    this.locust = {
+      x, z, target, colony,
+      biteAccum: 0,
+      grace: LOCUST_TUNING.grace,
+    };
+    if (this.rainDrops) this.rainDrops.visible = false;
+    if (this.locustSwarm) {
+      this.locustSwarm.visible = true;
+      this.locustSwarm.position.set(x, this._getHeight(x, z) + 3.2, z);
+    }
+    this.fx?.audio?.playWhoosh?.(0, 0.9);
+    this.fx?.cam?.shake?.(0.28);
+    colony?._addLog('🦗 A locust swarm descends! It is chewing through the ripe berry bushes!');
+  }
+
   _endWeather() {
     if (this.rainDrops) this.rainDrops.visible = false;
+    if (this.locustSwarm) this.locustSwarm.visible = false;
+    this.locust = null;
     if (this.scene && this._baseFog !== undefined) this.scene.fog = this._baseFog;
+  }
+
+  /** Nearest berry bush that still has ripe berries for the swarm to chew. */
+  _pickLocustBush(fromX = 0, fromZ = 0) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const bush of this.berryBushes) {
+      if (!bush || bush.available <= 0) continue;
+      const d = Math.hypot(bush.x - fromX, bush.z - fromZ);
+      if (d < bestDist) {
+        bestDist = d;
+        best = bush;
+      }
+    }
+    return best;
+  }
+
+  /** True when a watchtower stands within r meters of (x, z). */
+  _towerNear(x, z, r) {
+    const structures = this.buildingManager?.placedStructures;
+    if (!Array.isArray(structures)) return false;
+    for (const s of structures) {
+      if (!s || s.id !== 'ziptower' || !s.pos) continue;
+      if (Math.hypot(s.pos.x - x, s.pos.z - z) < r) return true;
+    }
+    return false;
+  }
+
+  /** Torch/watchtower coverage or a nearby stunt scatters the swarm. */
+  _scareLocusts(colony, reason = 'stunt') {
+    const swarm = this.locust;
+    if (this.weather !== 'locusts' || !swarm) return false;
+    const col = colony || swarm.colony || null;
+    const pos = { x: swarm.x, y: this._getHeight(swarm.x, swarm.z) + 1.5, z: swarm.z };
+    const silos = this.buildingManager
+      ? this.buildingManager.placedStructures.filter(s => s.id === 'silo')
+      : [];
+    if (col) {
+      if (typeof col.addResource === 'function') {
+        col.addResource('berries', LOCUST_TUNING.bonusBerries, silos);
+      } else if (col.resources) {
+        col.resources.berries = (col.resources.berries || 0) + LOCUST_TUNING.bonusBerries;
+      }
+    }
+    const lines = {
+      torch: '🔥 Torchlight drives the swarm away!',
+      tower: '🗼 The watchtower spots the swarm and scares it off!',
+      stunt: '🤸 A wild stunt sends the swarm scattering!',
+    };
+    col?._addLog(`🦗💨 ${lines[reason] || lines.stunt} The bushes are saved — +${LOCUST_TUNING.bonusBerries} 🍓 bonus!`);
+    this.fx?.hud?.popup?.('SCATTER!', pos, 'big', 0xb7d43a);
+    this.fx?.cam?.shake?.(0.35);
+    this.fx?.audio?.playCheer?.(0.7);
+    this._endWeather();
+    this.weather = 'clear';
+    this.weatherTimer = 50 + Math.random() * 50;
+    return true;
+  }
+
+  /** Drift the swarm to a ripe bush, chew a fraction of its berries per second,
+   *  and let coverage scare it away. */
+  _updateLocusts(dt, colony) {
+    const swarm = this.locust;
+    if (!swarm) return;
+    swarm.grace = Math.max(0, swarm.grace - dt);
+    if (swarm.target && swarm.target.available <= 0) swarm.target = null;
+    if (!swarm.target) swarm.target = this._pickLocustBush(swarm.x, swarm.z);
+
+    if (swarm.target) {
+      const dx = swarm.target.x - swarm.x;
+      const dz = swarm.target.z - swarm.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 2.2) {
+        swarm.x += (dx / dist) * LOCUST_TUNING.driftSpeed * dt;
+        swarm.z += (dz / dist) * LOCUST_TUNING.driftSpeed * dt;
+      } else {
+        swarm.biteAccum += dt * LOCUST_TUNING.eatPerSecond;
+        while (swarm.biteAccum >= 1 && swarm.target && swarm.target.available > 0) {
+          swarm.biteAccum -= 1;
+          const bush = swarm.target;
+          const idx = bush.available - 1;
+          bush.available -= 1;
+          bush.regenTimer = 0;
+          if (bush.berries && bush.berries[idx]) bush.berries[idx].visible = false;
+          if (bush.available <= 0) {
+            colony?._addLog('🦗 The locust swarm strips a berry bush bare!');
+            swarm.target = null;
+            break;
+          }
+        }
+      }
+    }
+
+    if (this.locustSwarm) {
+      this.locustSwarm.position.set(
+        swarm.x,
+        this._getHeight(swarm.x, swarm.z) + 3.2 + Math.sin(this.clock * 2) * 0.25,
+        swarm.z
+      );
+      const pos = this.locustSwarm.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        pos.setY(i, this._locustBaseY[i] + Math.sin(this.clock * 9 + i * 1.7) * 0.22);
+      }
+      pos.needsUpdate = true;
+      this.locustSwarm.rotation.y += dt * 0.5;
+    }
+
+    if (swarm.grace <= 0) {
+      if (this._towerNear(swarm.x, swarm.z, LOCUST_TUNING.towerScareRadius)) {
+        this._scareLocusts(colony, 'tower');
+      } else if (this._torchNear(swarm.x, swarm.z, LOCUST_TUNING.torchScareRadius)) {
+        this._scareLocusts(colony, 'torch');
+      }
+    }
   }
 
   /** True when a lit village torch stands within r meters of (x, z). */
@@ -1127,6 +1313,10 @@ export class Meadowlands {
   _pushStunt(type, x, z) {
     this.stuntFeed.push({ type, x, z, at: this.clock });
     if (this.stuntFeed.length > 12) this.stuntFeed.shift();
+    if (this.weather === 'locusts' && this.locust) {
+      const d = Math.hypot(x - this.locust.x, z - this.locust.z);
+      if (d <= LOCUST_TUNING.stuntScareRadius) this._scareLocusts(null, 'stunt');
+    }
   }
 
   /**
@@ -1232,8 +1422,8 @@ export class Meadowlands {
   }
 
   _updateBushRegrowth(dt) {
-    // Rain showers accelerate crop growth.
-    const growthMult = this.weather === 'rain' ? 3 : 1;
+    // Rain showers accelerate crop growth; locusts suppress it entirely.
+    const growthMult = this.weather === 'rain' ? 3 : this.weather === 'locusts' ? 0 : 1;
     for (const bush of this.berryBushes) {
       if (bush.available >= 5) continue;
       bush.regenTimer = (bush.regenTimer || 0) + dt * growthMult;
