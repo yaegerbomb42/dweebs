@@ -1007,12 +1007,12 @@ export class CombatSystem {
 
   breakObject(obj, by = null) {
     const pos = obj.getPosition();
+    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
     if (by) this.addStyle(by, 5);
     const color = obj.def.color ?? 0xc4a06a;
     obj.broken = true;
     this.arena.removeObject(obj);
     this.arena.spawnDebris(pos, color, 8, obj.def.material, obj.def.breakColors);
-    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
     this.fx.break(pos, obj);
   }
 
