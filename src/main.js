@@ -1375,7 +1375,7 @@ function loop() {
     if (match.running) {
       if (currentMode === 'mimic') {
         // The bots are copycat pupils here: they watch and get yeeted, they don't brawl.
-        for (const d of dweebs) if (!d.isPlayer) d.moveInput.set(0, 0);
+        for (const d of dweebs) if (!d.isPlayer && !d.mimicGhost) d.moveInput.set(0, 0);
       } else {
         for (const b of bots) b.update(dt, dweebs);
         for (const b of builderBots) b.update(dt, dweebs);
