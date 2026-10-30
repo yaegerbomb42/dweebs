@@ -703,6 +703,21 @@ function setupMenu() {
     spectateTarget = alive[(i + (e.code === 'ArrowRight' ? 1 : alive.length - 1)) % alive.length];
     e.preventDefault();
   });
+
+  // Build lab hotkeys
+  window.addEventListener('keydown', e => {
+    if (currentMode !== 'build') return;
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    // R key: reroll unlocked parts
+    if (e.code === 'KeyR' && currentBuildLab && currentBuildHud) {
+      if (currentBuildLab.lockedParts.size > 0) {
+        e.preventDefault();
+        const cfg = currentBuildLab.rerollUnlocked();
+        currentBuildHud.syncForm(cfg);
+        audio.playUIClick?.();
+      }
+    }
+  });
 }
 
 function applyAudioSettings() {
@@ -1046,6 +1061,17 @@ function startBuildLab() {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
     },
+    onToggleLock: key => {
+      if (!currentBuildLab || !currentBuildHud) return false;
+      const locked = currentBuildLab.toggleLock(key);
+      currentBuildHud.syncLocks(currentBuildLab.lockedParts);
+      return locked;
+    },
+    onRerollUnlocked: () => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const cfg = currentBuildLab.rerollUnlocked();
+      currentBuildHud.syncForm(cfg);
+    },
     onGauntletStart: () => currentBuildLab?.startGauntlet(),
     onGauntletFight: () => currentBuildLab?.gauntletOpponent(),
     onGauntletAbandon: () => currentBuildLab?.abandonGauntlet(),
@@ -1139,6 +1165,8 @@ function startBuildLab() {
     },
   });
 
+  // Sync initial lock state
+  currentBuildHud.syncLocks(currentBuildLab.lockedParts);
   currentBuildHud.syncForm(currentBuildLab.config);
   currentBuildHud.show();
 

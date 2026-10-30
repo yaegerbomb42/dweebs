@@ -38,6 +38,7 @@ import {
 
 const STORAGE_KEY = 'dweebs-custom-build';
 export const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+const LOCKS_KEY = 'dweebs-locks-v1';
 const GAUNTLET_KEY = 'dweebs-gauntlet-v1';
 const STABLE_KEY = 'dweebs-stable-v1';
 const STABLE_SLOTS = 6;
@@ -179,6 +180,9 @@ export class BuildADweebLab {
     this.clock = 0;
     this._popT = 1;    // spawn-pop animation progress (1 = settled)
     this._flashT = 0;  // pedestal rim flash on rebuild
+
+    // Per-part locks for the reroll loop — persisted separately so existing builds still load.
+    this.lockedParts = this.loadLocks();
 
     // Live fighter synced to lab mutations (DNA → collider, no reload) and
     // the active tournament bracket (null when no tournament is running).
@@ -1019,6 +1023,79 @@ export class BuildADweebLab {
       }
     } catch { /* fallback */ }
     return { ...DEFAULT_BUILD_CONFIG };
+  }
+
+  // ─── Lock & Reroll ────────────────────────────────────────────────────────
+
+  /** Load persisted lock set from localStorage. */
+  loadLocks() {
+    try {
+      const saved = localStorage.getItem(LOCKS_KEY);
+      if (saved) return new Set(JSON.parse(saved));
+    } catch { /* private mode / corrupted */ }
+    return new Set();
+  }
+
+  /** Save current lock set to localStorage. */
+  saveLocks() {
+    try {
+      localStorage.setItem(LOCKS_KEY, JSON.stringify([...this.lockedParts]));
+    } catch { /* private mode */ }
+  }
+
+  /** Toggle lock state for a config key (e.g. 'shape', 'width', 'stats.speed', 'dna.confidence'). */
+  toggleLock(key) {
+    if (this.lockedParts.has(key)) {
+      this.lockedParts.delete(key);
+    } else {
+      this.lockedParts.add(key);
+    }
+    this.saveLocks();
+    return this.lockedParts.has(key);
+  }
+
+  /** Check if a config key is currently locked. */
+  isLocked(key) {
+    return this.lockedParts.has(key);
+  }
+
+  /** Get a nested value from config by dot-path (e.g. 'stats.speed'). */
+  _getConfigValue(obj, path) {
+    if (!obj) return undefined;
+    const parts = path.split('.');
+    let cur = obj;
+    for (const p of parts) {
+      if (cur === null || cur === undefined) return undefined;
+      cur = cur[p];
+    }
+    return cur;
+  }
+
+  /** Set a nested value on config by dot-path, returning a new config object. */
+  _setConfigValue(config, path, value) {
+    const parts = path.split('.');
+    const result = JSON.parse(JSON.stringify(config));
+    let cur = result;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts[i];
+      if (cur[p] === undefined) cur[p] = {};
+      cur = cur[p];
+    }
+    cur[parts[parts.length - 1]] = value;
+    return result;
+  }
+
+  /** Reroll all unlocked parts: roll a fresh random build, then put every locked value back. */
+  rerollUnlocked() {
+    const keep = [...this.lockedParts].map(k => [k, this._getConfigValue(this.config, k)]);
+    let candidate = this.mutateRandom();
+    for (const [key, val] of keep) {
+      if (val !== undefined) candidate = this._setConfigValue(candidate, key, val);
+    }
+    this.config = candidate;
+    this.rebuildModel();
+    this.saveConfig();
+    return this.config;
   }
 
   dispose() {
