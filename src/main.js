@@ -866,6 +866,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) window.__dweebs.matchEvents = matchEvents;
   fx.player = player;
   hud.setup(dweebs);
 
