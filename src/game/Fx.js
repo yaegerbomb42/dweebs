@@ -237,6 +237,25 @@ export class Fx {
     if (target) this.hud.popup('GOTCHA!', target.getPosition(), 'small', d.color);
   }
 
+  /** Timed grab catch: snatch a thrown prop out of the air. */
+  catchProp(d, obj) {
+    if (!d) return;
+    const pos = obj?.getPosition?.() ?? d.getPosition();
+    this.audio.playGrab?.(this._pan(pos));
+    this.particles?.sparkle?.(pos, d.color ?? 0xffd23f);
+    this.cam?.shake?.(0.2);
+    this._toyWord('CAUGHT!', pos, d.color ?? 0xffd23f, 'big');
+  }
+
+  /** A grab that just misses a flying prop. */
+  catchDenied(d, obj) {
+    if (!d) return;
+    const pos = obj?.getPosition?.() ?? d.getPosition();
+    this.audio.playWhoosh?.(this._pan(pos), 0.7);
+    this.cam?.shake?.(0.08);
+    this._toyWord('DENIED!', pos, 0xff6a3c, 'small');
+  }
+
   escape(t) {
     const pos = t.getPosition();
     this.particles.sparkle(pos, t.color);

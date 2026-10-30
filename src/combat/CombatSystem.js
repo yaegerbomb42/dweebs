@@ -21,6 +21,8 @@ const ROCKET_SPEED = 21;
 const G = 25;                 // PhysicsWorld GRAVITY
 const ITEM_DAMP = 0.06;       // item linear damping
 export const DEFAULT_LOFT = 0.2;  // throw elevation (rad) when nobody's aiming
+// Timed grab catch: an incoming prop can be plucked out of the air before normal focus.
+const CATCH = { radius: 2.2, nearRadius: 3.2, approach: 0.25, minSpeed: 0.01 };
 const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
 const SUPER = 1.35;           // Super Yeet: damage / base / growth multiplier
@@ -430,7 +432,13 @@ export class CombatSystem {
     if (!d.canAct || d.held || d.attackCooldown > 0.1) return false;
     // Grab exactly what the focus ring is showing. No vacuuming props from behind you.
     const focus = this.focusTarget(d);
-    if (!focus) return false;
+    if (!focus) {
+      // Nothing to grab, but a thrown prop just missed the catch window: let the player know.
+      const near = this._nearMissCatch(d);
+      if (near) this._denyCatch(d, near);
+      return false;
+    }
+    if (focus.kind === 'catch') return this._catchProjectile(d, focus.ref);
     if (focus.kind === 'dweeb') {
       const best = focus.ref;
       if (best.bubble) { // bubbles are slippery!
@@ -449,6 +457,67 @@ export class CombatSystem {
     this._holdObject(d, focus.ref);
     this.fx.grab(d, null);
     return true;
+  }
+
+  /** A thrown prop flying toward `d`, close enough to pluck out of the air. */
+  _catchTarget(d) {
+    if (!d || d.held || !this.arena?.objects) return null;
+    const pos = d.getPosition();
+    let best = null, bestScore = Infinity;
+    for (const obj of this.arena.objects) {
+      if (!obj || obj.broken || obj.isDebris || obj.isGrabbed || !obj.body) continue;
+      if (!obj.def?.grabbable || obj.def?.throwable === false || !(obj.thrownTime > 0)) continue;
+      // Fused explosives are hot potato material, not a catch: let them pop normally.
+      if (obj.def.explosive && obj.fuse > 0) continue;
+      const op = obj.getPosition();
+      const dx = pos.x - op.x, dy = pos.y - op.y, dz = pos.z - op.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > CATCH.radius || dist < 1e-3) continue;
+      const v = obj.body.linvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed < CATCH.minSpeed) continue;
+      // Only catch props actually heading at us, not ones sailing past.
+      const dot = (v.x * dx + v.y * dy + v.z * dz) / (speed * dist);
+      if (dot < CATCH.approach) continue;
+      const score = dist + (1 - dot) * 0.7;
+      if (score < bestScore) { bestScore = score; best = { kind: 'catch', ref: obj, dist, dot }; }
+    }
+    return best;
+  }
+
+  /** Nearest in-flight prop for a failed grab (the "DENIED!" near-miss feedback). */
+  _nearMissCatch(d) {
+    if (!d || !this.arena?.objects) return null;
+    const pos = d.getPosition();
+    let best = null, bestDist = CATCH.nearRadius;
+    for (const obj of this.arena.objects) {
+      if (!obj || obj.broken || obj.isDebris || obj.isGrabbed || !obj.body) continue;
+      if (!obj.def?.grabbable || obj.def?.throwable === false || !(obj.thrownTime > 0)) continue;
+      if (obj.def.explosive && obj.fuse > 0) continue;
+      const op = obj.getPosition();
+      const dist = Math.hypot(op.x - pos.x, op.y - pos.y, op.z - pos.z);
+      if (dist < bestDist) { bestDist = dist; best = obj; }
+    }
+    return best;
+  }
+
+  _catchProjectile(d, obj) {
+    if (!d || !obj || !obj.body) return false;
+    if (!obj.hitList) obj.hitList = new Set();
+    // Mark ourselves immune to this throw before it becomes kinematic in our hands.
+    obj.hitList.add(d);
+    this._holdObject(d, obj);
+    d.catchWindow = 0.55;
+    d.catchFlash = 0.3;
+    this.addStyle(d, 5, 'CAUGHT!');
+    this.fx.catchProp?.(d, obj);
+    return true;
+  }
+
+  _denyCatch(d, obj) {
+    if (!d) return;
+    d.catchFlash = 0.12;
+    this.fx.catchDenied?.(d, obj);
   }
 
   _holdObject(d, obj) {
@@ -916,6 +985,9 @@ export class CombatSystem {
    */
   focusTarget(d) {
     if (!d.canAct || d.held) return null;
+    // A catchable projectile outranks any normal grab: the prompt reads CATCH! instead of PICK UP.
+    const catchable = this._catchTarget(d);
+    if (catchable) return catchable;
     const pos = d.getPosition();
     const yaw = this.aimYawOf(d);
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
@@ -935,6 +1007,12 @@ export class CombatSystem {
 
     for (const { obj } of this.arena.getObjectsNear(pos, 2.4)) {
       if (!obj.def.grabbable || obj.isGrabbed || obj === d.held?.ref) continue;
+      // Fused explosives pop normally; in-flight props belong to the catch path above.
+      if (obj.def.explosive && obj.fuse > 0) continue;
+      if (obj.thrownTime > 0) {
+        const v = obj.body?.linvel?.();
+        if (v && Math.hypot(v.x, v.y, v.z) > 3) continue;
+      }
       const op = obj.getPosition();
       const dx = op.x - pos.x, dz = op.z - pos.z;
       const dist = Math.hypot(dx, dz);

@@ -1739,8 +1739,9 @@ function updateFocus(dt) {
   // Only empty hands or a melee weapon can focus a grab/punch target.
   const focus = held ? null : combat.focusTarget(player);
   if (focus) {
-    const name = focus.kind === 'object' ? (focus.ref.def?.name ?? 'ITEM') : focus.ref.name;
-    const prompt = focus.kind === 'object' ? `E · PICK UP · ${name}` : `E · GRAB · LMB · PUNCH · ${name}`;
+    const name = focus.kind === 'dweeb' ? focus.ref.name : (focus.ref.def?.name ?? 'ITEM');
+    const prompt = focus.kind === 'catch' ? `E · CATCH · ${name}` :
+      focus.kind === 'object' ? `E · PICK UP · ${name}` : `E · GRAB · LMB · PUNCH · ${name}`;
     hud.setFocus(prompt.toUpperCase(), focus.kind);
     aimGuide.setFocus(focus.ref, focus.kind, dt);
   } else {
