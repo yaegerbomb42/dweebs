@@ -1,4 +1,5 @@
 // main.js — boots the renderer, builds the stadium and wires every system together.
+import { TrainingLab } from './game/TrainingLab.js';
 //
 // Frame order: input/AI → Dweeb.preStep → physics (sub-stepped) → Dweeb.postStep →
 //              impacts (sound/breakage) → combat → arena → match rules → fx/hud → render.
@@ -495,7 +496,10 @@ function toMenu() {
 
 // ─── Match flow ───
 
+let trainingLab = null;
 function clearDweebs() {
+  trainingLab?.dispose();
+  trainingLab = null;
   controller?.destroy();
   controller = null;
   for (const d of dweebs) d.destroy();
@@ -873,6 +877,18 @@ function startMatch() {
   match.settings.stocks = (GAME_MODES[currentMode]?.stocks ?? +settings.stocks);
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
+
+  if (currentMode === 'training') {
+    trainingLab = new TrainingLab({
+      arena,
+      getPlayer: () => player,
+      getDweebs: () => dweebs,
+      onReset: () => dweebs.forEach((d, i) => {
+        d.respawn(arena.getSpawnPoint(i, dweebs.length, currentMode), 0);
+        d.held = null;
+      }),
+    });
+  }
 
   // ── Mode Initialization (Knockout Arena vs Expedition & Dynasty) ──
   const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
@@ -1358,7 +1374,8 @@ function loop() {
 
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
-  const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
+  const dt = (fx.hitStop > 0 ? rawDt * 0.08 : rawDt) * (trainingLab && inGame ? trainingLab.timeScale : 1);
+  if (trainingLab) { trainingLab.el.style.display = inGame ? '' : 'none'; if (inGame) trainingLab.update(rawDt); }
 
   if (inGame && dweebs.length) {
     if (currentMode !== 'build_arena') {
@@ -1368,7 +1385,7 @@ function loop() {
       colony.update(dt, currentMeadowlands);
     }
     if (match.running) {
-      for (const b of bots) b.update(dt, dweebs);
+      if (!trainingLab || trainingLab.botActive()) for (const b of bots) b.update(dt, dweebs);
       for (const b of builderBots) b.update(dt, dweebs);
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
