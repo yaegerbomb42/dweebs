@@ -27,8 +27,10 @@ export class Reactions {
     const ex = Array.isArray(exclude) ? exclude : exclude ? [exclude] : [];
     const r = def.r * (0.6 + 0.4 * Math.min(2, intensity));
     for (const d of this.dweebs) {
-      if (!d || !d.active || ex.includes(d) || d.ragdolling || d.grabbedBy) continue;
-      const p = d.getPosition();
+      if (!d || !d.active || !d.mesh || ex.includes(d) || d.ragdolling || d.grabbedBy) continue;
+      // Read the rendered position, not the rigid body: lists can briefly hold Dweebs whose
+      // bodies were just freed (mode switches), and the mesh is what the player sees anyway.
+      const p = d.mesh.position;
       const dx = pos.x - p.x, dz = pos.z - p.z, dist = Math.hypot(dx, dz);
       if (dist > r) continue;
       let k = kind;
@@ -48,13 +50,13 @@ export class Reactions {
   /** Per-frame: fire delayed reactions (hop + body jolt), age them out. */
   update(dt) {
     for (const d of this.dweebs) {
-      if (!d || !(d.reactT > 0)) continue;
+      if (!d || !d.mesh || !(d.reactT > 0)) continue;
       if (d.reactDelay > 0) { d.reactDelay -= dt; continue; }
       if (!d._reactFired) {
         d._reactFired = true;
         if (d.grounded && d.reactHop > 0) d.landSquash = Math.min(d.landSquash || 0, -d.reactHop);
         // Recoil away from the event in the Dweeb's own frame.
-        const p = d.getPosition(), rp = d.reactPos;
+        const p = d.mesh.position, rp = d.reactPos;
         const dx = p.x - rp.x, dz = p.z - rp.z, l = Math.hypot(dx, dz) || 1;
         const sy = Math.sin(d.yaw), cy = Math.cos(d.yaw);
         const away = d.reactKind === 'cheer' ? 0 : 1;
