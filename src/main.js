@@ -99,6 +99,7 @@ let physics, arena, sky, water, particles, audio, cam, combat, match, fx, hud, d
 let trails, bursts, decals, aimGuide;
 let dweebs = [], bots = [], player = null, controller = null;
 let paused = false;
+let onlineMatch = false; // set per match: an online lobby must never be paused locally
 let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
@@ -231,6 +232,40 @@ async function init() {
       if (!currentWarfare && currentMode !== 'build_arena' && !currentBuildLab) cam.lock();
     }
   });
+
+  // ─── Visibility / focus / gamepad pause (offline matches only) ───
+  function isOfflineMatchRunning() {
+    // Online/warfare matches use currentWarfare; build lab and adventure are offline but
+    // adventure doesn't use the brawler pause screen. Only pause the standard brawler match.
+    return !onlineMatch && !currentWarfare &&
+           !currentBuildLab &&
+           !currentMeadowlands &&
+           (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN);
+  }
+
+  function handlePauseTrigger() {
+    if (!paused && isOfflineMatchRunning()) {
+      setPaused(true);
+      cam.unlock();
+      if (audio?.ctx?.state === 'running') audio.ctx.suspend();
+    }
+  }
+
+  function handleResumeAudio() {
+    if (audio?.ctx?.state === 'suspended') audio.ctx.resume();
+    // Never auto-resume gameplay — player must click Resume.
+  }
+
+  // Tab hidden / visible (emitted by runtime.js as dweebs:hidden / dweebs:visible)
+  document.addEventListener('dweebs:hidden', handlePauseTrigger);
+  document.addEventListener('dweebs:visible', handleResumeAudio);
+
+  // Window blur / focus
+  window.addEventListener('blur', handlePauseTrigger);
+  window.addEventListener('focus', handleResumeAudio);
+
+  // Gamepad disconnect
+  window.addEventListener('gamepaddisconnected', handlePauseTrigger);
 
   await hideLoading();
   if (import.meta.env.DEV && location.hash === '#lineup') return showLineup();
@@ -846,6 +881,7 @@ function startMatch() {
   // An online lobby hands over its own bot rule for this one match (see legacy.js).
   const override = window.__dweebsMatchOverride;
   window.__dweebsMatchOverride = null;
+  onlineMatch = !!override;
   const botCount = Math.min(ROSTER.length, override ? override.bots : +settings.bots);
   const total = botCount + 1;
   const myColor = PALETTE[settings.color] ?? PALETTE.yellow;
