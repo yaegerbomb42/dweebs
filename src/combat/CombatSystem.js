@@ -122,6 +122,11 @@ export class CombatSystem {
     }
 
     if (d.held && !(d.held.kind === 'object' && d.held.ref.isWeapon)) {
+      // Tapping LMB with a Dweeb in hand pummels; a held charge still throws.
+      if (d.held.kind === 'dweeb' && charge === 0) {
+        this.pummelHeld(d);
+        return;
+      }
       if (d.held.kind === 'object' && d.held.ref.def.gadget) {
         this.useGadget(d, charge);
         return;
@@ -251,6 +256,29 @@ export class CombatSystem {
         d.signaturePunchCount = 0;
       }
     }
+  }
+
+  /** Tap LMB while holding a Dweeb: a quick knee to the face. Each pummel feeds the next throw. */
+  pummelHeld(d) {
+    if (!d || !d.held || d.held.kind !== 'dweeb') return false;
+    const t = d.held.ref;
+    if (!t || !t.active || t.invulnTimer > 0) return false;
+    if ((d.attackCooldown || 0) > 0) return false; // no machine-gun knees
+    const damage = 2 + Math.random() * 2;
+    t.percent = Math.min(999, (t.percent || 0) + damage);
+    t.flashTimer = Math.max(t.flashTimer || 0, 0.1);
+    t.landSquash = Math.max(t.landSquash || 0, 0.25);
+    t.punchStreak = 0;
+    t.lastHitBy = d;
+    t.lastHitTime = this.time;
+    d.damageDealt = (d.damageDealt || 0) + damage;
+    d.pummelCount = (d.pummelCount || 0) + 1;
+    d.attackAnim = 0.18;
+    d.attackCooldown = Math.max(d.attackCooldown || 0, 0.18);
+    d.swingT = 0.15;
+    this.fx?.pummel?.(d, t, d.pummelCount);
+    this.addStyle(d, 2);
+    return true;
   }
 
   /** Fire a shooter weapon (melonCannon): lob an exploding melon with a cooldown and live cap. */
@@ -894,6 +922,7 @@ export class CombatSystem {
         return false;
       }
       d.held = { kind: 'dweeb', ref: best };
+      d.pummelCount = 0;
       best.setGrabbed(d);
       d.attackCooldown = 0.25;
       // Air grab refreshes one air jump: a risky catch becomes a recovery route.
@@ -973,6 +1002,7 @@ export class CombatSystem {
       this._dismount(obj.rider, obj);
     }
     d.held = { kind: 'object', ref: obj };
+    d.pummelCount = 0;
     d.carryHeldT = 0;
     obj.grab(d);
     // Heft: heavy props take a beat to settle and slow your walk; featherweights are instant
@@ -1016,6 +1046,8 @@ export class CombatSystem {
 
     if (held.kind === 'dweeb') {
       const t = held.ref;
+      const pummels = Math.max(0, d.pummelCount || 0);
+      d.pummelCount = 0;
       t.setGrabbed(null);
       // Letting go mid Giant Swing: the spin pays out as extra fling
       const gs = d.giantSwing;
@@ -1023,13 +1055,14 @@ export class CombatSystem {
       const swingK = gs ? Math.min(1, gs.spin / GIANT_SWING.maxRate) : 0;
       t.body.setTranslation({ x: pos.x + f.x * 0.9, y: pos.y + 0.9, z: pos.z + f.z * 0.9 }, true);
       _tmp.set(f.x, 0.55 - swingK * 0.15, f.z);
+      const throwCharge = Math.min(1, charge + pummels * 0.15);
       const sm = 1 + swingK * GIANT_SWING.flingBonus;
       if (swingK > 0.3) this.fx._toyWord?.(swingK > 0.8 ? 'HAMMER THROW!' : 'SPIN FLING!', pos, 0xffd23f, swingK > 0.8 ? 'big' : 'small');
-      const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1) * sm, p * (yeet ? SUPER : 1) * sm);
+      const atk = scaled(A.dweebThrow(throwCharge), p * (yeet ? SUPER : 1) * sm, p * (yeet ? SUPER : 1) * sm);
       if (t.team != null && t.team === d.team) {
         // Team Battle: chucking a teammate is a free, damage-less TEAM LAUNCH across the stage.
-        const s = 11 + charge * 6;
-        t.body.setLinvel({ x: f.x * s, y: 8 + charge * 3, z: f.z * s }, true);
+        const s = 11 + throwCharge * 6;
+        t.body.setLinvel({ x: f.x * s, y: 8 + throwCharge * 3, z: f.z * s }, true);
         t.invulnTimer = Math.max(t.invulnTimer, 0.5);
         this.fx.teamLaunch?.(t, d);
         this.fx.throw(d);
@@ -1102,6 +1135,7 @@ export class CombatSystem {
     if (!d.held) return;
     const held = d.held;
     d.held = null;
+    d.pummelCount = 0;
     d.giantSwing = null;
     if (held.kind === 'dweeb') {
       held.ref.setGrabbed(null);

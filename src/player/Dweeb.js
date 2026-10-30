@@ -68,6 +68,7 @@ export class Dweeb {
     this.catchWindow = 0;       // brief window after a timed catch (HUD callout)
     this.catchFlash = 0;        // flash timer for catch juice
     this.escapeTimer = 0;
+    this.pummelCount = 0;       // grab combo hits banked before the throw
     this.escapeMash = 0;        // built up by mashing while grabbed; speeds the escape
     this.escapeMashDecay = 2.5;   // how fast escapeMash bleeds off (per second)
     this.mashWordCd = 0;
@@ -1178,6 +1179,7 @@ export class Dweeb {
 
   setGrabbed(holder) {
     this.grabbedBy = holder;
+    this.pummelCount = 0;
     this.escapeMash = 0;
     this.escapeMashDecay = 2.5;
     this.mashWordCd = 0;
@@ -1271,6 +1273,7 @@ export class Dweeb {
     this.superArmed = false;
     this.punchStreak = 0;
     this.punchStreakT = -99;
+    this.pummelCount = 0;
     this.signaturePunchCount = 0;
     this.pogoUsed = false;
     this.ghostDodgeUsed = false;
