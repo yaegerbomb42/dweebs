@@ -240,6 +240,24 @@ async function init() {
   };
 
   cam.snapTo(0, 1, 0);
+
+  // Occlusion-aware camera: raycast from look target to ideal camera position
+  cam.setCollisionProbe((from, to) => {
+    const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-3) return null;
+    const hit = physics.raycast(
+      { x: from.x, y: from.y, z: from.z },
+      { x: dx / len, y: dy / len, z: dz / len },
+      len,
+      player?.collider ?? null
+    );
+    // Only static world geometry (terrain, buildings, stage) pulls the camera in — not dweebs or props flying past
+    const body = hit?.collider?.parent?.();
+    if (!hit || (body && !body.isFixed())) return null;
+    return hit.distance;
+  });
+
   setupMenu();
   window.addEventListener('resize', onResize);
   document.addEventListener('pointerlockchange', onPointerLockChange);
@@ -1453,6 +1471,11 @@ function loop() {
       updateFocus(rawDt);
       updateNearMiss();
       followCamera();
+      // Speed-based FOV
+      if (player && player.velocity) {
+        const speed = Math.hypot(player.velocity.x, player.velocity.z);
+        cam.setSpeedFov(speed);
+      }
     }
   } else {
     // Menu: slow orbit around the stage

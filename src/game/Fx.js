@@ -67,6 +67,10 @@ export class Fx {
     this.haptics?.hit(tier, this._near(pos, 24), involvesPlayer);
     victim.landSquash = Math.max(victim.landSquash || 0, J.squash[tier]);
     if (involvesPlayer && tier >= 2) this.cam.kickFov(tier === 3 ? 12 : 7);
+    // Camera roll when player is victim and hit is tier 2+
+    if (victim.isPlayer && tier >= 2) {
+      this.cam?.addRoll?.((Math.random() < 0.5 ? -1 : 1) * 0.05 * tier);
+    }
 
     // Fireworks tier: confetti pop, colour ring, impact frame — a toybox gag, not gore
     if (tier === 3) {
@@ -633,6 +637,10 @@ export class Fx {
     this.haptics?.land(speed, !!d.isPlayer, near);
     if (d.isPlayer && speed > 13) this.cam.shake(Math.min(0.24, (speed - 13) * 0.016));
     if (speed > 14) this.cam.shake(near * Math.min(0.18, speed * 0.006));
+    // Landing dip for player: spring offset on camera Y, scaled by fall speed
+    if (d.isPlayer && speed > 10) {
+      this.cam?.addLandingDip?.(Math.min(1.2, (speed - 10) * 0.08));
+    }
   }
 
   /** Fast-fall start: a short downward puff so the commit reads at a glance. */
