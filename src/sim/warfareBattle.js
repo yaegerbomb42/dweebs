@@ -36,6 +36,40 @@ export const BARRICADES = Object.freeze([
   { x: -2, z: -13, r: 1.5 }, { x: 2, z: -4.5, r: 1.5 }, { x: -2, z: 4.5, r: 1.5 }, { x: 2, z: 13, r: 1.5 },
 ]);
 
+/** Speed multiplier per formation stance (the [R] toggle). Recruits inherit the current stance. */
+export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
+function stanceSpeedMul(st, team) {
+  const s = st.stance && st.stance[team];
+  return s ? (STANCE_SPEED[s] ?? 1) : 1;
+}
+
+/** Damage multiplier for attackers standing on a battleground's high ground. */
+export const HIGH_GROUND_MULT = 1.15;
+function groundMult(st, x, z) {
+  for (const r of st.highGround || []) {
+    if (Math.abs(x - r.x) <= r.w / 2 && Math.abs(z - r.z) <= r.h / 2) return HIGH_GROUND_MULT;
+  }
+  return 1;
+}
+
+/**
+ * Chew through destructible barricades ({hp}) caught in a blast. Deterministic: fixed array
+ * order, no rng, so both lockstep peers break the same bundles on the same tick.
+ */
+function damageBarricades(st, x, z, radius, dmg, attTeam) {
+  if (!(dmg > 0)) return;
+  for (let i = st.barricades.length - 1; i >= 0; i--) {
+    const b = st.barricades[i];
+    if (!(b.hp > 0)) continue;
+    if (Math.hypot(b.x - x, b.z - z) > radius + b.r) continue;
+    b.hp -= dmg;
+    if (b.hp <= 0) {
+      st.barricades.splice(i, 1);
+      st.events.push({ type: 'barricadeDown', team: attTeam, x: b.x, z: b.z, r: b.r });
+    }
+  }
+}
+
 const ACCEL = 0.25;
 /** Brute charge: dash at a target 4–10 m away. */
 export const CHARGE = Object.freeze({ min: 4, max: 10, ticks: 18, cooldown: 150, speedMul: 2.4 });
@@ -57,8 +91,10 @@ function teamStats() {
  * @param {number} [o.seed]
  * @param {'defense'|'versus'} [o.mode]
  * @param {boolean} [o.army] spawn the starting armies (tests turn this off for duels)
+ * @param {Array} [o.barricades] battleground barricade circles (default: the meadow ring)
+ * @param {Array} [o.highGround] battleground high-ground rects {x,z,w,h}
  */
-export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal' } = {}) {
+export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround } = {}) {
   const versus = mode === 'versus';
   const dkey = !versus && Object.hasOwn(DIFFICULTY, difficulty) ? difficulty : 'normal';
   const diff = DIFFICULTY[dkey];
@@ -71,6 +107,8 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins, d
       red: { x: FORT_X, z: 0, hp: 1200, maxHp: 1200, r: FORT_RADIUS, invulnerable: !versus },
     },
     rally: { blue: { x: -22, z: 0 }, red: { x: 22, z: 0 } },
+    barricades: (barricades ?? BARRICADES).map(b => ({ ...b })),
+    highGround: (highGround ?? []).map(r => ({ ...r })),
     coins: { blue: coins ?? (versus ? 150 : diff.coins), red: versus ? (coins ?? 150) : 0 },
     wave: 0,
     phase: versus ? 'battle' : 'prep',
@@ -97,7 +135,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     cd: st.rng.int(Math.max(1, s.cooldown || 1)),
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
-    dash: 0, dashCd: 60, enraged: false, speedMul: 1, cdMul: 1,
+    dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), cdMul: 1,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -158,6 +196,7 @@ export function applyCommand(st, c) {
         if (u.hp <= 0) kill(st, u, c.team, kdirX * 3, kdirZ * 3);
       }
     }
+    damageBarricades(st, tx, tz, splashR, splashDmg, c.team);
     return true;
   }
   if (c.type === 'supply') {
@@ -178,11 +217,11 @@ export function applyCommand(st, c) {
     return true;
   }
   if (c.type === 'stance') {
-    const stance = c.stance || 'charge';
+    const stance = c.stance === 'defense' ? 'defense' : 'charge';
     st.stance = st.stance || {};
     st.stance[c.team] = stance;
     st.events.push({ type: 'stance', team: c.team, stance });
-    const mul = stance === 'charge' ? 1.35 : 0.8;
+    const mul = STANCE_SPEED[stance];
     for (const u of st.units) {
       if (u.alive && u.team === c.team) {
         u.speedMul = mul;
@@ -246,17 +285,19 @@ function isCovered(st, t) {
   return false;
 }
 
-/** Splash damage centred at (x, z). */
-function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base } = {}) {
+/** Splash damage centred at (x, z). ax/az = the attacker's position (high-ground bonus). */
+function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, ax, az } = {}) {
+  const hg = groundMult(st, ax ?? x, az ?? z);
   for (const e of st.units) {
     if (!e.alive || e.team === attTeam) continue;
     const dx = e.x - x, dz = e.z - z;
     const d = Math.sqrt(dx * dx + dz * dz);
     const f = splashFalloff(d, radius + e.radius * 0.5);
     if (f <= 0) continue;
-    const dmg = computeDamage(attType, e.type, { base, dmgMul, falloff: f, covered: cover && isCovered(st, e) });
+    const dmg = computeDamage(attType, e.type, { base, dmgMul: dmgMul * hg, falloff: f, covered: cover && isCovered(st, e) });
     hurt(st, e, dmg, attTeam, attType, x, z);
   }
+  damageBarricades(st, x, z, radius, (stats(attType).dmg || 0) * dmgMul, attTeam);
 }
 
 function hurtFort(st, team, dmg, attType) {
@@ -295,7 +336,7 @@ function updateShells(st) {
     if (sh.t < sh.T) continue;
     st.shells.splice(i, 1);
     st.events.push({ type: 'explode', team: sh.team, src: sh.src, x: sh.x1, z: sh.z1, r: sh.splash });
-    splash(st, sh.x1, sh.z1, sh.splash, sh.team, sh.src, sh.dmgMul, { cover: true });
+    splash(st, sh.x1, sh.z1, sh.splash, sh.team, sh.src, sh.dmgMul, { cover: true, ax: sh.x0, az: sh.z0 });
     const enemy = otherTeam(sh.team);
     const f = st.forts[enemy];
     const fx = sh.x1 - f.x, fz = sh.z1 - f.z;
@@ -440,7 +481,7 @@ function updateUnit(st, u, enemies) {
       halt(u);
       if (s.attack === 'blast') {
         st.events.push({ type: 'explode', team: u.team, src: u.type, x: u.x, z: u.z, r: s.splash, big: true });
-        splash(st, u.x, u.z, s.splash, u.team, u.type, u.dmgMul);
+        splash(st, u.x, u.z, s.splash, u.team, u.type, u.dmgMul, { ax: u.x, az: u.z });
         kill(st, u, null, 0, 0);
         return;
       }
@@ -469,13 +510,13 @@ function updateUnit(st, u, enemies) {
           const charging = u.dash > 0;
           const r = s.splash * (u.enraged ? 1.25 : 1);
           st.events.push({ type: 'slam', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, r, charge: charging });
-          splash(st, t.x, t.z, r, u.team, u.type, u.dmgMul * (charging ? 1.5 : 1));
+          splash(st, t.x, t.z, r, u.team, u.type, u.dmgMul * (charging ? 1.5 : 1), { ax: u.x, az: u.z });
           u.dash = 0;
         } else {
           const backstab = u.type === 'sneak' && t.targetId && t.targetId !== u.id;
           const base = s.dmg * (backstab ? BACKSTAB : 1);
           if (backstab) st.events.push({ type: 'backstab', id: u.id, team: u.team, x: t.x, z: t.z });
-          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul, base }), u.team, u.type, u.x, u.z);
+          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul * groundMult(st, u.x, u.z), base }), u.team, u.type, u.x, u.z);
         }
       }
       return;
@@ -558,7 +599,7 @@ function integrate(st) {
   }
   for (const u of units) {
     if (!u.alive || u.carriedBy) continue;
-    for (const o of BARRICADES) pushOut(u, o.x, o.z, o.r);
+    for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
     for (const team of ['blue', 'red']) { const f = st.forts[team]; pushOut(u, f.x, f.z, f.r); }
     u.x = clamp(u.x, -FIELD.halfX, FIELD.halfX);
     u.z = clamp(u.z, -FIELD.halfZ, FIELD.halfZ);
@@ -666,6 +707,14 @@ export function battleHash(st) {
   mix(st.tick); mix(st.wave); mix(st.coins.blue); mix(st.coins.red);
   mix(Math.round(st.forts.blue.hp * 10)); mix(Math.round(st.forts.red.hp * 10));
   mix(st.units.length); mix(st.shells.length);
+  // Battleground state: a broken barricade or a flipped stance must show up in the hash,
+  // or two peers could silently disagree about the board after a reconnect.
+  mix(st.barricades.length);
+  for (const b of st.barricades) if (b.hp > 0) mix(Math.round(b.hp * 10));
+  mix(st.stance?.blue === 'defense' ? 2 : st.stance?.blue === 'charge' ? 3 : 1);
+  mix(st.stance?.red === 'defense' ? 2 : st.stance?.red === 'charge' ? 3 : 1);
+  mix(Math.round(st.rally.blue.x * 100)); mix(Math.round(st.rally.blue.z * 100));
+  mix(Math.round(st.rally.red.x * 100)); mix(Math.round(st.rally.red.z * 100));
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
