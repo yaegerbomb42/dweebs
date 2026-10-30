@@ -1373,9 +1373,9 @@ function loop() {
       colony.update(dt, currentMeadowlands);
     }
     if (match.running) {
+      try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
       for (const b of bots) b.update(dt, dweebs);
       for (const b of builderBots) b.update(dt, dweebs);
-      try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
     for (const d of dweebs) d.preStep(dt);
