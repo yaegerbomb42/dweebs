@@ -39,6 +39,7 @@ export const MALL_MODES = [
       { id: 'app-btn-derby', label: '☠️ Derby', title: 'Dumb Ways to Die', launch: { mode: 'derby', arena: 'stadium' }, difficulty: 2 },
       { id: 'app-btn-walldrop', label: '🧱 Wall Drop', title: 'Wall Drop PVP', launch: { mode: 'walldrop', arena: 'stadium' }, difficulty: 3 },
       { id: 'app-btn-brawl', label: '🥊 Brawl', title: 'Knockout Brawl', launch: { mode: 'brawl', arena: 'stadium' }, difficulty: 2 },
+      { id: 'app-btn-training', label: '🧪 Training', title: 'Training Lab', launch: { mode: 'training', arena: 'stadium' }, difficulty: 1 },
     ],
     launch: { id: 'app-btn-classic', label: 'PLAY BRAWLER', difficulty: 2, launch: { mode: 'derby', arena: 'stadium' } },
   },
@@ -84,7 +85,10 @@ export const MALL_MODES = [
     desc: 'Sculpt a custom 3D creature with body shapes, eyes, appendages, colors, and AI combat DNA. Watch them clash in autonomous colosseum battles!',
     difficulty: 1,
     btnClass: 'purple',
-    subgames: [],
+    subgames: [
+      { id: 'app-btn-traitbrawl', label: '🤖 Brawl Sim', title: 'Trait-driven auto-battler in the Toy Playroom', launch: { mode: 'build', arena: 'stadium', submode: 'traitbrawl' }, difficulty: 1 },
+      { id: 'app-btn-wilds', label: '🌲 Dweeb Wilds', title: 'Open-world survival: watch your Dweeb try to survive on its own', launch: { mode: 'build', arena: 'stadium', submode: 'wilds' }, difficulty: 1 },
+    ],
     launch: { id: 'app-btn-builder', label: 'ENTER 3D LAB', difficulty: 1, launch: { mode: 'build', arena: 'stadium' } },
   },
   {

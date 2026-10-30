@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
+import { CollisionGroups } from '../physics/PhysicsWorld.js';
 
 export const ESCAPE_ORIGIN = { x: 90, z: 0 };
 export const EXITS = [
@@ -27,6 +28,23 @@ const HINGES = [{ x: -3.7, y: 3.4, z: -15.5 }, { x: 3.7, y: 3.4, z: -15.5 }];
 const BASKET = { x: -8, z: 6, r: 1.9, top: 1.2, sink: 1.0, target: 10 };
 const SOCKET = { x: 6.5, y: 1.2, z: -14.6 };
 const VENT = { x0: -9, x1: -6, y0: 5.6, y1: 8.2 };
+const DRONE = {
+  hoverY: 6.9,
+  coneTan: 0.45,
+  stillSpeed: 1.2,   // standing still (and empty-handed) hides you from the motion sensor
+  startGrace: 8,     // seconds before the first patrol sweep
+  patrolSpeed: 2.4,
+  investigateSpeed: 3.8,
+  chaseSpeed: 5.4,
+  returnSpeed: 3.0,
+  detectPad: 0.5,
+  zapRange: 2.1,
+  zapCooldown: 6,
+  noiseMin: 5,
+  noiseRange: 34,
+};
+const DRONE_WAYPOINTS = [{ x: -7, z: 9 }, { x: 7, z: 9 }, { x: 8, z: -9 }, { x: -7, z: -9 }];
+const DRONE_ANCHOR = { x: 0, z: 5 };
 
 const LOCKDOWN_TIME = 150;
 const HAZARD_STEPS = [
@@ -99,12 +117,29 @@ export class EscapeSandbox {
     this.batterySocketed = false;
     this._flash = 0;
 
+    this.droneGroup = null;
+    this.droneCone = null;
+    this.droneConeMat = null;
+    this.droneEyeMat = null;
+    this.droneLight = null;
+    this.droneState = 'patrol';
+    this.droneStateT = 0;
+    this.droneWaypoint = 0;
+    this.droneHunt = null;
+    this.droneChaseTarget = null;
+    this.droneFacing = 0;
+    this.droneSeenAge = 99;
+    this.droneScanT = 0;
+    this.droneCooldown = DRONE.startGrace;
+    this.droneNextBeep = 0;
+
     this._buildRoom();
     this._buildDoor();
     this._buildBasket();
     this._buildCircuit();
     this._buildVentShelf();
     this._spawnProps();
+    this._buildDrone();
     this._buildHazards();
     this._buildHintPanel();
     this._buildLockdownClock();
@@ -275,6 +310,45 @@ export class EscapeSandbox {
     put('powerBattery', 9.7, 5.2, 13.7);
   }
 
+  _buildDrone() {
+    const g = new THREE.Group();
+    g.position.set(DRONE_ANCHOR.x, DRONE.hoverY, DRONE_ANCHOR.z);
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), toonMat({ color: 0x2f3b4f }));
+    shell.scale.y = 0.68;
+    shell.castShadow = true;
+    g.add(shell);
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.1, 6, 20), toonMat({ color: 0x7dd3fc }));
+    band.rotation.x = Math.PI / 2;
+    band.position.y = 0.05;
+    g.add(band);
+    const armMat = toonMat({ color: 0x475569 });
+    const rotorMat = new THREE.MeshBasicMaterial({ color: 0xdbeafe, transparent: true, opacity: 0.35 });
+    for (let i = 0; i < 4; i++) {
+      const a = Math.PI / 4 + i * Math.PI / 2;
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.12), armMat);
+      arm.position.set(Math.cos(a) * 0.55, 0.24, Math.sin(a) * 0.55);
+      arm.rotation.y = -a;
+      g.add(arm);
+      const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.04, 10), rotorMat);
+      rotor.position.set(Math.cos(a) * 1.0, 0.2, Math.sin(a) * 1.0);
+      g.add(rotor);
+    }
+    this.droneEyeMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xffd23f, emissiveIntensity: 1 });
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), this.droneEyeMat);
+    eye.position.set(0, -0.05, 0.55);
+    g.add(eye);
+    this.droneConeMat = new THREE.MeshBasicMaterial({ color: 0xffe066, transparent: true, opacity: 0.15, side: THREE.DoubleSide, depthWrite: false });
+    this.droneCone = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 24, 1, true), this.droneConeMat);
+    this.droneCone.position.y = -DRONE.hoverY / 2;
+    noOutline(this.droneCone);
+    g.add(this.droneCone);
+    this.droneLight = new THREE.PointLight(0xffe066, 1.1, 14);
+    this.droneLight.position.y = -0.6;
+    g.add(this.droneLight);
+    this.group.add(g);
+    this.droneGroup = g;
+  }
+
   _buildHazards() {
     // Level 1: a rotating laser bar that sweeps the whole room.
     this.laserMat = new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0, depthWrite: false });
@@ -371,7 +445,9 @@ export class EscapeSandbox {
 
   /** CombatSystem reports every explosion; ones near the door chew through the hinges. */
   onExplosion(pos) {
-    if (this.doorBlown || !pos) return;
+    if (!pos) return;
+    this._droneHearLocal(pos.x - this.O.x, pos.z - this.O.z, 90);
+    if (this.doorBlown) return;
     let hit = false;
     HINGES.forEach((h, i) => {
       const d = Math.hypot(pos.x - (this.O.x + h.x), pos.y - h.y, pos.z - (this.O.z + h.z));
@@ -427,6 +503,256 @@ export class EscapeSandbox {
     this.fx?.particles?.sparkle?.(p, 0x38bdf8);
     this.audio?.playSuperReady?.();
     this.hud?.announce?.('POWER ON! THE VAULT UNLOCKS', 'go', 1.4);
+  }
+
+  // ─── patrol drone ───
+
+  _setDroneState(state) {
+    if (!this.droneGroup || !state || this.droneState === state) return;
+    this.droneState = state;
+    this.droneStateT = 0;
+    this.droneScanT = 0;
+    if (state === 'suspicious') this.droneNextBeep = this.clock;
+    if (state === 'return') this.droneNextBeep = this.clock + 0.6;
+    if (state === 'chase' && !this._droneTold) {
+      this._droneTold = true;
+      try { this.hud?.announce?.('SECURITY DRONE!<small>It tracks motion and noise. FREEZE (empty-handed) to vanish from its sensor.</small>', 'danger', 2.6); } catch { /* HUD optional */ }
+    }
+    if (state === 'chase') this.audio?.playAimLock?.();
+  }
+
+  _droneHearLocal(x, z, score) {
+    if (!this.droneGroup || !Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(score)) return;
+    const prev = this.droneHunt?.score ?? 0;
+    if (score < DRONE.noiseMin || score < prev * 1.1) return;
+    this.droneHunt = { x, z, score };
+    if (this.droneState === 'patrol' || this.droneState === 'return') this._setDroneState('suspicious');
+    else if (this.droneState === 'suspicious') this.droneStateT = 0;
+  }
+
+  _scanDroneNoise() {
+    const g = this.droneGroup;
+    if (!g || !this.physicsWorld) return null;
+    const O = this.O;
+    let best = null;
+    const consider = (wx, wz, score) => {
+      if (!Number.isFinite(wx) || !Number.isFinite(wz) || !Number.isFinite(score)) return;
+      if (score < DRONE.noiseMin) return;
+      const x = wx - O.x, z = wz - O.z;
+      const dist = Math.hypot(x - g.position.x, z - g.position.z);
+      if (dist > DRONE.noiseRange) return;
+      const s = score * Math.max(0.35, 1 - dist / DRONE.noiseRange);
+      if (!best || s > best.score) best = { x, z, score: s };
+    };
+    const impacts = this.physicsWorld.getImpacts?.() || [];
+    for (const imp of impacts) {
+      if (!imp || !imp.pos) continue;
+      const speed = Number(imp.speed) || 0;
+      if (speed <= 0) continue;
+      let score = speed * 0.2;
+      for (const info of [imp.a, imp.b]) {
+        if (!info) continue;
+        if (info.kind === 'object') {
+          const ref = info.ref;
+          const mass = info.mass ?? ref?.def?.mass ?? 1;
+          let s = speed * (0.55 + Math.min(mass, 12) * 0.12);
+          if ((ref?.thrownTime ?? 0) > 0) s = Math.max(s, speed * 2.2);
+          if (ref?.def?.explosive) s = Math.max(s, speed * 2.6);
+          score = Math.max(score, s);
+        } else if (info.kind === 'dweeb') {
+          score = Math.max(score, speed * 0.16);
+        }
+      }
+      consider(imp.pos.x, imp.pos.z, score);
+    }
+    const objects = this.arena?.objects || [];
+    for (const o of objects) {
+      if (!o || !o.body || o.broken || o.isDebris || o.isGrabbed) continue;
+      if ((o.thrownTime ?? 0) <= 0) continue;
+      let v = null;
+      try { v = o.body.linvel?.(); } catch { v = null; }
+      if (!v) continue;
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed < 3) continue;
+      const p = o.getPosition?.() || o.body.translation?.();
+      if (!p) continue;
+      const mass = o.def?.mass ?? 1;
+      consider(p.x, p.z, speed * (1.4 + Math.min(mass, 12) * 0.15));
+    }
+    return best;
+  }
+
+  _droneSee(dweebs) {
+    const g = this.droneGroup;
+    if (!g || !Array.isArray(dweebs)) return null;
+    const O = this.O;
+    for (const d of dweebs) {
+      if (!d || !d.body || !d.active || d.grabbedBy || d.out || d.eliminated) continue;
+      let p = null;
+      try { p = d.getPosition?.(); } catch { p = null; }
+      if (!p) continue;
+      // Motion sensor: freeze and it can't see you (unless you're carrying loot)
+      let spd = 0;
+      try { const v = d.body.linvel(); spd = Math.hypot(v.x, v.y, v.z); } catch { spd = 0; }
+      if (spd < DRONE.stillSpeed && !d.held) continue;
+      const lx = p.x - O.x, lz = p.z - O.z;
+      const dy = g.position.y - p.y;
+      if (!Number.isFinite(dy) || dy < 0.4 || dy > 9.5) continue;
+      const radius = dy * DRONE.coneTan + DRONE.detectPad;
+      const dist = Math.hypot(lx - g.position.x, lz - g.position.z);
+      if (dist <= radius) return { d, x: lx, z: lz, dist };
+    }
+    return null;
+  }
+
+  _moveDroneToward(tx, tz, speed, dt) {
+    const g = this.droneGroup;
+    if (!g || !Number.isFinite(tx) || !Number.isFinite(tz)) return Infinity;
+    const dx = tx - g.position.x, dz = tz - g.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 0.05) {
+      const step = Math.min(dist, Math.max(0, speed) * dt);
+      g.position.x += dx / dist * step;
+      g.position.z += dz / dist * step;
+      this.droneFacing = Math.atan2(dx, dz);
+    }
+    g.position.x = THREE.MathUtils.clamp(g.position.x, -10.4, 10.4);
+    g.position.z = THREE.MathUtils.clamp(g.position.z, -14.2, 14.2);
+    return dist;
+  }
+
+  _droneZap(d) {
+    if (!d?.body) return false;
+    try {
+      const p = d.getPosition?.();
+      if (!p) return false;
+      const held = d.held;
+      if (held) {
+        const ref = held.ref;
+        if (held.kind === 'object' && ref) {
+          ref.release?.();
+          const R = this.physicsWorld?.RAPIER;
+          ref.body?.setBodyType?.(R?.RigidBodyType?.Dynamic ?? 0, true);
+          const groups = this.physicsWorld?.makeGroups?.(CollisionGroups.OBJECT, CollisionGroups.ALL);
+          if (groups != null) ref.collider?.setCollisionGroups?.(groups);
+          ref.thrownBy = null;
+          ref.thrownTime = 0;
+        } else if (held.kind === 'dweeb' && ref?.setGrabbed) {
+          ref.setGrabbed(null);
+        }
+        d.held = null;
+      }
+      const spawn = this.spawnPoint(d.isPlayer ? 0 : 1, 2);
+      const dx = spawn.x - p.x, dz = spawn.z - p.z;
+      const len = Math.hypot(dx, dz) || 1;
+      d.hitstun = Math.max(d.hitstun ?? 0, 1.1);
+      d.charging = 0;
+      d.isCharging = false;
+      d.rollTimer = 0;
+      d.body.setLinvel?.({ x: dx / len * 6.5, y: 3.4, z: dz / len * 6.5 }, true);
+      this.fx?.particles?.ring?.(p, { color: 0xff4d5e, size: 2.4, life: 0.4 });
+      this.fx?.particles?.sparkle?.(p, 0xffd23f);
+      this.hud?.popup?.('BZZT! SIGNAL LOST', p, 'small', 0xff4d5e);
+      this.audio?.playWarning?.();
+      return true;
+    } catch { return false; }
+  }
+
+  _updateDrone(dt, dweebs) {
+    const g = this.droneGroup;
+    if (!g || !Number.isFinite(dt) || dt <= 0) return;
+    dt = Math.min(dt, 0.1);
+    this.droneStateT += dt;
+    this.droneCooldown = Math.max(0, this.droneCooldown - dt);
+    if (this.droneHunt) this.droneHunt.score *= Math.exp(-dt * 0.6);
+
+    const heard = this._scanDroneNoise();
+    if (heard) this._droneHearLocal(heard.x, heard.z, heard.score);
+
+    const seen = !this.escaped && this.droneCooldown <= 0 ? this._droneSee(dweebs) : null;
+    if (seen && this.droneState !== 'return') {
+      this.droneChaseTarget = { x: seen.x, z: seen.z };
+      this.droneSeenAge = 0;
+      if (this.droneState !== 'chase') this._setDroneState('chase');
+    } else {
+      this.droneSeenAge += dt;
+    }
+
+    switch (this.droneState) {
+      case 'suspicious': {
+        if (this.droneHunt) this.droneFacing = Math.atan2(this.droneHunt.x - g.position.x, this.droneHunt.z - g.position.z);
+        if (this.clock >= this.droneNextBeep) {
+          this.audio?.playWarning?.();
+          this.droneNextBeep = this.clock + 0.5;
+        }
+        if (this.droneStateT > 0.9) this._setDroneState('investigate');
+        break;
+      }
+      case 'investigate': {
+        const hunt = this.droneHunt;
+        if (!hunt) { this._setDroneState('return'); break; }
+        const dist = this._moveDroneToward(hunt.x, hunt.z, DRONE.investigateSpeed, dt);
+        if (dist < 1.4) {
+          this.droneScanT += dt;
+          this.droneFacing += dt * 2.2;
+          if (this.droneScanT > 1.8) this._setDroneState('return');
+        } else {
+          this.droneScanT = 0;
+        }
+        break;
+      }
+      case 'chase': {
+        const target = this.droneChaseTarget;
+        if (!target || this.droneSeenAge > 1.6) { this._setDroneState('return'); break; }
+        this._moveDroneToward(target.x, target.z, DRONE.chaseSpeed, dt);
+        if (seen && seen.dist < DRONE.zapRange && this.droneCooldown <= 0) {
+          if (this._droneZap(seen.d)) {
+            this.droneCooldown = DRONE.zapCooldown;
+            this._setDroneState('return');
+          }
+        } else if (seen) {
+          this.droneChaseTarget = { x: seen.x, z: seen.z };
+        }
+        break;
+      }
+      case 'return': {
+        const dist = this._moveDroneToward(DRONE_ANCHOR.x, DRONE_ANCHOR.z, DRONE.returnSpeed, dt);
+        if (dist < 0.9 && this.droneCooldown <= 0) this._setDroneState('patrol');
+        break;
+      }
+      default: {
+        const wp = DRONE_WAYPOINTS[this.droneWaypoint % DRONE_WAYPOINTS.length];
+        const dist = this._moveDroneToward(wp.x, wp.z, DRONE.patrolSpeed, dt);
+        if (dist < 0.6) this.droneWaypoint = (this.droneWaypoint + 1) % DRONE_WAYPOINTS.length;
+      }
+    }
+
+    const dip = this.droneState === 'chase' ? 1.0 : 0;
+    const targetY = DRONE.hoverY + Math.sin(this.clock * 2.3) * 0.16 - dip;
+    g.position.y += (targetY - g.position.y) * Math.min(1, dt * 3);
+    const turn = Math.atan2(Math.sin(this.droneFacing - g.rotation.y), Math.cos(this.droneFacing - g.rotation.y));
+    g.rotation.y += turn * Math.min(1, dt * 5);
+
+    if (this.droneCone) {
+      const h = Math.max(1, g.position.y - 0.15);
+      const r = h * DRONE.coneTan;
+      this.droneCone.scale.set(r, h, r);
+      this.droneCone.position.y = -h / 2;
+    }
+    const colors = { patrol: 0xffe066, suspicious: 0xffa726, investigate: 0xffd23f, chase: 0xff3b30, return: 0x7dd3fc };
+    const col = colors[this.droneState] ?? 0xffe066;
+    this.droneConeMat?.color?.setHex?.(col);
+    this.droneEyeMat?.color?.setHex?.(col);
+    this.droneEyeMat?.emissive?.setHex?.(col);
+    if (this.droneConeMat) {
+      let op = this.droneState === 'chase' ? 0.22 : this.droneState === 'return' ? 0.1 : 0.14;
+      if (this.droneState === 'suspicious' && Math.floor(this.clock * 8) % 2 === 0) op = 0.26;
+      this.droneConeMat.opacity = op;
+    }
+    if (this.droneLight) {
+      this.droneLight.color?.setHex?.(col);
+      this.droneLight.intensity = this.droneState === 'chase' ? 2.2 : 1.1;
+    }
   }
 
   // ─── lockdown hazards ───
@@ -682,6 +1008,10 @@ export class EscapeSandbox {
       }
     }
 
+    if (this.droneGroup) {
+      try { this._updateDrone(dt, dweebs); } catch { /* keep the frame loop alive */ }
+    }
+
     if (camera) this._cutaway(camera, dt);
     this._paintHints();
     this._paintLockdown();
@@ -756,6 +1086,11 @@ export class EscapeSandbox {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       for (const m of mats) m?.dispose?.();
     });
+    this.droneGroup = null;
+    this.droneCone = null;
+    this.droneConeMat = null;
+    this.droneEyeMat = null;
+    this.droneLight = null;
     this.hintEl?.remove();
     this.hintEl = null;
     this.lockdownEl?.remove();
