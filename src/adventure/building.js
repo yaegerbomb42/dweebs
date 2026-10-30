@@ -241,13 +241,34 @@ export class BuildingManager {
     }
   }
 
-  confirmPlacement(colony, world) {
+  /**
+   * Confirm placement of the active blueprint.
+   * @param {Colony} colony - The colony managing resources and build queue
+   * @param {object} world - The Meadowlands world instance
+   * @param {object} [options] - Options: { queue: boolean }
+   *   queue=true: add to colony.buildQueue; a Builder raises it at the next build site and pays then
+   *   queue=false (default): build instantly (player places it themselves)
+   * @returns {object|null} Result object with success status
+   */
+  confirmPlacement(colony, world, options = {}) {
+    const { queue = false } = options;
     if (!this.activeBlueprint || !this.isValidPlacement) return null;
     const bp = this.activeBlueprint;
 
     // Locked blueprints need a town-tier milestone or a ruin-vault chest first.
     if (colony && typeof colony.isBlueprintUnlocked === 'function' && !colony.isBlueprintUnlocked(bp.id)) {
       return { success: false, reason: `🔒 The ${bp.name} blueprint is locked — grow your town or find it in a ruin vault!` };
+    }
+
+    if (queue) {
+      // Queue for Builders. Colony._completeBuild() charges the cost when a Builder
+      // actually raises it (and waits on the queue until you can afford it), so
+      // nothing is deducted here and cancelling needs no refund.
+      if (!colony?.queueBuild?.(bp.id)) {
+        return { success: false, reason: `Could not queue the ${bp.name} (already queued or locked).` };
+      }
+      this.cancelPlacing();
+      return { success: true, queued: true, blueprintId: bp.id };
     }
 
     // Check colony resource costs
@@ -263,6 +284,7 @@ export class BuildingManager {
       }
     }
 
+    // Instant placement (default): build it right now at the ghost position
     const pos = this.placementPos.clone();
     const structure = this._instantiateStructure(bp.id, pos, world);
 
@@ -281,6 +303,27 @@ export class BuildingManager {
 
     this.cancelPlacing();
     return { success: true, structure };
+  }
+
+  /**
+   * Cancel the last queued build (nothing was charged yet, so there is nothing to refund).
+   * @param {Colony} colony - The colony with the build queue
+   * @returns {object} Result with success status and the unqueued blueprint
+   */
+  cancelLastQueuedBuild(colony) {
+    if (!colony || !colony.buildQueue || colony.buildQueue.length === 0) {
+      return { success: false, reason: 'No builds in the queue to cancel.' };
+    }
+    const blueprintId = colony.buildQueue[colony.buildQueue.length - 1];
+    const bp = BLUEPRINTS.find(b => b.id === blueprintId);
+    if (!bp) {
+      // Clean up invalid entry
+      colony.buildQueue.pop();
+      return { success: false, reason: 'Unknown blueprint removed from queue.' };
+    }
+    colony.cancelBuild(blueprintId);
+    colony._addLog(`❌ The ${bp.name} was taken off the build queue.`);
+    return { success: true, blueprintId, name: bp.name };
   }
 
   /** Place a structure without charging costs (save restore). */
