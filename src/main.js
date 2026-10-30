@@ -207,6 +207,7 @@ async function init() {
   arena.onBump = (b, obj) => fx.bumper(obj.getPosition(), b.color, false);
   arena.onBounce = (t) => fx.bounce({ x: t.x, y: 0.25, z: t.z }, t.color);
   arena.onLavaHit = (d, launch) => fx.lavaHit(d, launch);
+  arena.onBubblePop = (pos, pitch, count) => fx.bubblePop(pos, pitch, count);
   arena.onCrustWarn = () => hud.feed('<b>VOLCANO</b> · the rim is cracking!', 'sd');
   arena.onGustWarn = dir => {
     hud.feed(`<b>SKY TURBINE</b> · gust inbound ${dir > 0 ? '→' : '←'}`, 'sd');

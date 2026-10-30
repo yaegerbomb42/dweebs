@@ -290,6 +290,17 @@ export class Fx {
     if (this._near(pos, 16) > 0) this.hud.popup(word, pos, size, color);
   }
 
+  /** Bubble Wrap Ring: one pop (pitch climbs with the chain) or a whole crater on a slam. */
+  bubblePop(pos, pitch = 1, count = 1) {
+    if (this._near(pos, 18) <= 0) return;
+    this.audio.playBubblePop?.(this._pan(pos), pitch);
+    this.particles.emit({ x: pos.x, y: 0.25, z: pos.z }, { count: Math.min(14, 2 + count), colors: [0xffffff, 0xd8f1ff, 0xbfe6ff], speed: 2.5 + count * 0.25, up: 2.2, size: 0.07, life: 0.3 });
+    if (count >= 6) {
+      this._toyWord(count >= 14 ? 'POP-POP-POP!' : 'POP!', { x: pos.x, y: 1.4, z: pos.z }, 0x7fd8ff, count >= 14 ? 'big' : 'small');
+      this.cam?.shake?.(Math.min(0.18, 0.04 + count * 0.006));
+    }
+  }
+
   doorThwack(pos) {
     this.particles.dust({ x: pos.x, y: pos.y - 0.4, z: pos.z }, 10);
     this.particles.emit(pos, { count: 10, colors: [0xffd23f, 0xffffff, 0xd4a86a], speed: 5, up: 2, size: 0.12, life: 0.35 });

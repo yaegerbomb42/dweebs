@@ -20,6 +20,7 @@ import { DEFAULT_ARENA, arenaById } from '../game/Arenas.js';
 import * as S from '../render/Stickers.js';
 
 export const CORE_RADIUS = 11;
+const _bwMat = new THREE.Matrix4();
 export const STAGE_RADIUS = 16;
 export const WATER_LEVEL = -5;
 const SEGMENTS = 16;
@@ -232,6 +233,7 @@ export class Arena {
     this._fanBlades = null;
     this.megaPinwheels = [];
     this.ballPitZones = [];
+    this.bubbles = null;
   }
 
   _createArenaTheme() {
@@ -245,6 +247,154 @@ export class Arena {
     else if (def.id === 'moon') this._themeMoon(g);
     else if (def.id === 'gale') this._themeGale(g);
     else if (def.id === 'megastadium') this._themeMegaStadium(g);
+    if (def.bubbleWrap) this._themeBubbleWrap(g);
+  }
+
+  // ─── Bubble Wrap Ring ───────────────────────────────────────────────────────
+  // One InstancedMesh of squashy bubbles on a hex grid. Feet pop what they touch (with a tiny
+  // hop), hard landings pop a crater, skidding props leave a popped trail, and every bubble
+  // re-inflates a few seconds later so the floor keeps playing all match.
+  _themeBubbleWrap(g) {
+    const B = BALANCE.arena.bubble;
+    const sheet = new THREE.Mesh(
+      new THREE.CircleGeometry(CORE_RADIUS - 0.08, 64),
+      new THREE.MeshBasicMaterial({ color: 0xe8f6ff, transparent: true, opacity: 0.45, depthWrite: false })
+    );
+    sheet.rotation.x = -Math.PI / 2;
+    sheet.position.y = 0.02;
+    noOutline(sheet);
+    g.add(sheet);
+
+    const xs = [], zs = [];
+    const rowH = B.spacing * 0.866;
+    const rows = Math.ceil(B.floorRadius / rowH);
+    for (let r = -rows; r <= rows; r++) {
+      const z = r * rowH;
+      const off = (r & 1) ? B.spacing / 2 : 0;
+      const cols = Math.ceil(B.floorRadius / B.spacing) + 1;
+      for (let c = -cols; c <= cols; c++) {
+        const x = c * B.spacing + off;
+        if (x * x + z * z > B.floorRadius * B.floorRadius) continue;
+        xs.push(x); zs.push(z);
+      }
+    }
+    const n = xs.length;
+    const geo = new THREE.SphereGeometry(B.radius, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xd8f1ff, roughness: 0.12, metalness: 0.05, transparent: true, opacity: 0.62 });
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.receiveShadow = true;
+    noOutline(mesh);
+    g.add(mesh);
+    this.bubbles = {
+      mesh, n, xs: Float32Array.from(xs), zs: Float32Array.from(zs),
+      popped: new Float32Array(n),   // seconds until re-inflated (0 = full)
+      inflate: new Float32Array(n).fill(1),
+      chain: 0, chainT: 0, soundT: 0, hopT: new Map(), prevVy: new Map(), dirty: true,
+    };
+    this._reinflateBubbles();
+  }
+
+  _reinflateBubbles() {
+    const b = this.bubbles;
+    if (!b) return;
+    b.popped.fill(0); b.inflate.fill(1); b.dirty = true;
+    this._writeBubbleMatrices(true);
+  }
+
+  _writeBubbleMatrices(all = false) {
+    const b = this.bubbles;
+    if (!b || !(b.dirty || all)) return;
+    const m = _bwMat;
+    for (let i = 0; i < b.n; i++) {
+      const k = b.inflate[i];
+      // A popped bubble is a crinkled flat disc; it puffs back up with a little overshoot.
+      const sy = 0.12 + 0.88 * k;
+      const sxz = 0.9 + 0.1 * k + (k > 0.7 && k < 1 ? Math.sin(k * Math.PI * 3) * 0.06 : 0);
+      m.makeScale(sxz, sy, sxz);
+      m.setPosition(b.xs[i], 0.02, b.zs[i]);
+      b.mesh.setMatrixAt(i, m);
+    }
+    b.mesh.instanceMatrix.needsUpdate = true;
+    b.dirty = false;
+  }
+
+  /** Pop every full bubble within `reach` of (x,z). Returns how many popped. */
+  _popBubblesAt(x, z, reach, budget) {
+    const b = this.bubbles, B = BALANCE.arena.bubble;
+    const r2 = (reach + B.radius * 0.5) ** 2;
+    let popped = 0;
+    for (let i = 0; i < b.n && popped < budget; i++) {
+      if (b.popped[i] > 0) continue;
+      const dx = b.xs[i] - x, dz = b.zs[i] - z;
+      if (dx * dx + dz * dz > r2) continue;
+      b.popped[i] = B.regrow * (0.85 + ((i * 7919) % 100) / 330);  // staggered re-inflate
+      b.inflate[i] = 0;
+      popped++;
+    }
+    if (popped) b.dirty = true;
+    return popped;
+  }
+
+  _bubbleSound(x, z, count) {
+    const b = this.bubbles, B = BALANCE.arena.bubble;
+    if (b.soundT > 0 && count < 6) return;
+    b.soundT = 1 / B.soundsPerSec;
+    // Chained pops climb a little pentatonic ladder, so a sprint sounds like a tune.
+    const LADDER = [1, 1.125, 1.25, 1.5, 1.667, 2];
+    b.chain = b.chainT > 0 ? b.chain + 1 : 0;
+    b.chainT = 0.35;
+    const pitch = count >= 6 ? 0.7 : LADDER[b.chain % LADDER.length] * (0.94 + Math.random() * 0.12);
+    this.onBubblePop?.({ x, y: 0.3, z }, pitch, count);
+  }
+
+  _updateBubbleWrap(dt) {
+    const b = this.bubbles, B = BALANCE.arena.bubble;
+    b.soundT = Math.max(0, b.soundT - dt);
+    b.chainT = Math.max(0, b.chainT - dt);
+    // Re-inflate.
+    for (let i = 0; i < b.n; i++) {
+      if (b.popped[i] > 0) {
+        b.popped[i] -= dt;
+        if (b.popped[i] <= 0) { b.popped[i] = 0; b.inflate[i] = 0.001; b.dirty = true; }
+      } else if (b.inflate[i] < 1) {
+        b.inflate[i] = Math.min(1, b.inflate[i] + dt * 2.2);
+        b.dirty = true;
+      }
+    }
+    let budget = B.maxPopsPerTick;
+    for (const d of this.dweebs ?? []) {
+      if (!d?.active || !d.body || d.grabbedBy || budget <= 0) continue;
+      const p = d.getPosition();
+      const v = d.body.linvel();
+      const prevVy = b.prevVy.get(d) ?? 0;
+      b.prevVy.set(d, v.y);
+      if (p.y > 1.6 || p.y < -0.5) continue;  // airborne high up / off the island
+      const slam = d.grounded && prevVy < -B.slamSpeed;
+      const reach = slam ? B.slamReach : B.stepReach;
+      const n = this._popBubblesAt(p.x, p.z, reach, budget);
+      if (!n) continue;
+      budget -= n;
+      this._bubbleSound(p.x, p.z, n);
+      // Each pop gives a squeaky little hop (rate-limited so it never becomes a trampoline).
+      const hopT = b.hopT.get(d) ?? 0;
+      if (d.grounded && !slam && this.time > hopT) {
+        b.hopT.set(d, this.time + B.hopCooldown);
+        d.body.setLinvel({ x: v.x * 0.97, y: Math.max(v.y, B.hop), z: v.z * 0.97 }, true);
+      }
+    }
+    // Skidding or landing props pop a trail too.
+    for (const o of this.objects) {
+      if (budget <= 0) break;
+      if (!o?.body || o.isDebris || o.isGrabbed) continue;
+      const p = o.getPosition();
+      if (p.y > 0.9 || p.y < -0.5) continue;
+      const v = o.body.linvel();
+      if (v.x * v.x + v.y * v.y + v.z * v.z < B.propSpeed * B.propSpeed) continue;
+      const n = this._popBubblesAt(p.x, p.z, 0.45, budget);
+      if (n) { budget -= n; this._bubbleSound(p.x, p.z, n); }
+    }
+    this._writeBubbleMatrices();
   }
 
   _themeIceberg(g) {
@@ -686,6 +836,7 @@ export class Arena {
     }
     this.crustTimer = A.crustFirst;
     this.crusts = 0;
+    this._reinflateBubbles();
   }
 
   /** The floating platform a Dweeb is standing on, if any. */
@@ -1899,6 +2050,7 @@ export class Arena {
       if (this.arenaId === 'megastadium') this._updateMegaStadium(dt);
     }
     this._updatePlatforms();
+    if (this.bubbles) this._updateBubbleWrap(dt);
 
     for (let i = this.objects.length - 1; i >= 0; i--) {
       const obj = this.objects[i];
