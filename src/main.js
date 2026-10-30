@@ -29,6 +29,7 @@ import { Fx } from './game/Fx.js';
 import { StatusSystem } from './game/StatusEffects.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
+import { TutorialDirector } from './game/Tutorial.js';
 import { ComboDirector } from './game/ComboDirector.js';
 import { Sky, Water } from './render/Sky.js';
 import { Particles } from './render/Particles.js';
@@ -119,6 +120,7 @@ let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
 let comboDirector = null; // hit chains / juggles / assists (game/ComboDirector.js)
 let rematch = null;
+let tutorial = null;
 let mutatorDirector = new MutatorDirector();
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
@@ -196,7 +198,9 @@ async function init() {
   haptics = new Haptics();
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
+  tutorial = new TutorialDirector({ hud });
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  fx.tutorial = tutorial;
   comboDirector = new ComboDirector({ hud, audio, particles });
   fx.combo = comboDirector;
   aimGuide.onLock = () => fx.aimLock();
@@ -674,6 +678,7 @@ function toMenu() {
   audio.setCharge(0);
   hud.setSpectator('');
   hideSpectatorOverlay();
+  tutorial?.hide?.();
   try { modeDirector.reset(); } catch (e) { console.warn('[ModeDirector] reset error:', e); }
   for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud', 'spectator-duel-overlay']) $(id)?.classList.add('hidden');
   $('main-menu').classList.remove('hidden');
@@ -1157,6 +1162,11 @@ function startMatch() {
   audio.startMusic(false);
   startRound();
   cam.lock();
+  // Start tutorial for local brawl/derby modes (not online, not adventure, not build_arena)
+  const isOnline = !!window.__dweebsMatchOverride;
+  if ((currentMode === 'brawl' || currentMode === 'derby') && !isOnline) {
+    tutorial?.start(player);
+  }
 }
 
 // Build ctx for mutators: { physics, arena, dweebs, hud, combat, time, match }
@@ -1321,6 +1331,7 @@ const matchEvents = {
     d.koedAt = t;
     const { line, context } = koLine(ctx, credited ? Hud.nameTag(credited) : '', Hud.nameTag(d));
     if (credited && !credited.eliminated) combat.addStyle(credited, 25, kind === 'star' ? 'STAR KO' : 'K.O.');
+    if (credited?.isPlayer) tutorial?.note('ko');
     hud.feed(line, `ko ${context}`);
     const tag = { revenge: 'REVENGE', trick: 'TRICKSHOT KO', sd: 'SUDDEN DEATH', style: 'STYLE KO', self: 'SELF-KO' }[context];
     if (d.isPlayer) hud.announce(d.eliminated ? 'ELIMINATED!' : playerKOWord(kind, false) + (tag ? `<small>${tag}</small>` : ''), 'ko', 1.2);
@@ -1658,6 +1669,7 @@ function loop() {
     combat.status?.update(dt);
     updateDrops(dt);
     match.update(dt);
+    tutorial?.update(dt);
     if (hillZone) hillZone.update(dt, dweebs, match.hillHolder, nameOf);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
       for (const d of dweebs) deathCinema.recordFrame(d, match.time);

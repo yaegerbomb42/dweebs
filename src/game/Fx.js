@@ -64,6 +64,8 @@ export class Fx {
     if (launch > 0.5) this.voice(victim, tier >= 2 ? 'yeet' : 'ow');
     const color = attacker ? attacker.color : 0xffffff;
 
+    if (attacker?.isPlayer) this.tutorial?.note('hit');
+
     if (tier >= 1) this.reactions.emit('gasp', pos, { exclude: [victim, attacker], cheerFor: attacker, intensity: 0.6 + tier * 0.4 });
     if (tier >= 2) this.particles.bigHit(pos, color);
     else this.particles.hit(pos, color);
@@ -323,6 +325,7 @@ export class Fx {
     const pan = this._pan(d.getPosition());
     this.audio.playThrow(pan, mass);
     if (mass >= 3 || mass < 0.5) this.audio.playSlideWhistle(pan);
+    if (d?.isPlayer) this.tutorial?.note('throw');
   }
 
   rocketLaunch(obj) {
