@@ -5,7 +5,7 @@
 //   playing→ defense (waves, boss every 5, win after FINAL_WAVE) or versus AI
 //   paused / over → pause menu, win/lose screen with stats and restart
 import * as THREE from 'three';
-import { createBattle, stepBattle, battleHash, WF_DT, FIELD } from '../sim/warfareBattle.js';
+import { createBattle, stepBattle, battleHash, WF_DT, FIELD, MAGNET } from '../sim/warfareBattle.js';
 import { commanderDecide } from '../sim/warfareAI.js';
 import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
 import { DIFFICULTY, FINAL_WAVE } from '../sim/warfareWaves.js';
@@ -21,6 +21,7 @@ export const POWER_COOLDOWNS = {
   artillery: 10.0,
   supply: 8.0,
   stance: 4.0,
+  magnet: 18.0,
 };
 
 const ENEMY_HINTS = {
@@ -75,7 +76,7 @@ export class DweebWarfare {
     this.difficulty = 'normal';
     try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, magnet: 0 };
     this.pending = [];
     this.acc = 0;
     this.seen = new Set();
@@ -141,7 +142,7 @@ export class DweebWarfare {
     const bg = getBattleground(mapId || this.mapId || 'meadow');
     this.mapId = bg.id;
     this.st = createBattle({ seed, mode, difficulty, barricades: bg.barricades, highGround: bg.highGround });
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, magnet: 0 };
     this.pending = [];
     this.outbox = [];
     this.seen = new Set();
@@ -346,6 +347,24 @@ export class DweebWarfare {
     this._cmd({ type: 'supply', team });
   }
 
+  callMagnet(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.magnet > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Magnet Crane recharging (${this.powerCooldowns.magnet.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < MAGNET.cost) {
+      this.audio?.deny();
+      this.hud.toast('Need 🪙 30 for Magnet Crane', 2.0);
+      return;
+    }
+    this.powerCooldowns.magnet = POWER_COOLDOWNS.magnet;
+    const rally = this.st.rally[team];
+    if (!rally) return;
+    this._cmd({ type: 'magnet', team, x: rally.x, z: rally.z });
+  }
+
   toggleFormation(team = this.team) {
     if (this.phase !== 'playing') return;
     if (this.powerCooldowns.stance > 0) {
@@ -366,6 +385,7 @@ export class DweebWarfare {
     else if (a === 'artillery') this.callArtillery();
     else if (a === 'supply') this.callSupply();
     else if (a === 'stance') this.toggleFormation();
+    else if (a === 'magnet') this.callMagnet();
     else if (a.startsWith('diff-') && DIFFICULTY[a.slice(5)]) {
       this.difficulty = a.slice(5);
       try { localStorage.setItem('dweebs-warfare-diff', this.difficulty); } catch { /* private mode */ }
@@ -415,6 +435,7 @@ export class DweebWarfare {
       else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
       else if (k === 'e') { this.callSupply(); e.preventDefault(); }
       else if (k === 'r') { this.toggleFormation(); e.preventDefault(); }
+      else if (k === 't') { this.callMagnet(); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
       // Player 2 local PvP controls (keys 7, 8, 9, 0, and [)
       else if (this.isLocalPvp) {
@@ -503,6 +524,8 @@ export class DweebWarfare {
         hud.toast(`📦 Supplies air-dropped! Nearby units healed!`, 2.5);
       } else if (ev.type === 'stance') {
         hud.toast(ev.stance === 'charge' ? `⚔️ CHARGE! Speed boosted!` : `🛡️ DEFENSIVE WALL! Holding ground!`, 2.0);
+      } else if (ev.type === 'magnet') {
+        hud.toast(`🧲 Magnet Crane yanks the enemy line!`, 2.5);
       } else if (ev.type === 'waveStart') {
         hud.banner(ev.boss ? 'BOSS WAVE!' : `WAVE ${ev.wave}`, ev.boss ? 'The Brass Bully rolls in' : `${ev.count} enemies incoming`, ev.boss ? 'boss' : '');
       } else if (ev.type === 'waveClear') {
@@ -573,7 +596,7 @@ export class DweebWarfare {
 
   update(rawDt) {
     const dt = Math.min(rawDt, 0.1);
-    for (const k of ['artillery', 'supply', 'stance']) {
+    for (const k of ['artillery', 'supply', 'stance', 'magnet']) {
       if (this.powerCooldowns[k] > 0) {
         this.powerCooldowns[k] = Math.max(0, this.powerCooldowns[k] - dt);
       }

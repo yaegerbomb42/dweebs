@@ -141,6 +141,15 @@ export class WarfareView {
           fx.dustCloud(ev.x, ev.z, r);
           break;
         }
+        case 'magnet': {
+          const r = ev.radius || 14;
+          const ringR = ev.ringRadius || 2.5;
+          fx.shockwave(ev.x, ev.z, r, 0x88ccff);
+          fx.shockwave(ev.x, ev.z, ringR, 0x44aaff);
+          fx.magnetSparks(ev.x, ev.z, ringR, r);
+          fx.addShake(0.35);
+          break;
+        }
         case 'barricadeDown': {
           const bm = this.board.barricades.find(b => Math.hypot(b.x - ev.x, b.z - ev.z) < 0.6);
           if (bm) bm.g.visible = false;
