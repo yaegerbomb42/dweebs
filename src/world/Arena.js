@@ -64,6 +64,7 @@ export const DROP_ITEMS = [
   // mid: solid throwables and furniture
   { key: 'crate', w: 5 }, { key: 'tire', w: 4 }, { key: 'tv', w: 3 }, { key: 'ladder', w: 3 }, { key: 'mattress', w: 3 },
   { key: 'shoppingCart', w: 3 }, { key: 'couch', w: 2 }, { key: 'bowlingBall', w: 3 }, { key: 'spikyBall', w: 3 },
+  { key: 'jackInBox', w: 3 },
   { key: 'pogoStick', w: 3 },
   // rare: the KO makers
   { key: 'giantHammer', w: 1.5 }, { key: 'toyRocket', w: 1.5 }, { key: 'explosiveBarrel', w: 1.5 }, { key: 'anvil', w: 1 },
