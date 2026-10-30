@@ -525,6 +525,8 @@ export class CombatSystem {
     obj.body.setAngvel({ x: fw.z * spin, y: (Math.random() - 0.5) * spin * 0.7, z: -fw.x * spin }, true);
     obj.thrownBy = d;
     obj.thrownTime = obj.def.roll ? 3 : 2.2;
+    obj.boomT = 0; obj.boomReturning = false;
+    if (obj.def.boomerang) obj.thrownTime = obj.def.boomerang.maxTime + 0.4;
     obj.lastSpeed = L.speed;
     obj.throwOrigin = { ...L.origin };
     obj.prevPos = null;
@@ -1121,10 +1123,48 @@ export class CombatSystem {
     }
   }
 
+  /** Boomerang props curve out, then home back to the thrower; a clean catch re-grabs and pays style. */
+  _updateBoomerang(obj, dt) {
+    const B = obj.def.boomerang, owner = obj.thrownBy;
+    obj.boomT = (obj.boomT || 0) + dt;
+    obj.body.setAngvel({ x: 0, y: 22, z: 0 }, true); // flat helicopter spin
+    if (!owner?.active || obj.boomT > B.maxTime) { obj.boomT = 0; obj.thrownTime = Math.min(obj.thrownTime, 0.3); return false; }
+    const v = obj.body.linvel();
+    if (obj.boomT < B.delay) {
+      // Outbound: a gentle sideways curve and hang-time
+      const sp = Math.hypot(v.x, v.z) || 1;
+      obj.body.setLinvel({ x: v.x - (v.z / sp) * 6 * dt, y: v.y + 9.81 * 0.85 * dt, z: v.z + (v.x / sp) * 6 * dt }, true);
+      return false;
+    }
+    // Return leg: steer toward the owner's hands; reset the hit list once so it can tag on the way back
+    if (!obj.boomReturning) { obj.boomReturning = true; obj.hitList.clear(); obj.hitList.add(owner); }
+    const op = obj.getPosition(), pp = owner.getPosition();
+    const dx = pp.x - op.x, dy = pp.y + 0.6 - op.y, dz = pp.z - op.z, dist = Math.hypot(dx, dy, dz) || 1;
+    const k = Math.min(1, dt * 5);
+    obj.body.setLinvel({
+      x: v.x + (dx / dist * B.returnSpeed - v.x) * k,
+      y: v.y + (dy / dist * B.returnSpeed - v.y) * k + 9.81 * dt,
+      z: v.z + (dz / dist * B.returnSpeed - v.z) * k,
+    }, true);
+    if (Math.hypot(dx, dz) < B.catchRadius && Math.abs(dy) < 2.6) {
+      obj.boomT = 0; obj.boomReturning = false;
+      if (!owner.held && !owner.grabbedBy && owner.hitstun <= 0) {
+        this._holdObject(owner, obj);
+        this.addStyle(owner, 12, 'CATCH!');
+        this.fx.hud?.popup?.('CATCH!', pp, 'small', 0x3fa9ff);
+        this.fx.grab?.(owner, obj);
+        return true;
+      }
+      obj.thrownTime = Math.min(obj.thrownTime, 0.2); // hands full: it bonks down at their feet
+    }
+    return false;
+  }
+
   _updateProjectiles(dt) {
     for (const obj of [...this.arena.objects]) {
       if (obj.isDebris || !obj.thrownBy || obj.thrownTime <= 0 || !obj.body) continue;
       obj.thrownTime -= dt;
+      if (obj.def.boomerang && this._updateBoomerang(obj, dt)) continue;
       const v = obj.body.linvel();
       const speed = Math.hypot(v.x, v.y, v.z);
       const op = obj.getPosition();

@@ -516,6 +516,17 @@ const BUILDERS = {
     k.sticker(S.textSticker('★', { bg: '#3fa9ff', fg: '#fff8ee', w: 128, h: 128, shape: 'circle' }), 0.2, 0.2, { p: [-0.27, 0.05, 0.05], r: [0, -PI / 2, 0] });
   },
 
+  boomerangBass(k) {
+    // A bigmouth bass bent into a boomerang: two fishy wings, a gaping mouth at the elbow.
+    const blue = 0x3fa9ff, belly = 0xfff1c7;
+    for (const s of [-1, 1]) {
+      k.add(Box(0.42, 0.09, 0.15), blue, { p: [s * 0.19, 0, -s * 0.0 + 0.05], r: [0, s * 0.45, 0] });
+      k.add(Box(0.34, 0.03, 0.08), belly, { p: [s * 0.19, -0.05, 0.05], r: [0, s * 0.45, 0] });
+    }
+    k.add(Tor(0.07, 0.025, 6, 10), 0xff4d6d, { p: [0, 0, -0.13], r: [0, 0, 0] });
+    k.add(Box(0.08, 0.06, 0.04), INK, { p: [-0.36, 0.06, -0.06] });
+    k.add(Box(0.08, 0.06, 0.04), INK, { p: [0.36, 0.06, -0.06] });
+  },
   spikyBall(k) {
     // Reference: images/Spiky_blob_bouncing_off_walls — red blob, bendy tentacle spikes, big googly eyes.
     const red = 0xff4d5e;
