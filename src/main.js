@@ -79,6 +79,8 @@ let activeCitizenIdx = 0;
 let isBuildToolbarOpen = false;
 let villageSaveTimer = 0;
 let currentGatherTarget = null;
+let sceneMoodTimer = 0; // throttle setSceneMood to 4Hz
+let lastWeather = 'clear'; // track weather changes for thunder
 let modeDirector = new ModeDirector();
 const _modeCtx = {};
 
@@ -663,6 +665,7 @@ function toMenu() {
   colony = null;
   if (hillZone) { hillZone.dispose(); hillZone = null; }
   audio.stopAmbience?.();
+  audio.setSceneMood?.({}); // silence adventure ambience layers
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
@@ -1713,6 +1716,28 @@ function loop() {
     }
     currentMeadowlands.update(dt, dweebs, colony);
     if (questBoard && player) questBoard.update(dt, player);
+
+    // Adaptive adventure ambience (throttled to 4 Hz)
+    sceneMoodTimer += dt;
+    if (sceneMoodTimer >= 0.25) {
+      sceneMoodTimer = 0;
+      const night = currentMeadowlands?.isNight ?? false;
+      const rain = currentMeadowlands?.weather === 'rain';
+      // Danger: 1 if any hostile critter within 10m of player
+      let danger = 0;
+      if (player?.active) {
+        const p = player.getPosition?.();
+        if (p && currentMeadowlands?.critters) {
+          for (const c of currentMeadowlands.critters) {
+            if (c.hostile && Math.hypot(c.x - p.x, c.z - p.z) < 10) { danger = 1; break; }
+          }
+        }
+      }
+      audio.setSceneMood?.({ night, rain, danger });
+      // Thunder on rain start
+      if (rain && lastWeather !== 'rain') audio.playThunder?.();
+      lastWeather = currentMeadowlands?.weather ?? 'clear';
+    }
 
     // Gently rescue any dweeb that falls below the map
     for (const d of dweebs) {
