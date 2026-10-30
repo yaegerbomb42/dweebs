@@ -93,6 +93,99 @@ const CSS = `
   width: 220px;
 }
 .bd-top-actions { display: flex; gap: 10px; }
+
+/* Stable row — six saved creature slots */
+.bd-stable-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+.bd-stable-label {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 13px;
+  color: #ffd23f;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.bd-stable-slots {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.bd-stable-slot {
+  pointer-events: auto;
+  font-family: 'Nunito', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  background: #1a1230;
+  color: #fff8ee;
+  border: 2px solid #332357;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-width: 120px;
+  max-width: 160px;
+  transition: transform 0.08s, border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  position: relative;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bd-stable-slot:hover {
+  transform: translateY(-2px);
+  border-color: #ffd23f;
+  box-shadow: 0 0 8px rgba(255, 210, 63, 0.3);
+}
+.bd-stable-slot.active {
+  border-color: #ffd23f;
+  background: rgba(255, 210, 63, 0.15);
+  box-shadow: 0 0 10px rgba(255, 210, 63, 0.25);
+}
+.bd-stable-slot.empty {
+  opacity: 0.5;
+  border-style: dashed;
+  color: #8870a0;
+}
+.bd-stable-slot .slot-name {
+  display: block;
+  font-family: 'Lilita One', sans-serif;
+  font-size: 12px;
+  color: #ffd23f;
+}
+.bd-stable-slot .slot-meta {
+  display: block;
+  font-size: 10px;
+  opacity: 0.75;
+  margin-top: 2px;
+}
+.bd-stable-slot .slot-delete {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 77, 94, 0.2);
+  color: #ff4d5e;
+  border: 1px solid #ff4d5e;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  pointer-events: auto;
+}
+.bd-stable-slot:hover .slot-delete {
+  opacity: 1;
+}
+.bd-stable-slot .slot-delete:hover {
+  background: #ff4d5e;
+  color: #fff;
+}
+
 .bd-btn {
   pointer-events: auto;
   font-family: 'Lilita One', sans-serif;
@@ -247,11 +340,15 @@ export class BuildADweebHud {
       this.handlers = containerOrHandlers || {};
     }
     this.root = null;
+    // Stable state
+    this._stableSelected = -1; // currently selected slot index (-1 = none)
     this._createDom();
     // If a tournament is already in progress (restored from storage by the
     // lab), render its bracket immediately.
     const existing = this.handlers.onTournamentState?.();
     if (existing) this.renderTournament(existing);
+    // Initial stable render
+    this.renderStable();
   }
 
   _notifyChange(patch) {
@@ -281,6 +378,13 @@ export class BuildADweebHud {
           <button class="bd-preset-btn" data-preset="speed_gremlin" title="Speed Gremlin">⚡ SPEED GREMLIN</button>
           <button class="bd-preset-btn" data-preset="sniper_bean" title="Sniper Bean">🎯 SNIPER BEAN</button>
           <button class="bd-preset-btn" data-preset="pugilist_champ" title="Pugilist Champ">🥊 PUGILIST CHAMP</button>
+        </div>
+        <!-- Dweeb Stable — six saved creature slots -->
+        <div class="bd-stable-row" id="bd-stable-row">
+          <span class="bd-stable-label">STABLE</span>
+          <div class="bd-stable-slots" id="bd-stable-slots"></div>
+          <button class="bd-btn yellow" id="bd-btn-stable-save" title="Save current build to selected slot">SAVE</button>
+          <button class="bd-btn alt" id="bd-btn-stable-clear" title="Clear selected slot">CLEAR</button>
         </div>
         <div class="bd-top-actions">
           <button class="bd-btn yellow" id="bd-btn-random">🎲 RANDOM MUTANT</button>
@@ -616,6 +720,57 @@ export class BuildADweebHud {
         }
       });
     }
+
+    // Stable row — slot strip + SAVE/CLEAR buttons
+    const stableSlots = $('#bd-stable-slots');
+    if (stableSlots) {
+      // Click a slot to select/load; Shift-click or × to delete
+      stableSlots.addEventListener('click', e => {
+        const slotEl = e.target.closest('.bd-stable-slot');
+        const delBtn = e.target.closest('.slot-delete');
+        if (!slotEl) return;
+        const idx = parseInt(slotEl.dataset.idx, 10);
+        if (Number.isNaN(idx)) return;
+
+        if (delBtn) {
+          // Delete via × button
+          e.stopPropagation();
+          this.handlers.onStableDelete?.(idx);
+          return;
+        }
+
+        if (e.shiftKey) {
+          // Shift-click to delete
+          this.handlers.onStableDelete?.(idx);
+          return;
+        }
+
+        // Normal click: select slot (visual) and load if different
+        this._stableSelected = idx;
+        this.renderStable();
+        this.handlers.onStableLoad?.(idx);
+      });
+    }
+
+    // SAVE button — write current build to selected slot
+    const saveBtn = $('#bd-btn-stable-save');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        if (this._stableSelected >= 0) {
+          this.handlers.onStableSave?.(this._stableSelected);
+        }
+      });
+    }
+
+    // CLEAR button — clear selected slot
+    const clearBtn = $('#bd-btn-stable-clear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        if (this._stableSelected >= 0) {
+          this.handlers.onStableDelete?.(this._stableSelected);
+        }
+      });
+    }
   }
 
   syncForm(config) {
@@ -683,6 +838,40 @@ export class BuildADweebHud {
         b.classList.toggle('active', !!match);
       });
     }
+  }
+
+  // ─── Dweeb Stable UI ────────────────────────────────────────────────
+
+  /** Render the six-slot stable strip from the lab's stableSlots array. */
+  renderStable(slots = null) {
+    const container = this.root?.querySelector('#bd-stable-slots');
+    if (!container) return;
+    // If slots not passed, try to get from lab via handler
+    const stable = slots ?? this.handlers.onStableGet?.() ?? [];
+    container.innerHTML = '';
+    for (let i = 0; i < 6; i++) {
+      const entry = stable[i];
+      const isSelected = i === this._stableSelected;
+      const slot = document.createElement('div');
+      slot.className = `bd-stable-slot${entry ? '' : ' empty'}${isSelected ? ' active' : ''}`;
+      slot.dataset.idx = String(i);
+      if (entry) {
+        const mass = entry.config?.stats?.mass ?? entry.config?.mass ?? 3.0;
+        slot.innerHTML = `
+          <span class="slot-name">${this._esc(entry.name || `Dweeb ${i + 1}`)}</span>
+          <span class="slot-meta">${this._esc(entry.shape || 'block')} · ${Number(mass).toFixed(1)} kg</span>
+          <span class="slot-delete" title="Delete this slot">×</span>
+        `;
+      } else {
+        slot.innerHTML = `<span class="slot-name">EMPTY</span><span class="slot-meta">Slot ${i + 1}</span>`;
+      }
+      container.appendChild(slot);
+    }
+  }
+
+  /** Tiny HTML escaper for slot labels. */
+  _esc(s) {
+    return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&', '<': '<', '>': '>' }[c]));
   }
 
   // ─── Tournament ladder UI ────────────────────────────────────────────────
