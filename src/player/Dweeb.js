@@ -6,7 +6,7 @@ import { toonMat, noOutline } from '../render/Toon.js';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { STAGE_RADIUS } from '../world/Arena.js';
 import { BALANCE, statsFor } from '../game/Balance.js';
-import { buildDweebModel, animateDweebFace } from './DweebModel.js';
+import { buildDweebModel, animateDweebFace, animateDweebIdle } from './DweebModel.js';
 
 const RADIUS = 0.36;
 const HALF_HEIGHT = 0.14;
@@ -144,6 +144,13 @@ export class Dweeb {
     this.wobblePhase = Math.random() * Math.PI * 2;
     this.blinkTimer = 1 + Math.random() * 3;
     this.flashMats = [];
+    this.idleTimer = 0;
+    this.idleWait = BALANCE.idle.minWait + Math.random() * (BALANCE.idle.maxWait - BALANCE.idle.minWait);
+    this.quirk = null;
+    this.quirkTimer = 0;
+    this.quirkDuration = 0;
+    this.quirkGloat = false;
+    this._quirkPose = null;
 
     const spawn = options.position || { x: 0, y: 2, z: 0 };
     const result = physicsWorld.createCharacterBody(spawn.x, spawn.y, spawn.z, RADIUS, HALF_HEIGHT, this, this.stats.mass);
@@ -745,7 +752,7 @@ export class Dweeb {
     // Limbs
     const walk = moving ? Math.sin(this.wobblePhase) : 0;
     for (const leg of this.legs) {
-      leg.pivot.rotation.x = this.grounded ? walk * 0.8 * leg.side : 0.5;
+      leg.pivot.rotation.x = (this.grounded ? walk * 0.8 * leg.side : 0.5) + (leg.idleX || 0);
     }
     for (const arm of this.arms) {
       let rx = moving ? -walk * 0.9 * arm.side : Math.sin(this.wobblePhase * 0.7) * 0.1;
@@ -779,11 +786,14 @@ export class Dweeb {
         rx = Math.sin(this.wobblePhase * 3 + arm.side) * 1.4;
         rz = arm.side * 1.6;
       }
+      rx += arm.idleX || 0;
+      rz += arm.idleZ || 0;
       arm.pivot.rotation.x = THREE.MathUtils.lerp(arm.pivot.rotation.x, rx, 1 - Math.exp(-22 * dt));
       arm.pivot.rotation.z = THREE.MathUtils.lerp(arm.pivot.rotation.z, rz, 1 - Math.exp(-22 * dt));
     }
 
     animateDweebFace(this, dt, time);
+    animateDweebIdle(this, dt, time);
 
     // Hit flash (white) and invulnerability blink
     const frozen = this.freezeTimer > 0;
