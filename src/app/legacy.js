@@ -172,4 +172,10 @@ export function applyAudioSettings(audio, settings) {
   }
   if (typeof audio.setEnabled === 'function') audio.setEnabled(settings.sound !== 'off');
   if (typeof audio.setMusicEnabled === 'function') audio.setMusicEnabled(settings.music !== 'off');
+  if (typeof audio.setSfxVolume === 'function') {
+    audio.setSfxVolume(Math.max(0, Math.min(1, settings.sfx ?? 1)));
+  }
+  if (typeof audio.setMusicVolume === 'function') {
+    audio.setMusicVolume(Math.max(0, Math.min(1, settings.musicVol ?? 0.6)));
+  }
 }

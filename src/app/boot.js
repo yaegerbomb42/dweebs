@@ -175,6 +175,9 @@ function wireTitle({ nodes, router, toast }) {
   nodes.title.querySelector('#app-btn-brawl')?.addEventListener('click', () => {
     launchGameMode('brawl', 'stadium');
   });
+  nodes.title.querySelector('#app-btn-training')?.addEventListener('click', () => {
+    launchGameMode('training', 'stadium');
+  });
 
   nodes.title.querySelector('#app-btn-dynasty')?.addEventListener('click', () => {
     launchGameMode('adventure', 'meadowlands');
@@ -190,6 +193,16 @@ function wireTitle({ nodes, router, toast }) {
 
   nodes.title.querySelector('#app-btn-builder')?.addEventListener('click', () => {
     launchGameMode('build', 'stadium');
+  });
+
+  // Dweeb Brawl Sim: trait-driven auto-battler (src/builder/traits/TraitBrawlMode.js)
+  nodes.title.querySelector('#app-btn-traitbrawl')?.addEventListener('click', () => {
+    launchGameMode('build', 'stadium', 'traitbrawl');
+  });
+
+  // Dweeb Wilds: open-world survival spectator mode
+  nodes.title.querySelector('#app-btn-wilds')?.addEventListener('click', () => {
+    launchGameMode('build', 'stadium', 'wilds');
   });
 
   // Game 5 (Dweeb Warfare) and submodes
