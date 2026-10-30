@@ -1450,6 +1450,7 @@ function loop() {
       const genEl = $('civ-gen');
       if (genEl) genEl.textContent = colony.generation;
     }
+    refreshAdvanceGenerationHud();
 
     // Dynasty Objective Banner
     const objBanner = $('dynasty-objective-banner');
@@ -1843,6 +1844,64 @@ function followCamera() {
   }
 }
 
+let lastAdvanceHudSig = '';
+const ERA_NAMES = ['Dawn', 'Hearth', 'Bloom', 'Tide', 'Ember', 'Starlight'];
+
+function refreshAdvanceGenerationHud() {
+  const btn = $('btn-advance-generation');
+  const statusEl = $('advance-generation-status');
+  if (!colony) return null;
+  const readiness = typeof colony.generationReadiness === 'function'
+    ? colony.generationReadiness(currentMeadowlands)
+    : { eligible: false, missing: ['Dynasty milestones unavailable'] };
+
+  const sig = `${readiness.eligible}|${readiness.missing.join('|')}`;
+  if (sig === lastAdvanceHudSig) return readiness;
+  lastAdvanceHudSig = sig;
+  if (btn) {
+    btn.disabled = !readiness.eligible;
+    btn.classList.toggle('ready', !!readiness.eligible);
+    btn.title = readiness.eligible
+      ? 'Ready! Click or press G to usher in the next generation.'
+      : `Missing: ${readiness.missing.join(' · ')}`;
+  }
+  if (statusEl) {
+    statusEl.textContent = readiness.eligible
+      ? '✨ Dynasty milestone complete — advance the generation! (G)'
+      : `📜 Next Era: ${readiness.missing.join(' · ')}`;
+    statusEl.classList.toggle('ready', !!readiness.eligible);
+  }
+  return readiness;
+}
+
+function advanceColonyGeneration() {
+  if (!colony) return false;
+  const readiness = typeof colony.generationReadiness === 'function'
+    ? colony.generationReadiness(currentMeadowlands)
+    : null;
+  if (!readiness || !readiness.eligible) {
+    hud?.feed?.(`<b>DYNASTY</b> · Not yet — ${readiness?.missing?.join(' · ') || 'milestones incomplete'}.`, 'style');
+    return false;
+  }
+
+  audio?.playUIClick?.();
+  const result = colony.passGeneration(currentMeadowlands);
+  const genEl = $('civ-gen');
+  if (genEl) genEl.textContent = colony.generation;
+
+  const era = ERA_NAMES[(colony.generation - 1) % ERA_NAMES.length];
+  const verbs = result?.inheritedVerbs?.length ?? colony.unlockedVerbs.size;
+  const perkDesc = result?.perk?.desc || 'Ancestral knowledge endures.';
+  hud?.announce?.(`📜 GENERATION ${colony.generation}<small>THE ${era.toUpperCase()} ERA</small>`, 'go', 3.0);
+  hud?.feed?.(`<b>DYNASTY</b> · Heirs inherit ${verbs} verb${verbs === 1 ? '' : 's'}. ${perkDesc}`, 'style');
+
+  if (currentMeadowlands && buildingManager) {
+    saveVillage({ colony, buildingManager, world: currentMeadowlands });
+  }
+  refreshAdvanceGenerationHud();
+  return true;
+}
+
 let civControlsWired = false;
 function wireCivCameraControls() {
   if (civControlsWired) return;
@@ -1909,6 +1968,9 @@ function wireCivCameraControls() {
     }
   });
 
+  const btnAdvance = $('btn-advance-generation');
+  btnAdvance?.addEventListener('click', () => advanceColonyGeneration());
+
   const btnExitMall = $('btn-civ-exit-mall');
   btnExitMall?.addEventListener('click', () => {
     audio.playUIClick();
@@ -1961,6 +2023,8 @@ function wireCivCameraControls() {
         audio.playUIClick();
         colony.launchExpedition(currentMeadowlands);
       }
+    } else if (e.key === 'g' || e.key === 'G') {
+      advanceColonyGeneration();
     } else if (e.key === 'b' || e.key === 'B') {
       toggleBuild();
     } else if (e.key === 'r' || e.key === 'R') {

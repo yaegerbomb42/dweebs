@@ -20,6 +20,11 @@ export const TOWN_TIERS = [
   { id: 'citadel', name: 'Citadel', minCitizens: 10, minStructures: 9, boundary: 44, unlocks: ['watchtower', 'fort'] },
 ];
 
+/** Extra storage capacity every generation permanently grants the settlement. */
+export const DYNASTY_STORAGE_PERK = 15;
+/** New structures each era after the first must add before the next generation can pass. */
+export const GEN_FRESH_STRUCTURES = 3;
+
 /** Blueprints every hamlet starts with — the core toy-construction set. */
 export const CORE_BLUEPRINTS = [
   'springboard', 'ramp', 'tent', 'firepit', 'catapult',
@@ -56,6 +61,11 @@ export class Colony {
     this.tierIndex = 0;
     this.unlockedBlueprints = new Set(CORE_BLUEPRINTS);
     this.villageRadius = TOWN_TIERS[0].boundary;
+
+    // Persistent bonuses earned by each passing generation (saved with the village).
+    this.dynastyPerks = [];
+    // Structure count when the last generation passed; each new era needs fresh building.
+    this.genStructureMark = 0;
 
     this._addLog('The dawn of New Dweebtopia. The first settlement is founded in The Meadowlands.');
   }
@@ -312,15 +322,96 @@ export class Colony {
     pick();
   }
 
-  passGeneration() {
+  /**
+   * Milestone checklist for handing the settlement to the next generation.
+   * Goals: reach the Village town tier, raise a storage silo, and open at least
+   * one Ancient Ruin vault. Returns player-facing `missing` strings when blocked.
+   */
+  generationReadiness(world = null) {
+    const placed = world?.buildingManager?.placedStructures || [];
+    const silos = placed.filter(s => s && s.id === 'silo').length;
+    const ruins = Array.isArray(world?.ruins) ? world.ruins : [];
+    const openedVaults = ruins.filter(r => r && r.opened).length;
+    // Each era asks for a bigger town: Village for Gen 2, Town for Gen 3, then Citadel.
+    const targetTierIndex = Math.min(this.generation, TOWN_TIERS.length - 1);
+    const targetTier = TOWN_TIERS[targetTierIndex];
+    const citizens = this.citizens.length;
+    const structures = placed.length;
+    const missing = [];
+
+    const tierReady = this.tierIndex >= targetTierIndex ||
+      (citizens >= targetTier.minCitizens && structures >= targetTier.minStructures);
+    if (!tierReady) {
+      missing.push(
+        `Reach ${targetTier.name} tier (${citizens}/${targetTier.minCitizens} citizens · ` +
+        `${structures}/${targetTier.minStructures} structures)`
+      );
+    }
+    if (silos < 1) missing.push('Raise a Storage Silo');
+    const freshNeeded = this.generation > 1 ? GEN_FRESH_STRUCTURES : 0;
+    const fresh = structures - (this.genStructureMark || 0);
+    if (fresh < freshNeeded) missing.push(`Build ${freshNeeded} new structures this era (${Math.max(0, fresh)}/${freshNeeded})`);
+    if (openedVaults < 1) {
+      missing.push(`Open an Ancient Ruin vault (${openedVaults}/${Math.max(1, ruins.length)})`);
+    }
+
+    return {
+      eligible: missing.length === 0,
+      missing,
+      generation: this.generation,
+      tier: this.tier,
+      targetTier: targetTier.name,
+      citizens,
+      structures,
+      silos,
+      openedVaults,
+      totalVaults: ruins.length,
+    };
+  }
+
+  /** Convenience predicate for UI / key handlers. */
+  canAdvanceGeneration(world = null) {
+    return this.generationReadiness(world).eligible;
+  }
+
+  passGeneration(world = null) {
+    const previousGeneration = this.generation;
+    this.genStructureMark = world?.buildingManager?.placedStructures?.length ?? this.genStructureMark ?? 0;
     this.generation++;
-    this._addLog(`📜 A new era begins! Generation ${this.generation} takes the helm of ${this.name}.`);
-    // Heirs inherit knowledge and traits
+
+    // Heirs inherit every verb known by the colony or any elder citizen.
     for (const c of this.citizens) {
-      for (const v of this.unlockedVerbs) {
-        c.learnVerb(v);
+      if (!c || !c.knownVerbs) continue;
+      for (const v of c.knownVerbs) this.unlockedVerbs.add(v);
+    }
+    for (const c of this.citizens) {
+      if (!c || typeof c.learnVerb !== 'function') continue;
+      for (const v of this.unlockedVerbs) c.learnVerb(v);
+    }
+
+    // Small persistent dynasty perk: each era deepens the settlement's stores.
+    const perk = {
+      generation: this.generation,
+      id: 'ancestral-stores',
+      name: 'Ancestral Stores',
+      desc: `+${DYNASTY_STORAGE_PERK} wood, berry, and stone storage capacity.`,
+    };
+    if (!Array.isArray(this.dynastyPerks)) this.dynastyPerks = [];
+    this.dynastyPerks.push(perk);
+    if (this.storageCap) {
+      for (const res of ['wood', 'berries', 'stone']) {
+        this.storageCap[res] = (this.storageCap[res] || 0) + DYNASTY_STORAGE_PERK;
       }
     }
+
+    this._addLog(`📜 A new era begins! Generation ${this.generation} takes the helm of ${this.name}.`);
+    this._addLog(`✨ Dynasty perk: ${perk.name} — ${perk.desc}`);
+    return {
+      generation: this.generation,
+      previousGeneration,
+      inheritedVerbs: Array.from(this.unlockedVerbs),
+      perk,
+    };
   }
 
   /** Plain-data snapshot for save files. */
@@ -337,6 +428,8 @@ export class Colony {
       tierIndex: this.tierIndex,
       unlockedBlueprints: Array.from(this.unlockedBlueprints),
       villageRadius: this.villageRadius,
+      dynastyPerks: this.dynastyPerks.map(p => ({ ...p })),
+      genStructureMark: this.genStructureMark || 0,
       citizens: this.citizens.map(c => ({
         name: c.name,
         personalityId: c.personality.id,
@@ -371,6 +464,12 @@ export class Colony {
     }
     if (typeof data.villageRadius === 'number' && data.villageRadius > 0) {
       this.villageRadius = data.villageRadius;
+    }
+    if (typeof data.genStructureMark === 'number') this.genStructureMark = data.genStructureMark;
+    if (Array.isArray(data.dynastyPerks)) {
+      this.dynastyPerks = data.dynastyPerks
+        .filter(p => p && typeof p === 'object' && typeof p.id === 'string')
+        .map(p => ({ ...p }));
     }
     if (Array.isArray(data.citizens)) {
       data.citizens.forEach((saved, i) => {
