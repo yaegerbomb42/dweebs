@@ -67,16 +67,19 @@ export class Hud {
         <div class="portrait"><span class="shape ${d.type}"><i class="brow"></i><i class="mouth"></i></span></div>
         <div class="card-body">
           <div class="card-name">${d.isPlayer ? 'YOU' : d.name}</div>
+          <div class="sig"></div>
           <div class="pct"><span class="pct-num">0</span><span class="pct-sign">%</span></div>
           <div class="stocks"></div>
           <div class="buffs"></div>
         </div>`;
-      card.title = statsFor(d.type).label;
+      const sig = d.signature || statsFor(d.type).signature;
+      card.title = statsFor(d.type).label + (sig?.name ? ` · ${sig.name}` : '');
       this.cardsEl.appendChild(card);
       if (d.isPlayer) card.querySelector('.card-body').appendChild(this.styleEl);
       this.cards.set(d, {
         el: card, num: card.querySelector('.pct-num'), pct: card.querySelector('.pct'),
-        stocks: card.querySelector('.stocks'), buffs: card.querySelector('.buffs'), shape: card.querySelector('.shape'), mood: '',
+        stocks: card.querySelector('.stocks'), buffs: card.querySelector('.buffs'), shape: card.querySelector('.shape'),
+        sig: card.querySelector('.sig'), mood: '', lastSig: null,
         lastPct: -1, lastStocks: -1, lastBuffs: '', shake: 0,
       });
 
@@ -266,6 +269,12 @@ export class Hud {
       if (buffs !== c.lastBuffs) {
         c.lastBuffs = buffs;
         c.buffs.textContent = buffs;
+      }
+      const sigName = (d.signature || statsFor(d.type).signature)?.name || '';
+      if (sigName !== c.lastSig && c.sig) {
+        c.lastSig = sigName;
+        c.sig.textContent = sigName;
+        c.sig.style.display = sigName ? 'block' : 'none';
       }
       c.el.classList.toggle('out', d.eliminated);
       c.el.classList.toggle('respawning', d.out && !d.eliminated);

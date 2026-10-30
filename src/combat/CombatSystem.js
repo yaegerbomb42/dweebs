@@ -95,13 +95,18 @@ export class CombatSystem {
     const p = d.powerScale;
     const yeet = charge > 0 && this._useSuper(d);
     const mul = yeet ? SUPER : 1;
-    const atk = weapon
-      ? scaled(wdef.table(charge), p * mul, p * mul)
-      : scaled(A.punch(charge), p * mul * d.stats.hitDmg, p * mul);
+    // Boxer: the third landed punch in a streak becomes a short anvil-weight uppercut.
+    const uppercut = !weapon && this._uppercutReady(d);
+    const atk = uppercut
+      ? scaled(A.anvil(charge), p * mul * 0.8, p * mul * 0.9)
+      : weapon
+        ? scaled(wdef.table(charge), p * mul, p * mul)
+        : scaled(A.punch(charge), p * mul * d.stats.hitDmg, p * mul);
     atk.range = profile.range;
     atk.cone = profile.cone;
     atk.multi = profile.multi;
-    atk.kind = weapon ? 'smash' : charge ? 'smash' : 'punch';
+    atk.kind = uppercut || weapon ? 'smash' : charge ? 'smash' : 'punch';
+    atk.uppercut = uppercut;
 
     d.attackAnim = 0.22;
     d.attackCooldown = weapon ? wdef.cd + charge * 0.2 : 0.3 + charge * 0.25;
@@ -138,8 +143,10 @@ export class CombatSystem {
     for (const { t, dx, dz } of hitBodies) {
       _dir.set(dx, 0, dz);
       _dir.normalize();
-      _tmp.set(f.x * 0.75 + _dir.x * 0.25, 0.45 + charge * 0.15, f.z * 0.75 + _dir.z * 0.25);
-      const launch = t.receiveHit({ dir: _tmp, damage: atk.damage, base: atk.base, growth: atk.growth, attacker: d, time: this.time });
+      const launchDir = atk.uppercut
+        ? _tmp.set(f.x * 0.55 + _dir.x * 0.2, 0.95 + charge * 0.1, f.z * 0.55 + _dir.z * 0.2)
+        : _tmp.set(f.x * 0.75 + _dir.x * 0.25, 0.45 + charge * 0.15, f.z * 0.75 + _dir.z * 0.25);
+      const launch = t.receiveHit({ dir: launchDir, damage: atk.damage, base: atk.base, growth: atk.growth, attacker: d, time: this.time });
       if (launch > 0) {
         hitAny = true;
         this.fx.hit(t, d, launch, atk.kind);
@@ -149,9 +156,18 @@ export class CombatSystem {
         let bonus = 0, label = null;
         if (!weapon) {
           bonus = this._punchStreak(d);
+          if (d.signature?.id === 'uppercut') d.signaturePunchCount = (d.signaturePunchCount || 0) + 1;
           if (d.punchStreak >= 3) label = `x${d.punchStreak} COMBO`;
-        } else d.punchStreak = 0;
+        } else {
+          d.punchStreak = 0;
+          d.signaturePunchCount = 0;
+        }
         this.addStyle(d, 4 + launch * 0.5 + (charge > 0.8 ? 4 : 0) + bonus, label);
+        if (atk.uppercut) {
+          this.fx._toyWord?.('UPPERCUT!', t.getPosition(), d.color, 'big');
+          this.fx.cam?.shake?.(0.22);
+          this.addStyle(d, 5, 'UPPERCUT');
+        }
       }
     }
 
@@ -187,7 +203,10 @@ export class CombatSystem {
     if (!hitAny) {
       this.fx.whiff(d, weapon);
       // A whiffed jab breaks the streak: the super-smash meter wants consecutive LANDED punches.
-      if (!weapon) d.punchStreak = 0;
+      if (!weapon) {
+        d.punchStreak = 0;
+        d.signaturePunchCount = 0;
+      }
     }
   }
 
@@ -346,6 +365,61 @@ export class CombatSystem {
     }
     this.fx.slam?.(pos, d.color, hit, d.isPlayer);
     d.landSquash = 0.45;
+  }
+
+  /** Boing: a spring-loaded pogo landing — free height plus a toy "BOING!". */
+  _signaturePogo(d, fall = 0) {
+    if (!d?.active || d.signature?.id !== 'pogo') return;
+    const pos = d.getPosition();
+    this.fx.bounce?.({ x: pos.x, y: pos.y - 0.45, z: pos.z }, d.color);
+    this.fx._toyWord?.('BOING!', pos, d.color, 'small');
+    this.fx.cam?.shake?.(d.isPlayer ? 0.12 : 0.05);
+    this.addStyle(d, 1 + Math.min(3, Math.max(0, fall) * 0.06));
+  }
+
+  /** Chonk: a hard landing sends a small radial shove (slam maths, turned down). */
+  _signatureQuake(d, fall = 0) {
+    if (!d?.active || d.signature?.id !== 'quake') return;
+    const sig = d.signature;
+    const A = BALANCE.air;
+    const pos = d.getPosition();
+    const p = d.powerScale;
+    const radius = sig.radius ?? 2.8;
+    const power = Math.min(1, Math.max(0, fall) / 20);
+    let hit = false;
+
+    for (const t of this.dweebs) {
+      if (t === d || !t.active || t.grabbedBy) continue;
+      const tp = t.getPosition();
+      const dx = tp.x - pos.x, dz = tp.z - pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > radius || tp.y < pos.y - A.slamDepth || tp.y > pos.y + 2) continue;
+      const falloff = 1 - (dist / radius) * 0.5;
+      _dir.set(dx, 0.55, dz);
+      if (_dir.lengthSq() < 1e-4) _dir.set(0, 1, 0);
+      const atk = scaled({ ...BALANCE.attacks.slam }, p * falloff * 0.4, p * falloff * 0.7);
+      const launch = t.receiveHit({ dir: _dir.normalize(), ...atk, attacker: d, time: this.time });
+      if (launch > 0) {
+        hit = true;
+        this.fx.hit(t, d, launch, 'slam');
+        this.addStyle(d, 3 + launch * 0.3);
+      }
+    }
+    for (const { obj } of this.arena.getObjectsNear(pos, radius)) {
+      if (!obj?.body) continue;
+      const op = obj.getPosition();
+      _dir.set(op.x - pos.x, 0.6, op.z - pos.z);
+      if (_dir.lengthSq() < 1e-4) _dir.set(0, 1, 0);
+      _dir.normalize();
+      const m = Math.sqrt(obj.body.mass());
+      this.physics.applyImpulse(obj.body, { x: _dir.x * 4 * m, y: 2.5 * m, z: _dir.z * 4 * m });
+    }
+
+    this.fx.slam?.(pos, d.color, false, d.isPlayer);
+    this.fx._toyWord?.('CHONK!', pos, d.color, 'big');
+    this.fx.cam?.shake?.(d.isPlayer ? 0.22 + power * 0.2 : 0.08 + power * 0.1);
+    this.addStyle(d, 2 + power * 3, hit ? 'CHONK QUAKE' : null);
+    d.landSquash = Math.max(d.landSquash || 0, 0.42);
   }
 
   /** While a drop-kick is live, sweep a short arc in front of the kicker. */
@@ -582,12 +656,20 @@ export class CombatSystem {
     else _tmp.set(0, 1, 0);
     _tmp.normalize().multiplyScalar(AD.speed);
     d.body.setLinvel({ x: _tmp.x, y: _tmp.y, z: _tmp.z }, true);
+    const sig = d.signature;
+    const freePhase = sig?.id === 'phase' && !d.ghostDodgeUsed;
     d.airDodgeTimer = AD.duration;
-    d.airDodgeCd = AD.cooldown;
-    d.invulnTimer = Math.max(d.invulnTimer, AD.invuln);
+    d.airDodgeCd = freePhase ? 0 : AD.cooldown;
+    d.invulnTimer = Math.max(d.invulnTimer, AD.invuln + (freePhase ? (sig.invuln ?? 0.1) : 0));
     d.isCharging = false;
     d.charging = 0;
     if (h > 0.1) d.yaw = Math.atan2(dx, dz);
+    if (freePhase) {
+      d.ghostDodgeUsed = true;
+      this.fx._toyWord?.('PHASE!', d.getPosition(), d.color, 'small');
+      this.fx.cam?.shake?.(0.1);
+      this.addStyle(d, 2, 'PHASE DODGE');
+    }
     this.fx.airDodge(d);
     return true;
   }
@@ -632,9 +714,22 @@ export class CombatSystem {
     const S = STYLE;
     if (this.time - (d.punchStreakT ?? -99) <= S.streakWindow) {
       d.punchStreak = Math.min(S.streakCap, (d.punchStreak || 0) + 1);
-    } else d.punchStreak = 1;
+    } else {
+      d.punchStreak = 1;
+      d.signaturePunchCount = 0;
+    }
     d.punchStreakT = this.time;
     return S.streakBonus * (d.punchStreak - 1);
+  }
+
+  /** Boxer: true when this swing would be the third consecutive landed punch. */
+  _uppercutReady(d) {
+    const sig = d.signature;
+    if (!sig || sig.id !== 'uppercut') return false;
+    const every = Math.max(2, sig.every || 3);
+    const active = this.time - (d.punchStreakT ?? -99) <= STYLE.streakWindow;
+    const count = active ? (d.signaturePunchCount || 0) : 0;
+    return (count + 1) % every === 0;
   }
 
   /** F / middle mouse: cash the full meter in — the next charged smash or throw is a Super Yeet. */
@@ -1025,6 +1120,14 @@ export class CombatSystem {
       }
       d.hazardCd = Math.max(0, (d.hazardCd || 0) - dt);
       if (d.swingT > 0) d.swingT -= dt;
+
+      // Signature passives queue a one-shot world event from Dweeb.postStep.
+      if (d.signatureEvent) {
+        const ev = d.signatureEvent;
+        d.signatureEvent = null;
+        if (ev.kind === 'pogo') this._signaturePogo(d, ev.fall);
+        else if (ev.kind === 'quake') this._signatureQuake(d, ev.fall);
+      }
 
       if (d.isCharging) {
         if (!d.canAct) { d.isCharging = false; d.charging = 0; }

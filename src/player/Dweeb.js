@@ -28,6 +28,11 @@ export class Dweeb {
     this.name = options.name || 'Dweeb';
     this.type = options.type || 'cube';
     this.stats = statsFor(this.type);
+    this.signature = this.stats.signature || null;
+    this.signatureEvent = null;        // one-shot landing/move message for CombatSystem juice
+    this.signaturePunchCount = 0;      // Boxer: landed punches since the streak broke
+    this.pogoUsed = false;             // Boing: already spent this airtime
+    this.ghostDodgeUsed = false;       // Ghosty: free air-dodge spent this stock
     this.color = options.color ?? 0xffd23f;
     this.index = options.index || 0;
 
@@ -648,7 +653,10 @@ export class Dweeb {
     const hit = this.physicsWorld.raycast(pos, { x: 0, y: -1, z: 0 }, 40, this.collider);
     this.groundY = hit ? hit.point.y : -100;
     this.grounded = this.dropGrace <= 0 && !!hit && hit.distance < DWEEB_HALF + 0.08 && this.velocity.y < 4;
-    if (this.wasGrounded && !this.grounded) this.fastFallGrace = MV.fastFallDelay;
+    if (this.wasGrounded && !this.grounded) {
+      this.fastFallGrace = MV.fastFallDelay;
+      this.pogoUsed = false; // a fresh airtime earns one more pogo
+    }
     if (this.grounded || this.ledge) this.airTime = 0;
     else if ((this.airTime += dt) > this.maxAir) this.maxAir = this.airTime;
     if (this.grounded) {
@@ -660,9 +668,21 @@ export class Dweeb {
       if (this.dropkickTimer > 0) this.dropkickTimer = 0; // landing ends a drop-kick
       if (!this.wasGrounded && this.velocity.y < -3) {
         const fall = -this.velocity.y;
+        const sig = this.signature;
         this.landSquash = Math.min(0.5, fall * 0.03 * (this.stats.mass / 3));
         const tumbling = this.ragdolling || this.hitstun > 0;
-        if (tumbling && fall > 6) {
+        let pogo = false;
+        if (!tumbling && sig?.id === 'pogo' && this.jumpHeld && !this.pogoUsed) {
+          // Boing: one free spring bounce per airtime while jump is held.
+          pogo = true;
+          this.pogoUsed = true;
+          const bounce = sig.bounce ?? 11.5;
+          const v = this.body.linvel();
+          this.body.setLinvel({ x: v.x * 0.85, y: bounce * this.jumpScale, z: v.z * 0.85 }, true);
+          this.jumpRising = false;
+          this.landSquash = -0.5;
+          this.signatureEvent = { kind: 'pogo', fall };
+        } else if (tumbling && fall > 6) {
           // Hard slam while tumbling: tech it (pressed just before) or eat a longer knockdown
           if (this.techBuffer > 0 || (!this.isPlayer && Math.random() < this.techChance)) this._tech();
           else { this.techGrace = BALANCE.tech.buffer; this.missedTech = true; }
@@ -675,6 +695,9 @@ export class Dweeb {
           // Heavier bodies take a touch longer to gather themselves, balancing their launch armor.
           this.landLag = (LL.min + (LL.max - LL.min) * Math.min(1, (fall - LL.minSpeed) / 10)) *
             (0.85 + this.stats.mass * 0.05);
+        }
+        if (!pogo && sig?.id === 'quake' && fall >= (sig.minFall ?? 12)) {
+          this.signatureEvent = { kind: 'quake', fall };
         }
         this.onLand?.(this, fall);
       }
@@ -874,6 +897,7 @@ export class Dweeb {
     this.percent = Math.min(999, this.percent + damage * dmgArmor * shieldDmg);
     // Taking a hit breaks your punch streak (super-smash meter wants consecutive landed punches).
     this.punchStreak = 0;
+    this.signaturePunchCount = 0;
     const launch = (base + growth * this.stats.growthTaken * (this.percent / 100)) * armor * shieldLaunch;
 
     this.rollTimer = 0;
@@ -1036,6 +1060,10 @@ export class Dweeb {
     this.superArmed = false;
     this.punchStreak = 0;
     this.punchStreakT = -99;
+    this.signaturePunchCount = 0;
+    this.pogoUsed = false;
+    this.ghostDodgeUsed = false;
+    this.signatureEvent = null;
   }
 
   eliminate() {
@@ -1067,6 +1095,10 @@ export class Dweeb {
     this.grabbedBy = null;
     this.punchStreak = 0;
     this.punchStreakT = -99;
+    this.signaturePunchCount = 0;
+    this.pogoUsed = false;
+    this.ghostDodgeUsed = false;
+    this.signatureEvent = null;
     this.body.setEnabled(true);
     this.collider.setCollisionGroups(this.defaultGroups);
     if (this.ragdolling) this.recoverFromRagdoll();
