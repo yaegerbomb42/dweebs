@@ -18,6 +18,7 @@ import { MockNetClient } from './MockNetClient.js';
 import { buildScreens } from './screens.js';
 import { createToasts } from './toasts.js';
 import { createLoading } from './loading.js';
+import { refreshHub, HUB_TIPS } from './hub-extras.js';
 import { setMsg } from './dom.js';
 import { renderLobby, wireLobby, updatePing } from './lobby.js';
 import { mountSettings } from './settings-screen.js';
@@ -35,6 +36,9 @@ import {
 export function bootApp() {
   const toast = createToasts();
   const loading = createLoading();
+  // Loading tips rotate while the bar is under 100% — real mechanics, one line
+  // each. They stop the moment progress hits 100 (see loading.js).
+  loading.startTips(HUB_TIPS);
   const settings = loadSettings();
 
   // ─── the shell root ───
@@ -154,6 +158,61 @@ function wireTitle({ nodes, router, toast }) {
     });
   }
 
+  // ── Builder-first hub cabinets: the arcade buttons carry a bare data-launch
+  // marker (picked up by the shimmer hook below); their modes are wired
+  // explicitly here so every button id in the hub markup is bound in boot.js.
+  nodes.title.querySelector('#app-btn-classic')?.addEventListener('click', () => {
+    launchGameMode('derby', 'stadium');
+  });
+
+  // Subgames for Game 1 (Knockout Arena)
+  nodes.title.querySelector('#app-btn-derby')?.addEventListener('click', () => {
+    launchGameMode('derby', 'stadium');
+  });
+  nodes.title.querySelector('#app-btn-walldrop')?.addEventListener('click', () => {
+    launchGameMode('walldrop', 'stadium');
+  });
+  nodes.title.querySelector('#app-btn-brawl')?.addEventListener('click', () => {
+    launchGameMode('brawl', 'stadium');
+  });
+
+  nodes.title.querySelector('#app-btn-dynasty')?.addEventListener('click', () => {
+    launchGameMode('adventure', 'meadowlands');
+  });
+
+  nodes.title.querySelector('#app-btn-escape')?.addEventListener('click', () => {
+    launchGameMode('escape', 'stadium');
+  });
+
+  nodes.title.querySelector('#app-btn-mimic')?.addEventListener('click', () => {
+    launchGameMode('mimic', 'stadium');
+  });
+
+  nodes.title.querySelector('#app-btn-builder')?.addEventListener('click', () => {
+    launchGameMode('build', 'stadium');
+  });
+
+  // Game 5 (Dweeb Warfare) and submodes
+  nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
+    launchGameMode('warfare', 'stadium', 'defense');
+  });
+  nodes.title.querySelector('#app-btn-warfare-defense')?.addEventListener('click', () => {
+    launchGameMode('warfare', 'stadium', 'defense');
+  });
+  nodes.title.querySelector('#app-btn-warfare-versus')?.addEventListener('click', () => {
+    launchGameMode('warfare', 'stadium', 'versus');
+  });
+
+  // The daily challenge: hub-extras.js paints the card and stores the target
+  // game button id on data-target; pressing it presses that game button, so
+  // the challenge takes the exact same launch path (shimmer included) as
+  // tapping the cabinet directly. Keyboard/gamepad activation comes through
+  // the same click path.
+  nodes.title.querySelector('#app-btn-daily')?.addEventListener('click', e => {
+    const target = e.currentTarget?.dataset?.target;
+    if (target) document.getElementById(target)?.click();
+  });
+
   // Footer Navigation
   nodes.title.querySelector('#app-btn-offline')?.addEventListener('click', () => router.go('/play'));
   nodes.title.querySelector('#app-btn-online')?.addEventListener('click', () => router.go('/online'));
@@ -161,6 +220,17 @@ function wireTitle({ nodes, router, toast }) {
     document.getElementById('how-to-play')?.classList.remove('hidden');
   });
   nodes.title.querySelector('#app-btn-settings')?.addEventListener('click', () => router.go('/settings'));
+
+  // Launch shimmer: the shell hands off to the game immediately, but the tap
+  // should feel answered first. Purely cosmetic — the shell hides on route
+  // change, which also removes the state. Keyboard/gamepad activation goes
+  // through the same click path, so no input mode is special-cased.
+  nodes.title.addEventListener('click', e => {
+    const b = e.target.closest?.('[data-launch]');
+    if (!b || b.disabled) return;
+    b.classList.add('is-launching');
+    b.setAttribute('aria-busy', 'true');
+  });
 
   // Main menu button to return to The Dweeb Mall
   document.getElementById('btn-back-to-mall')?.addEventListener('click', () => {
@@ -421,6 +491,11 @@ function beginMatch(ctx, opts) {
 
 // ─── routing ───
 
+// The hub's living parts (spotlight rotation) run on an interval. It starts
+// when the title route shows and stops on every other route, so it never
+// paints a hidden screen or leaks across visits.
+let hubStop = null;
+
 function onRoute(route, ctx) {
   const { nodes, shell, router } = ctx;
   const path = route.path;
@@ -430,6 +505,7 @@ function onRoute(route, ctx) {
   for (const n of nodes.all) n.classList.add('hidden');
   shell.classList.toggle('app-in-match', inGame);
   shell.classList.toggle('hidden', inGame);
+  if (hubStop) { hubStop(); hubStop = null; }
 
   if (inGame) {
     hideOfflineMenu();
@@ -484,6 +560,9 @@ function onRoute(route, ctx) {
       setTimeout(() => hideOfflineMenu(), 250);
       nodes.title.classList.remove('hidden');
       document.getElementById('how-to-play')?.classList.add('hidden');
+      // The hub is alive: stats may have changed while a game was running, and
+      // the spotlight/daily/profile repaint from the games' own saves.
+      hubStop = refreshHub(nodes.title).stop;
   }
 }
 

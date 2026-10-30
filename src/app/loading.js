@@ -9,8 +9,12 @@
 // If the Lead has added #load-bar / #load-fill / #load-label / #load-retry we
 // drive those. If not, we create them ourselves, unstyled, so the bar is real
 // today and inherits the Lead's styling for free the moment they add it.
+//
+// startTips() rotates gameplay tips through the label while progress sits
+// under 100% — a loading screen that teaches. Tips stop the moment progress
+// hits 100, on fail(), done() or reset().
 
-/* global console */
+/* global console, setInterval, clearInterval */
 
 const HOOKS = { bar: 'load-bar', fill: 'load-fill', label: 'load-label', retry: 'load-retry' };
 
@@ -44,6 +48,32 @@ export function createLoading({ screen = null } = {}) {
 
   let pct = 0;
   let failed = false;
+  let tipTimer = null;
+  let tipList = [];
+  let tipIdx = 0;
+
+  /** Stop the tip rotation. Safe to call any time. */
+  function stopTips() {
+    if (tipTimer != null) { clearInterval(tipTimer); tipTimer = null; }
+  }
+
+  /**
+   * Rotate `tips` through the label every `intervalMs` until progress reaches
+   * 100 (or fail/done/reset). No-op for an empty list or a finished bar.
+   */
+  function startTips(tips, intervalMs = 3500) {
+    stopTips();
+    tipList = Array.isArray(tips) ? tips : [];
+    tipIdx = 0;
+    if (tipList.length === 0 || failed || pct >= 100) return;
+    const show = () => {
+      if (failed || pct >= 100) { stopTips(); return; }
+      if (label) label.textContent = '💡 ' + tipList[tipIdx % tipList.length];
+      tipIdx++;
+    };
+    show();
+    tipTimer = setInterval(show, intervalMs);
+  }
 
   /** Monotonic progress: a phase can never move the bar backwards. */
   function progress(p, text) {
@@ -52,11 +82,13 @@ export function createLoading({ screen = null } = {}) {
     if (fill) fill.style.width = pct + '%';
     if (label && text) label.textContent = text;
     document.documentElement.dataset.loadPct = String(pct);
+    if (pct >= 100) stopTips();   // tips retire the moment loading completes
     return pct;
   }
 
   function fail(err, onRetry) {
     failed = true;
+    stopTips();
     if (label) label.textContent = 'Failed to load — check your connection.';
     if (retry) {
       retry.classList.remove('hidden');
@@ -66,7 +98,11 @@ export function createLoading({ screen = null } = {}) {
     console.error('[app/loading]', err);
   }
 
-  const done = () => { failed = false; root?.classList.add('hidden'); };
+  const done = () => { failed = false; stopTips(); root?.classList.add('hidden'); };
 
-  return { progress, fail, done, retry, get pct() { return pct; }, reset() { pct = 0; failed = false; } };
+  return {
+    progress, fail, done, retry, startTips, stopTips,
+    get pct() { return pct; },
+    reset() { pct = 0; failed = false; stopTips(); },
+  };
 }
