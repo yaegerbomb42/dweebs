@@ -1,4 +1,5 @@
 // main.js — boots the renderer, builds the stadium and wires every system together.
+import { TrainingLab } from './game/TrainingLab.js';
 import { recordMatch, careerSummaryHtml } from './app/career.js';
 //
 // Frame order: input/AI → Dweeb.preStep → physics (sub-stepped) → Dweeb.postStep →
@@ -756,7 +757,10 @@ function toMenu() {
 
 // ─── Match flow ───
 
+let trainingLab = null;
 function clearDweebs() {
+  trainingLab?.dispose();
+  trainingLab = null;
   controller?.destroy();
   controller = null;
   for (const d of dweebs) d.destroy();
@@ -1234,6 +1238,18 @@ function startMatch() {
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
   if (currentMode === 'derby') updateDarwinBoard();
+
+  if (currentMode === 'training') {
+    trainingLab = new TrainingLab({
+      arena,
+      getPlayer: () => player,
+      getDweebs: () => dweebs,
+      onReset: () => dweebs.forEach((d, i) => {
+        d.respawn(arena.getSpawnPoint(i, dweebs.length, currentMode), 0);
+        d.held = null;
+      }),
+    });
+  }
 
   // ── Mode Initialization (Knockout Arena vs Expedition & Dynasty) ──
   const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands' && currentMode !== 'escape');
@@ -2118,7 +2134,8 @@ function loop() {
 
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
-  let dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
+  let dt = (fx.hitStop > 0 ? rawDt * 0.08 : rawDt) * (trainingLab && inGame ? trainingLab.timeScale : 1);
+  if (trainingLab) { trainingLab.el.style.display = inGame ? '' : 'none'; if (inGame) trainingLab.update(rawDt); }
 
   // Photo Finish: dramatic slow-mo when one dweeb remains
   if (photoFinish > 0) {
@@ -2136,7 +2153,7 @@ function loop() {
     }
     if (match.running) {
       try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
-      for (const b of bots) b.update(dt, dweebs);
+      if (!trainingLab || trainingLab.botActive()) for (const b of bots) b.update(dt, dweebs);
       if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled && !currentMeadowlands /* adventure uses 1–6 for camera/tools */; emotes.update(dt); }
       for (const b of builderBots) b.update(dt, dweebs);
       try { mutatorDirector.update(dt, mutatorCtx()); } catch (e) { console.error('[Mutator] update error:', e); }

@@ -147,8 +147,8 @@ export class Match {
     // Adventure and the Dweebscape vault have no blast zones, stocks or clock.
     if (this.settings.mode === 'adventure' || this.settings.mode === 'escape') return;
 
-    this.timer -= dt;
-    if (!this.suddenDeath && this.timer <= this.settings.suddenDeathAt) {
+    if (this.settings.mode !== 'training') this.timer -= dt;
+    if (this.settings.mode !== 'training' && !this.suddenDeath && this.timer <= this.settings.suddenDeathAt) {
       this.suddenDeath = true;
       this.blastSide = BLAST_SIDE * BALANCE.match.sdBlastScale; // the arena closes in
       this.events?.onSuddenDeath?.();
@@ -200,6 +200,7 @@ export class Match {
     const teamsAlive = new Set(standing.map(d => d.team ?? 0)).size;
     const teamWipe = this.settings.mode === 'teams' && this.dweebs.length > 1 && teamsAlive <= 1;
     const player = this.dweebs.find(d => d.isPlayer);
+    if (this.settings.mode === 'training') return; // free play never ends a round
     if (standing.length === 0 || teamWipe ||
         (this.settings.mode !== 'teams' && this.dweebs.length > 1 && standing.length <= 1) ||
         this.timer <= 0) {

@@ -146,6 +146,7 @@ export function buildScreens() {
                 <button class="btn arcade-sub-btn yellow" id="app-btn-derby" data-launch title="Dumb Ways to Die">☠️ Derby</button>
                 <button class="btn arcade-sub-btn yellow" id="app-btn-walldrop" data-launch title="Wall Drop PVP">🧱 Wall Drop</button>
                 <button class="btn arcade-sub-btn yellow" id="app-btn-brawl" data-launch title="Knockout Brawl">🥊 Brawl</button>
+                <button class="btn arcade-sub-btn yellow" id="app-btn-training" data-launch title="Training Lab">🧪 Training</button>
               </div>
               <button class="btn arcade-btn yellow" id="app-btn-classic" data-launch>PLAY BRAWLER</button>
             </article>
