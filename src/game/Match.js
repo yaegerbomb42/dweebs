@@ -129,7 +129,8 @@ export class Match {
     }
 
     if (this.phase !== Phase.PLAYING) return;
-    if (this.settings.mode === 'adventure') return;
+    // Adventure and the Dweebscape vault have no blast zones, stocks or clock.
+    if (this.settings.mode === 'adventure' || this.settings.mode === 'escape') return;
 
     this.timer -= dt;
     if (!this.suddenDeath && this.timer <= this.settings.suddenDeathAt) {

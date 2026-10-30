@@ -48,14 +48,14 @@ export const GAME_MODES = {
   escape: {
     id: 'escape',
     name: 'Dweebscape Island',
-    tagline: 'Combatless co-op escape room! Parkour, carry heavy batteries to power the portal.',
+    tagline: 'Physics escape room with four ways out: blow the hinges, load the pulley, power the lock, or climb to the vent.',
     stocks: 99,
     hasWeapons: false,
     hasWallDrop: false,
     hasContraptions: false,
     hasEscapePuzzles: true,
-    arenas: ['meadowlands'],
-    arena: 'meadowlands',
+    arenas: ['stadium'],
+    arena: 'stadium',
   },
   mimic: {
     id: 'mimic',
