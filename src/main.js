@@ -1109,10 +1109,10 @@ const matchEvents = {
     if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
 
     // PHOTO FINISH: when a KO leaves exactly one dweeb standing in stock modes
-    const stockModes = ['derby', 'brawl', 'teams', 'sudden'];
+    const stockModes = ['derby', 'brawl', 'teams', 'sudden', 'walldrop'];
     const isStockMode = stockModes.includes(currentMode);
     const remaining = dweebs.filter(dw => !dw.eliminated).length;
-    if (isStockMode && remaining === 1 && !deathCinema?.isPlaying) {
+    if (d.eliminated && isStockMode && dweebs.length > 1 && remaining === 1 && !deathCinema?.isPlaying) {
       photoFinish = 0.9;
       hud.announce('PHOTO FINISH!', 'ko', 1.2);
       audio.duck?.(0.3, 1.2);
