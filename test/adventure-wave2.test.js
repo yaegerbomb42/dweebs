@@ -79,7 +79,7 @@ describe('weather', () => {
     world.weatherTimer = 0.01;
     world.update(0.02, [], colony);
     // Merged weather: clear breaks into rain, wind (wave-2) or fog (milestone).
-    expect(['rain', 'wind', 'fog']).toContain(world.weather);
+    expect(['rain', 'wind', 'fog', 'locusts']).toContain(world.weather); // locust swarm (#90) is a legit break too
     expect(colony.historyLog.length).toBeGreaterThan(1); // founding log + weather log
     world.weatherTimer = 0.01;
     world.update(0.02, [], colony);
