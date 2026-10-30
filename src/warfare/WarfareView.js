@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { counterMult } from '../sim/warfareUnits.js';
 import { buildBoard, buildBarricades } from './WarfareBoard.js';
 import { getBattleground } from './Battlegrounds.js';
-import { buildUnit, buildShell, buildRing, buildBarrel, buildCrate, buildTrap, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
+import { buildUnit, buildShell, buildRing, buildBarrel, buildCrate, buildTrap, teamMat, flashMat, TEAM_COLORS, sharedMats, sharedGeo } from './WarfareModels.js';
 import { WarfareFx } from './WarfareFx.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -195,8 +195,10 @@ export class WarfareView {
       e.x = u.x; e.z = u.z;
       e.vx = u.vx; e.vz = u.vz;
       e.carried = !!u.carriedBy;
+      e.burrow = u.burrow > 0;
       e.carrying = !!u.carrying;
       e.retreat = u.state === 'retreat';
+      e.netted = u.net > 0;
       e.rout = u.state === 'rout';
       e.hpFrac = u.hp / u.maxHp;
       e.rank = u.rank || 0;
@@ -296,6 +298,15 @@ export class WarfareView {
           fx.dustCloud(ev.x, ev.z, r);
           break;
         }
+        case 'magnet': {
+          const r = ev.radius || 14;
+          const ringR = ev.ringRadius || 2.5;
+          fx.shockwave(ev.x, ev.z, r, 0x88ccff);
+          fx.shockwave(ev.x, ev.z, ringR, 0x44aaff);
+          fx.magnetSparks(ev.x, ev.z, ringR, r);
+          fx.addShake(0.35);
+          break;
+        }
         case 'barricadeDown': {
           const bm = this.board.barricades.find(b => Math.hypot(b.x - ev.x, b.z - ev.z) < 0.6);
           if (bm) bm.g.visible = false;
@@ -321,6 +332,7 @@ export class WarfareView {
           if (victim) victim.flash = 0.12;
           break;
         }
+        case 'net': fx.number(ev.x, 2.6, ev.z, 'NETTED!', 'word'); break;
         case 'convert': {
           const ve = this.entries.get(ev.id);
           if (ve) {
@@ -370,6 +382,9 @@ export class WarfareView {
         case 'warhorn': fx.shockwave(ev.x, ev.z, 12, 0xffd23f); fx.number(ev.x, 3.4, ev.z, 'WAR HORN!', 'word'); fx.addShake(0.3); break;
         case 'repair': fx.number(ev.x, 3.2, ev.z, `+${ev.amount} FORT`, 'word'); fx.shockwave(ev.x, ev.z, 6, 0x5ee06a); break;
         case 'trap': fx.puff(ev.x, ev.z); break;
+        case 'burrow': fx.dustCloud(ev.x, ev.z, 1.5); fx.number(ev.x, 2.2, ev.z, 'BURROW!', 'word'); break;
+        case 'tunnel': fx.dustCloud(ev.x, ev.z, 1.0); break;
+        case 'surface': fx.shockwave(ev.x, ev.z, 2.5, 0x8b6b4a); fx.dustCloud(ev.x, ev.z, 2); fx.number(ev.x, 2.5, ev.z, 'SURFACE!', 'crit'); break;
         default: break;
       }
     }
@@ -408,7 +423,8 @@ export class WarfareView {
       } else {
         e.struggle = 0;
         const bob = sp > 0.5 ? Math.abs(Math.sin(t * (8 + sp))) * 0.14 : 0;
-        root.position.y = e.y + bob;
+        e.sink = lerp(e.sink || 0, e.burrow ? 1 : 0, Math.min(1, dt * 12));
+        root.position.y = e.y + bob - e.sink * 1.25;
         e.leanX *= Math.max(0, 1 - dt * 6); e.leanZ *= Math.max(0, 1 - dt * 6);
         tilt.rotation.z = (sp > 0.5 ? Math.sin(t * (8 + sp)) * 0.12 : 0) - e.leanX * 0.5;
         tilt.rotation.x = e.leanZ * 0.5;
@@ -447,6 +463,33 @@ export class WarfareView {
         e.flag = f;
       } else if (!e.retreat && !e.rout && e.flag) { tilt.remove(e.flag); e.flag = null; }
       if (e.flag) e.flag.rotation.y = Math.sin(t * 9) * 0.4;
+      // net: a cartoon net hoop that drops over the unit
+      if (e.netted && !e.netMesh) {
+        const netGroup = new THREE.Group();
+        const hoop = new THREE.Mesh(sharedGeo().ring, sharedMats().darkWood);
+        hoop.rotation.x = -Math.PI / 2;
+        hoop.position.y = e.m.height * 0.6;
+        hoop.scale.setScalar(1.3);
+        const cross1 = new THREE.Mesh(sharedGeo().dowel, sharedMats().darkWood);
+        cross1.scale.set(0.3, 2.4, 0.3);
+        cross1.rotation.set(0, Math.PI / 4, Math.PI / 2);
+        cross1.position.y = e.m.height * 0.6;
+        const cross2 = new THREE.Mesh(sharedGeo().dowel, sharedMats().darkWood);
+        cross2.scale.set(0.3, 2.4, 0.3);
+        cross2.rotation.set(0, -Math.PI / 4, Math.PI / 2);
+        cross2.position.y = e.m.height * 0.6;
+        netGroup.add(hoop, cross1, cross2);
+        netGroup.position.y = 0.2;
+        tilt.add(netGroup);
+        e.netMesh = netGroup;
+      } else if (!e.netted && e.netMesh) {
+        tilt.remove(e.netMesh);
+        e.netMesh = null;
+      }
+      if (e.netMesh) {
+        e.netMesh.rotation.y = Math.sin(t * 4) * 0.15;
+        e.netMesh.position.y = 0.2 + Math.sin(t * 6) * 0.05;
+      }
     }
     this._syncTethers(st, null, false);
     this._updateTethers(t);

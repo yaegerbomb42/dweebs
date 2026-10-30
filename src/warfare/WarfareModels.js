@@ -41,6 +41,7 @@ function shared() {
   mat.bomb = toonMat({ color: 0x2a2438 });
   mat.spark = new THREE.MeshBasicMaterial({ color: 0xffd23f });
   mat.mask = toonMat({ color: 0x2b2b3a });
+  mat.dirt = toonMat({ color: 0x8b6b4a });
   mat.pit = toonMat({ color: 0x241a12 });
   mat.spike = toonMat({ color: 0x9a9aa8 });
   mat.shadow = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
@@ -60,7 +61,7 @@ export function sharedMats() { shared(); return mat; }
 
 /** Toys read better a bit chunkier than their sim footprint. */
 export const VIEW_SCALE = 1.35;
-const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1, medic: 0.9 };
+const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1, medic: 0.9, netter: 0.9, sapper: 0.9 };
 
 /**
  * Build one unit. Returns { root, body, gear, spark } where `body` is the mesh whose material
@@ -73,7 +74,8 @@ export function buildUnit(type, team) {
   root.add(tilt);
   const bodyGeo = type === 'sneak' ? geo.sneak : type === 'brute' ? geo.brute : type === 'boss' ? geo.boss : geo.body;
   const r = type === 'brute' ? 0.95 : type === 'boss' ? 1.6 : type === 'sneak' ? 0.5 : 0.55;
-  const body = new THREE.Mesh(bodyGeo, mat[team]);
+  const bodyMat = mat[team];
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
   body.position.y = r;
   body.castShadow = true;
   tilt.add(body);
@@ -109,6 +111,24 @@ export function buildUnit(type, team) {
     gear.rotation.x = Math.PI / 2;
     gear.position.y = r * 1.35;
     gear.scale.set(1.05, 1.05, 1);
+  } else if (type === 'netter') {
+    gear = new THREE.Group();
+    // rolled net hoop: a flat ring with cross-hatch suggestion
+    const hoop = new THREE.Mesh(geo.ring, mat.darkWood);
+    hoop.rotation.x = -Math.PI / 2;
+    hoop.position.y = r * 1.25;
+    hoop.scale.setScalar(1.1);
+    // cross strings on the net
+    const cross1 = new THREE.Mesh(geo.dowel, mat.darkWood);
+    cross1.scale.set(0.3, 1.8, 0.3);
+    cross1.rotation.set(0, Math.PI / 4, Math.PI / 2);
+    cross1.position.y = r * 1.25;
+    const cross2 = new THREE.Mesh(geo.dowel, mat.darkWood);
+    cross2.scale.set(0.3, 1.8, 0.3);
+    cross2.rotation.set(0, -Math.PI / 4, Math.PI / 2);
+    cross2.position.y = r * 1.25;
+    gear.add(hoop, cross1, cross2);
+    gear.position.set(0, 0, 0);
   } else if (type === 'kami') {
     gear = new THREE.Group();
     const b = new THREE.Mesh(geo.bomb, mat.bomb);
@@ -130,6 +150,20 @@ export function buildUnit(type, team) {
     knife.rotation.z = -Math.PI / 2.2;
     knife.position.set(0.55, 0.45, -0.35);
     gear.add(m, knife);
+  } else if (type === 'sapper') {
+    gear = new THREE.Group();
+    // Cone drill hat
+    const drill = new THREE.Mesh(geo.tooth, mat.brass);
+    drill.scale.set(0.6, 0.9, 0.6);
+    drill.position.y = 1.0;
+    gear.add(drill);
+    // Goggles/strap band
+    const band = new THREE.Mesh(geo.band, mat.darkWood);
+    band.rotation.x = Math.PI / 2;
+    band.position.y = 0.55;
+    band.scale.set(1.1, 1.1, 1.2);
+    gear.add(band);
+    gear.position.set(0, 0.2, 0);
   } else if (type === 'brute') {
     gear = new THREE.Mesh(geo.club, mat.wood);
     gear.rotation.z = -Math.PI / 4;

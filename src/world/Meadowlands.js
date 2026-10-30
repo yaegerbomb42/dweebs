@@ -54,6 +54,30 @@ export const TRADE_OFFERS = [
 
 import { River } from './River.js';
 
+/** Village goat tuning: a slow, telegraphed charge that sends Dweebs flying. */
+export const GOAT = {
+  hp: 3,
+  speed: 2.6,
+  size: 0.8,
+  color: 0xf3ead7,
+  eye: 0x1f2937,
+  spawnInterval: 50,
+  maxGoats: 1,
+  targetRange: 26,
+  headbuttRange: 1.4,
+  lungeReach: 1.4,      // extra reach the lunge covers if the Dweeb backs off during the windup
+  windupTime: 0.5,
+  headbuttTime: 0.22,
+  fleeTime: 4.5,
+  lungeSpeedMult: 3.4,
+  fleeSpeedMult: 2.2,
+  launchSpeed: 14,
+  launchUp: 6.2,
+  hitDamage: 8,
+  hitBase: 13,
+  hitGrowth: 3.5,
+};
+
 export class Meadowlands {
   constructor(physicsWorld, scene, options = {}) {
     this.physicsWorld = physicsWorld;
@@ -92,6 +116,7 @@ export class Meadowlands {
     this.ruins = [];          // treasure-vault ruin sites (3-plate puzzles)
     this.critters = [];       // invading mischief critters
     this.critterTimer = 30;   // seconds until the first critter wanders in
+    this.goatTimer = GOAT.spawnInterval; // a village goat eventually wanders in
     this.timeOfDay = 8;       // 0-24, starts at a bright morning
     this.dayLength = 240;     // seconds per full day
     this.dayCount = 0;        // full days elapsed (drives seasons + moon)
@@ -118,6 +143,15 @@ export class Meadowlands {
     this.locustSwarm = null;  // recycled locust point cloud over the berry fields
     this.locust = null;       // active swarm state while weather === 'locusts'
     this.beetleTimer = 20;    // seconds until the first friendly beetle wanders in
+
+    // Dust devil state
+    this.dustDevil = null;    // { x, z, vx, vz, radius, life, maxLife, mesh, particles }
+    this.DUSTDEVIL_RADIUS = 5.0;
+    this.DUSTDEVIL_LIFETIME = 12 + Math.random() * 6;  // 12-18s
+    this.DUSTDEVIL_FORCE_DWEEB = 8.0;   // tangential force on Dweebs
+    this.DUSTDEVIL_LIFT_DWEEB = 12.0;   // upward force on Dweebs
+    this.DUSTDEVIL_FORCE_PROP = 18.0;   // tangential force on loose props
+    this.DUSTDEVIL_LIFT_PROP = 22.0;    // upward force on loose props
 
     this._buildWorld();
     // Three visible village stockpiles around the campfire. Foragers deliver
@@ -192,6 +226,92 @@ export class Meadowlands {
     this.group.add(this.rainDrops);
   }
 
+  /** Create the dust devil visual: a spinning cone/torus of dust particles. */
+  _createDustDevilMesh(x, z) {
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+
+    // Main dust column: a cone of particles
+    const coneCount = 180;
+    const conePositions = new Float32Array(coneCount * 3);
+    for (let i = 0; i < coneCount; i++) {
+      const h = Math.random() * 12; // height 0-12
+      const r = (1 - h / 12) * this.DUSTDEVIL_RADIUS * 1.2; // wider at bottom
+      const a = Math.random() * Math.PI * 2;
+      conePositions[i * 3] = Math.cos(a) * r;
+      conePositions[i * 3 + 1] = h;
+      conePositions[i * 3 + 2] = Math.sin(a) * r;
+    }
+    const coneGeo = new THREE.BufferGeometry();
+    coneGeo.setAttribute('position', new THREE.BufferAttribute(conePositions, 3));
+    const coneMat = new THREE.PointsMaterial({
+      color: 0xc9a876,
+      size: 0.5,
+      transparent: true,
+      opacity: 0.6,
+      vertexColors: false,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const cone = new THREE.Points(coneGeo, coneMat);
+    cone.frustumCulled = false;
+    group.add(cone);
+    this.dustDevilCone = cone;
+
+    // Ground dust ring
+    const ringGeo = new THREE.RingGeometry(this.DUSTDEVIL_RADIUS * 0.5, this.DUSTDEVIL_RADIUS, 32);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xb8956a,
+      transparent: true,
+      opacity: 0.25,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.y = 0.1;
+    group.add(ring);
+    this.dustDevilRing = ring;
+
+    // Swirling debris particles (larger chunks)
+    const debrisCount = 24;
+    const debrisPositions = new Float32Array(debrisCount * 3);
+    const debrisVel = [];
+    for (let i = 0; i < debrisCount; i++) {
+      const h = Math.random() * 8;
+      const r = (1 - h / 8) * this.DUSTDEVIL_RADIUS * 1.5;
+      const a = Math.random() * Math.PI * 2;
+      debrisPositions[i * 3] = Math.cos(a) * r;
+      debrisPositions[i * 3 + 1] = h;
+      debrisPositions[i * 3 + 2] = Math.sin(a) * r;
+      debrisVel.push({
+        angle: a,
+        radius: r,
+        height: h,
+        speed: 2 + Math.random() * 3,
+        rise: 0.5 + Math.random() * 1.5,
+      });
+    }
+    const debrisGeo = new THREE.BufferGeometry();
+    debrisGeo.setAttribute('position', new THREE.BufferAttribute(debrisPositions, 3));
+    const debrisMat = new THREE.PointsMaterial({
+      color: 0x8d7558,
+      size: 0.6,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const debris = new THREE.Points(debrisGeo, debrisMat);
+    debris.frustumCulled = false;
+    group.add(debris);
+    this.dustDevilDebris = debris;
+    this.dustDebrisVel = debrisVel;
+
+    this.group.add(group);
+    return group;
+  }
+
   /** A hungry locust swarm: one recycled Points cloud that drifts bush to bush. */
   _createLocustSwarm() {
     const count = 220;
@@ -218,13 +338,13 @@ export class Meadowlands {
   }
 
   /**
-   * Unified weather state machine: clear breaks into rain, fog, wind or locusts,
+   * Unified weather state machine: clear breaks into rain, fog, wind, locusts or a dust devil,
    * then clears. Rain triples berry growth and hurries critters; locusts devour
    * ripe bushes; fog banks roll in (thicker at night) and make torchlight the
    * village's lifeline; wind spins windmill blades twice as fast. Wired into the
-   * day/night cycle.
+   * day/night cycle. Dust devils wander the meadow, flinging Dweebs and loose props.
    */
-  _updateWeather(dt, colony) {
+  _updateWeather(dt, dweebs, colony) {
     this.weatherTimer -= dt;
     if (this.weatherTimer <= 0) this._rollWeather(colony);
     if (this.weather === 'rain' && this.rainDrops) {
@@ -237,11 +357,161 @@ export class Meadowlands {
       pos.needsUpdate = true;
     }
     if (this.weather === 'locusts') this._updateLocusts(dt, colony);
+    // Dust devil: update visual and physics
+    if (this.weather === 'dustdevil' && this.dustDevil) {
+      this._updateDustDevil(dt, dweebs, colony);
+    }
+  }
+
+  /** Update dust devil position, visual effects, and apply physics forces. */
+  _updateDustDevil(dt, dweebs, colony) {
+    const dd = this.dustDevil;
+    if (!dd) return;
+
+    dd.life -= dt;
+
+    // Wander: slowly change direction
+    dd.wandering += dt;
+    const wanderStrength = 0.8;
+    dd.vx += (Math.random() - 0.5) * wanderStrength * dt;
+    dd.vz += (Math.random() - 0.5) * wanderStrength * dt;
+    // Clamp speed
+    const speed = Math.hypot(dd.vx, dd.vz);
+    const maxSpeed = 4.5;
+    if (speed > maxSpeed) {
+      dd.vx = (dd.vx / speed) * maxSpeed;
+      dd.vz = (dd.vz / speed) * maxSpeed;
+    }
+    // Keep within meadow bounds (bounce off edges)
+    const bound = 55;
+    let bounced = false;
+    if (dd.x + dd.vx * dt > bound) { dd.vx = -Math.abs(dd.vx); bounced = true; }
+    if (dd.x + dd.vx * dt < -bound) { dd.vx = Math.abs(dd.vx); bounced = true; }
+    if (dd.z + dd.vz * dt > bound) { dd.vz = -Math.abs(dd.vz); bounced = true; }
+    if (dd.z + dd.vz * dt < -bound) { dd.vz = Math.abs(dd.vz); bounced = true; }
+    if (bounced) {
+      // Add some randomness on bounce
+      dd.vx += (Math.random() - 0.5) * 2;
+      dd.vz += (Math.random() - 0.5) * 2;
+    }
+
+    // Move
+    dd.x += dd.vx * dt;
+    dd.z += dd.vz * dt;
+    if (dd.mesh) dd.mesh.position.set(dd.x, 0, dd.z);
+
+    // Animate visual: spin the cone and debris
+    if (this.dustDevilCone) {
+      this.dustDevilCone.rotation.y += dt * 3.5; // fast spin
+      // Pulse the cone scale slightly
+      const pulse = 1 + Math.sin(this.clock * 8) * 0.08;
+      this.dustDevilCone.scale.setScalar(pulse);
+    }
+    if (this.dustDevilRing) {
+      this.dustDevilRing.rotation.y -= dt * 2.0; // counter-rotate
+      const ringPulse = 1 + Math.sin(this.clock * 6) * 0.15;
+      this.dustDevilRing.scale.setScalar(ringPulse);
+      this.dustDevilRing.material.opacity = 0.15 + Math.sin(this.clock * 10) * 0.1;
+    }
+    if (this.dustDevilDebris && this.dustDebrisVel) {
+      this.dustDevilDebris.rotation.y += dt * 5.0;
+      const posAttr = this.dustDevilDebris.geometry.attributes.position;
+      for (let i = 0; i < this.dustDebrisVel.length; i++) {
+        const dv = this.dustDebrisVel[i];
+        dv.angle += dv.speed * dt;
+        dv.height += dv.rise * dt;
+        if (dv.height > 10) {
+          dv.height = 0;
+          dv.radius = Math.random() * dd.radius * 1.5;
+          dv.angle = Math.random() * Math.PI * 2;
+        }
+        dv.radius = Math.min(dd.radius * 1.5, dv.radius + dt * 0.5); // spiral out
+        posAttr.setX(i, Math.cos(dv.angle) * dv.radius);
+        posAttr.setY(i, dv.height);
+        posAttr.setZ(i, Math.sin(dv.angle) * dv.radius);
+      }
+      posAttr.needsUpdate = true;
+    }
+
+    // Fade out near end of life
+    const lifeRatio = Math.max(0, dd.life / dd.maxLife);
+    if (lifeRatio < 0.2) {
+      const fade = lifeRatio / 0.2;
+      if (this.dustDevilCone) this.dustDevilCone.material.opacity = 0.6 * fade;
+      if (this.dustDevilRing) this.dustDevilRing.material.opacity = 0.25 * fade;
+      if (this.dustDevilDebris) this.dustDevilDebris.material.opacity = 0.7 * fade;
+    }
+
+    // Physics forces on Dweebs and loose props
+    const radiusSq = dd.radius * dd.radius;
+    const centerX = dd.x;
+    const centerZ = dd.z;
+
+    // All dweebs (citizens + player) from the passed array
+    for (const d of dweebs) {
+      if (!d || !d.body) continue;
+      const p = d.body.translation();
+      const dx = p.x - centerX;
+      const dz = p.z - centerZ;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < radiusSq && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
+        // Tangential force (orbit)
+        const tx = -dz / dist;
+        const tz = dx / dist;
+        // Swirl around the funnel and get sucked up, strongest at the core; the lift is an
+        // acceleration (not a velocity floor) and caps out, so dweebs bob and get flung out
+        // the side instead of rocketing to the sky.
+        const core = 1 - dist / dd.radius;
+        const curVel = d.body.linvel();
+        const lift = curVel.y < 7 ? this.DUSTDEVIL_LIFT_DWEEB * 4 * core * dt : 0;
+        d.body.setLinvel({
+          x: curVel.x + tx * this.DUSTDEVIL_FORCE_DWEEB * 2 * dt + (dx / dist) * 3 * dt,
+          y: curVel.y + lift,
+          z: curVel.z + tz * this.DUSTDEVIL_FORCE_DWEEB * 2 * dt + (dz / dist) * 3 * dt,
+        }, true);
+        if (!(d._dustStuntAt > this.clock - 3)) {
+          d._dustStuntAt = this.clock;
+          this._pushStunt('dustdevil', dd.x, dd.z);
+        }
+      }
+    }
+
+    // Loose props
+    if (this.looseProps) {
+      for (const prop of this.looseProps) {
+        if (!prop.body) continue;
+        const p = prop.body.translation();
+        const dx = p.x - centerX;
+        const dz = p.z - centerZ;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < radiusSq * 1.5 && distSq > 0.01) { // larger radius for props
+          const dist = Math.sqrt(distSq);
+          const tx = -dz / dist;
+          const tz = dx / dist;
+          const curVel = prop.body.linvel();
+          const lift = curVel.y < 9 ? this.DUSTDEVIL_LIFT_PROP * 3 * dt : 0;
+          prop.body.setLinvel({
+            x: curVel.x + tx * this.DUSTDEVIL_FORCE_PROP * dt,
+            y: curVel.y + lift,
+            z: curVel.z + tz * this.DUSTDEVIL_FORCE_PROP * dt,
+          }, true);
+        }
+      }
+    }
+
+    // End dust devil when lifetime expires
+    if (dd.life <= 0) {
+      this._endWeather();
+      this.weather = 'clear';
+      this.weatherTimer = 50 + Math.random() * 60;
+      colony?._addLog('🌪️ The dust devil dissipates, leaving a calm meadow behind.');
+    }
   }
 
   _rollWeather(colony) {
     const was = this.weather;
-    if (was === 'rain' || was === 'fog' || was === 'wind' || was === 'locusts') {
+    if (was === 'rain' || was === 'fog' || was === 'wind' || was === 'locusts' || was === 'dustdevil') {
       this._endWeather();
       this.weather = 'clear';
       this.weatherTimer = 50 + Math.random() * 60;
@@ -257,9 +527,11 @@ export class Meadowlands {
     const r = Math.random();
     const fogChance = this.isNight ? 0.3 : 0.15;
     const locustChance = this.isNight ? 0.04 : 0.12;
+    const dustDevilChance = 0.08; // 8% chance for a dust devil
     if (r < 0.35) this._startRain(colony);
     else if (r < 0.35 + fogChance) this._startFog(colony);
     else if (r < 0.35 + fogChance + locustChance) this._startLocusts(colony);
+    else if (r < 0.35 + fogChance + locustChance + dustDevilChance) this._startDustDevil(colony);
     else this._startWind(colony);
   }
 
@@ -278,6 +550,56 @@ export class Meadowlands {
     if (this._baseFog === undefined) this._baseFog = this.scene ? this.scene.fog : null;
     if (this.scene) this.scene.fog = new THREE.Fog(0x9fb0c3, 8, 40);
     colony?._addLog('🌫️ Fog rolls in — the village torches are the only light to trust!');
+  }
+
+  /** A dust devil spawns at a map edge and wanders across the meadow. */
+  _startDustDevil(colony) {
+    this.weather = 'dustdevil';
+    this.DUSTDEVIL_LIFETIME = 12 + Math.random() * 6; // 12-18s
+    this.weatherTimer = this.DUSTDEVIL_LIFETIME;
+
+    // Spawn at a random edge of the meadow
+    const edge = Math.floor(Math.random() * 4);
+    let x, z, vx, vz;
+    const margin = 55;
+    if (edge === 0) { // North
+      x = (Math.random() - 0.5) * 80;
+      z = -margin;
+      vx = (Math.random() - 0.5) * 1.5;
+      vz = 2 + Math.random() * 2;
+    } else if (edge === 1) { // South
+      x = (Math.random() - 0.5) * 80;
+      z = margin;
+      vx = (Math.random() - 0.5) * 1.5;
+      vz = -2 - Math.random() * 2;
+    } else if (edge === 2) { // West
+      x = -margin;
+      z = (Math.random() - 0.5) * 80;
+      vx = 2 + Math.random() * 2;
+      vz = (Math.random() - 0.5) * 1.5;
+    } else { // East
+      x = margin;
+      z = (Math.random() - 0.5) * 80;
+      vx = -2 - Math.random() * 2;
+      vz = (Math.random() - 0.5) * 1.5;
+    }
+
+    const mesh = this._createDustDevilMesh(x, z);
+    this.dustDevil = {
+      x, z, vx, vz,
+      radius: this.DUSTDEVIL_RADIUS,
+      life: this.DUSTDEVIL_LIFETIME,
+      maxLife: this.DUSTDEVIL_LIFETIME,
+      mesh,
+      wandering: 0,
+    };
+
+    colony?._addLog('🌪️ A dust devil spins up at the edge of the meadow — watch your step!');
+    if (this.fx) {
+      this.fx.windGustFx?.(Math.atan2(vz, vx));
+      this.fx.audio?.playWhoosh?.(0, 0.8);
+      this.fx.cam?.shake?.(0.15);
+    }
   }
 
   /** A locust swarm descends on the berry fields and starts chewing. */
@@ -315,6 +637,22 @@ export class Meadowlands {
     if (this.locustSwarm) this.locustSwarm.visible = false;
     this.locust = null;
     if (this.scene && this._baseFog !== undefined) this.scene.fog = this._baseFog;
+    // Clean up dust devil
+    if (this.dustDevil && this.dustDevil.mesh) {
+      this.group.remove(this.dustDevil.mesh);
+      this.dustDevil.mesh.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+          else obj.material.dispose();
+        }
+      });
+      this.dustDevil = null;
+      this.dustDevilCone = null;
+      this.dustDevilRing = null;
+      this.dustDevilDebris = null;
+      this.dustDebrisVel = null;
+    }
   }
 
   /** Nearest berry bush that still has ripe berries for the swarm to chew. */
@@ -1676,20 +2014,64 @@ export class Meadowlands {
    * Kinds: 'mischief' (berry-stealing pest), 'thief' (nocturnal gold thief,
    * hunted by watchtowers), 'beetle' (friendly gatherer — never targeted),
    * 'gobbler' (night gold thief, fears torchlight), 'gnawer' (slow, tough,
-   * chews structures with hp).
+   * chews structures with hp), 'goat' (headbutting village pest — slow,
+   * telegraphed and very bonkable).
    */
   spawnCritter(kind = 'mischief') {
     if (this.critters.length >= MAX_CRITTERS) return null;
-    const def = CRITTER_KINDS[kind] || CRITTER_KINDS.mischief;
+    const def = kind === 'goat'
+      ? { hp: GOAT.hp, speed: GOAT.speed, hostile: true, color: GOAT.color, eye: GOAT.eye, size: GOAT.size }
+      : (CRITTER_KINDS[kind] || CRITTER_KINDS.mischief);
+    const stats = def;
     const ang = Math.random() * Math.PI * 2;
     const r = 45 + Math.random() * 10;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     const y = this._getHeight(x, z);
+    const bodyGeo = kind === 'goat'
+      ? new THREE.BoxGeometry(stats.size * 1.15, stats.size * 0.9, stats.size * 1.65)
+      : new THREE.SphereGeometry(stats.size, 8, 8);
     const body = new THREE.Mesh(
-      new THREE.SphereGeometry(def.size, 8, 8),
-      toonMat({ color: def.color, flatShading: true })
+      bodyGeo,
+      toonMat({ color: stats.color, flatShading: true })
     );
+    let goatLegs = null;
+    if (kind === 'goat') {
+      const s = stats.size;
+      // Four stubby legs (the front pair paws the dirt during a windup).
+      const legMat = toonMat({ color: 0x6b4f2a, flatShading: true });
+      const legGeo = new THREE.BoxGeometry(s * 0.16, s * 0.5, s * 0.16);
+      goatLegs = [];
+      for (const lx of [-s * 0.34, s * 0.34]) {
+        for (const lz of [-s * 0.52, s * 0.52]) {
+          const leg = new THREE.Mesh(legGeo, legMat);
+          leg.position.set(lx, -s * 0.58, lz);
+          body.add(leg);
+          if (lz > 0) goatLegs.push(leg);
+        }
+      }
+      // A blunt muzzle, two little horns and a scruffy beard.
+      const muzzle = new THREE.Mesh(
+        new THREE.BoxGeometry(s * 0.42, s * 0.4, s * 0.4),
+        toonMat({ color: 0xfff8ee, flatShading: true })
+      );
+      muzzle.position.set(0, -s * 0.08, s * 0.92);
+      body.add(muzzle);
+      const hornMat = toonMat({ color: 0x8b6b43, flatShading: true });
+      for (const hx of [-s * 0.22, s * 0.22]) {
+        const horn = new THREE.Mesh(new THREE.ConeGeometry(s * 0.09, s * 0.42, 5), hornMat);
+        horn.position.set(hx, s * 0.56, s * 0.58);
+        horn.rotation.x = -0.5;
+        body.add(horn);
+      }
+      const beard = new THREE.Mesh(
+        new THREE.ConeGeometry(s * 0.17, s * 0.44, 5),
+        toonMat({ color: 0xd9d2c4, flatShading: true })
+      );
+      beard.position.set(0, -s * 0.52, s * 0.78);
+      beard.rotation.x = Math.PI;
+      body.add(beard);
+    }
     if (kind === 'beetle') {
       // A shiny shell on the friendly gatherer's back.
       const shell = new THREE.Mesh(
@@ -1708,10 +2090,10 @@ export class Meadowlands {
       mask.position.set(0, def.size * 0.35, def.size * 0.8);
       body.add(mask);
     }
-    const eyeMat = new THREE.MeshBasicMaterial({ color: def.eye });
-    for (const ex of [-def.size * 0.36, def.size * 0.36]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(def.size * 0.17, 6, 6), eyeMat);
-      eye.position.set(ex, def.size * 0.36, def.size * 0.78);
+    const eyeMat = new THREE.MeshBasicMaterial({ color: stats.eye });
+    for (const ex of [-stats.size * 0.36, stats.size * 0.36]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(stats.size * 0.17, 6, 6), eyeMat);
+      eye.position.set(ex, stats.size * 0.36, stats.size * (kind === 'goat' ? 0.92 : 0.78));
       body.add(eye);
     }
     body.position.set(x, y + def.size, z);
@@ -1723,6 +2105,13 @@ export class Meadowlands {
       hover: def.size, state: 'approach', stealTimer: 0, gatherTimer: 0,
       chewTarget: null, homeX: x, homeZ: z,
     };
+    if (kind === 'goat') {
+      critter.goatLegs = goatLegs;
+      critter.stateTimer = 0;
+      critter.goatDirX = 0;
+      critter.goatDirZ = 1;
+      critter.goatTarget = null;
+    }
     this.critters.push(critter);
     return critter;
   }
@@ -2076,6 +2465,14 @@ export class Meadowlands {
       this.beetleTimer = 55;
       if (this.critters.filter(c => c.kind === 'beetle').length < 2) this.spawnBeetle();
     }
+    // One village goat at a time wanders in looking for something to bonk.
+    this.goatTimer -= dt;
+    if (this.goatTimer <= 0) {
+      this.goatTimer = GOAT.spawnInterval;
+      if (this.critters.filter(c => c.kind === 'goat').length < GOAT.maxGoats) {
+        this.spawnCritter('goat');
+      }
+    }
     // Anything with hit points can be gnawed (cannons today, more tomorrow).
     const chewables = this.buildingManager
       ? this.buildingManager.placedStructures.filter(s => typeof s.hp === 'number')
@@ -2087,6 +2484,8 @@ export class Meadowlands {
       const c = this.critters[i];
       if (c.kind === 'beetle') {
         this._updateBeetle(c, dt, colony, silos);
+      } else if (c.kind === 'goat') {
+        this._updateGoat(c, dt, dweebs, colony);
       } else if (c.state === 'flee') {
         // Run home and despawn at the edge.
         const dx = c.homeX - c.x;
@@ -2170,6 +2569,207 @@ export class Meadowlands {
       }
       if (c.mesh) {
         c.mesh.position.set(c.x, c.y + (c.hover || 0.7) + Math.sin(this.clock * 6 + c.x) * 0.08, c.z);
+      }
+    }
+  }
+
+  /** Read a Dweeb's world position without assuming a particular implementation. */
+  _dweebPosition(d) {
+    if (!d) return null;
+    if (typeof d.getPosition === 'function') {
+      const p = d.getPosition();
+      if (p) return p;
+    }
+    if (d.body && typeof d.body.translation === 'function') return d.body.translation();
+    return null;
+  }
+
+  /** Nearest live Dweeb within the goat's attention range. */
+  _nearestDweeb(c, dweebs) {
+    let nearest = null;
+    let best = GOAT.targetRange;
+    for (const d of dweebs || []) {
+      if (!d || !d.body || d.active === false || d.eliminated) continue;
+      const p = this._dweebPosition(d);
+      if (!p) continue;
+      const dist = Math.hypot(p.x - c.x, p.z - c.z);
+      if (dist < best) { best = dist; nearest = d; }
+    }
+    return nearest;
+  }
+
+  /** The actual impact: a comic mallet-flavoured headbutt that launches the victim. */
+  _goatStrike(c, target, colony) {
+    const p = this._dweebPosition(target);
+    let dirX = c.goatDirX || 0;
+    let dirZ = c.goatDirZ || 1;
+    if (p) {
+      const dx = p.x - c.x;
+      const dz = p.z - c.z;
+      const len = Math.hypot(dx, dz) || 1;
+      dirX = dx / len;
+      dirZ = dz / len;
+    }
+    c.goatDirX = dirX;
+    c.goatDirZ = dirZ;
+    if (c.mesh) c.mesh.rotation.y = Math.atan2(dirX, dirZ);
+
+    // Dodged during the windup? The goat lunges into thin air and looks silly.
+    if (!p || Math.hypot(p.x - c.x, p.z - c.z) > GOAT.headbuttRange + GOAT.lungeReach) {
+      const pos = { x: c.x, y: c.y + (c.hover || 0.8) + 0.6, z: c.z };
+      this.fx?.hud?.popup?.('WHIFF!', pos, 'small', 0xffffff);
+      this.fx?.audio?.playWhoosh?.(0);
+      return;
+    }
+
+    if (target) {
+      const dir = { x: dirX, y: 0.45, z: dirZ };
+      if (typeof target.receiveHit === 'function') {
+        target.receiveHit({
+          dir,
+          damage: GOAT.hitDamage,
+          base: GOAT.hitBase,
+          growth: GOAT.hitGrowth,
+          attacker: null,
+          time: this.clock,
+        });
+      } else if (target.body && typeof target.body.setLinvel === 'function') {
+        target.body.setLinvel({
+          x: dirX * GOAT.launchSpeed,
+          y: GOAT.launchUp,
+          z: dirZ * GOAT.launchSpeed,
+        }, true);
+      }
+    }
+
+    const fx = this.fx;
+    if (fx) {
+      const pos = p
+        ? { x: p.x, y: p.y + 0.8, z: p.z }
+        : { x: c.x, y: c.y + (c.hover || 0.8), z: c.z };
+      const pan = typeof fx._pan === 'function' ? fx._pan(pos) : 0;
+      fx.particles?.ring?.(pos, { color: 0xffd23f, size: 2.6, life: 0.35 });
+      fx.particles?.emit?.(pos, {
+        count: 14,
+        colors: [0xffd23f, 0xffffff, GOAT.color],
+        speed: 6,
+        up: 3,
+        size: 0.14,
+        life: 0.5,
+      });
+      fx.bursts?.spawn?.(pos, 1.4, 0xffd23f);
+      fx.audio?.playComicBonk?.(pan);
+      fx.audio?.playSlideWhistle?.(pan);
+      fx.hud?.popup?.('BONK!', pos, 'big', 0xffd23f);
+      fx.cam?.shake?.(0.2);
+    }
+    if (colony && !c.goatLoggedHit) {
+      c.goatLoggedHit = true;
+      colony._addLog?.('🐐 The village goat delivered a mighty BONK!');
+    }
+  }
+
+  /** Goat brain: approach a Dweeb, paw the dirt, headbutt, then flee and return. */
+  _updateGoat(c, dt, dweebs, colony) {
+    if (!c.goatGreeted) {
+      c.goatGreeted = true;
+      colony?._addLog?.('🐐 A village goat wanders in, spoiling for a headbutt!');
+    }
+    const target = this._nearestDweeb(c, dweebs);
+    c.stateTimer = Math.max(0, (c.stateTimer || 0) - dt);
+    let moving = false;
+
+    if (c.state === 'windup') {
+      // Paw-paw-paw… keep facing the poor Dweeb.
+      if (c.goatLegs && c.goatLegs.length >= 2) {
+        const swing = Math.sin(this.clock * 24) * 0.65;
+        c.goatLegs[0].rotation.x = swing;
+        c.goatLegs[1].rotation.x = -swing;
+      }
+      const p = this._dweebPosition(target);
+      if (p && c.mesh) {
+        const dx = p.x - c.x;
+        const dz = p.z - c.z;
+        c.mesh.rotation.y = Math.atan2(dx, dz);
+        const len = Math.hypot(dx, dz) || 1;
+        c.goatDirX = dx / len;
+        c.goatDirZ = dz / len;
+      }
+      if (c.stateTimer <= 0) {
+        c.state = 'headbutt';
+        c.stateTimer = GOAT.headbuttTime;
+        c.goatTarget = target;
+        this._goatStrike(c, target, colony);
+      }
+    } else if (c.state === 'headbutt') {
+      const lungeSpeed = c.speed * GOAT.lungeSpeedMult;
+      c.x += (c.goatDirX || 0) * lungeSpeed * dt;
+      c.z += (c.goatDirZ || 1) * lungeSpeed * dt;
+      c.y = this._getHeight(c.x, c.z);
+      if (c.stateTimer <= 0) {
+        c.state = 'flee';
+        c.stateTimer = GOAT.fleeTime;
+        c.goatDirX = -(c.goatDirX || 0);
+        c.goatDirZ = -(c.goatDirZ || 1);
+      }
+    } else if (c.state === 'flee') {
+      const fleeSpeed = c.speed * GOAT.fleeSpeedMult;
+      c.x += (c.goatDirX || 0) * fleeSpeed * dt;
+      c.z += (c.goatDirZ || 1) * fleeSpeed * dt;
+      c.y = this._getHeight(c.x, c.z);
+      if (c.mesh) c.mesh.rotation.y = Math.atan2(c.goatDirX || 0, c.goatDirZ || 1);
+      if (c.stateTimer <= 0) {
+        c.state = 'approach';
+        c.stateTimer = 0;
+      }
+    } else {
+      // Approach: lock onto the nearest Dweeb, or amble toward the village.
+      c.state = 'approach';
+      if (target) {
+        const p = this._dweebPosition(target);
+        if (p) {
+          const dx = p.x - c.x;
+          const dz = p.z - c.z;
+          const len = Math.hypot(dx, dz) || 1;
+          c.goatDirX = dx / len;
+          c.goatDirZ = dz / len;
+          if (c.mesh) c.mesh.rotation.y = Math.atan2(dx, dz);
+          if (len <= GOAT.headbuttRange) {
+            c.state = 'windup';
+            c.stateTimer = GOAT.windupTime;
+          } else {
+            c.x += (dx / len) * c.speed * dt;
+            c.z += (dz / len) * c.speed * dt;
+            c.y = this._getHeight(c.x, c.z);
+            moving = true;
+          }
+        }
+      } else {
+        const dx = -c.x;
+        const dz = -c.z;
+        const len = Math.hypot(dx, dz) || 1;
+        if (len > 4) {
+          c.x += (dx / len) * c.speed * 0.45 * dt;
+          c.z += (dz / len) * c.speed * 0.45 * dt;
+          c.y = this._getHeight(c.x, c.z);
+          if (c.mesh) c.mesh.rotation.y = Math.atan2(dx, dz);
+          moving = true;
+        }
+      }
+    }
+
+    if (c.mesh) {
+      const tilt = c.state === 'headbutt' ? -0.28 : 0;
+      c.mesh.rotation.x = THREE.MathUtils.lerp(c.mesh.rotation.x || 0, tilt, Math.min(1, dt * 12));
+      if (moving && c.state !== 'windup') {
+        c.mesh.rotation.z = Math.sin(this.clock * 14) * 0.04;
+      } else {
+        c.mesh.rotation.z = THREE.MathUtils.lerp(c.mesh.rotation.z || 0, 0, Math.min(1, dt * 14));
+      }
+      if (c.state !== 'windup' && c.goatLegs) {
+        for (const leg of c.goatLegs) {
+          leg.rotation.x = THREE.MathUtils.lerp(leg.rotation.x || 0, 0, Math.min(1, dt * 14));
+        }
       }
     }
   }
@@ -2270,7 +2870,7 @@ export class Meadowlands {
     const prevTod = this.timeOfDay;
     this._updateDayNight(dt);
     if (this.timeOfDay < prevTod) this._onNewDay(colony);
-    this._updateWeather(dt, colony);
+    this._updateWeather(dt, dweebs, colony);
     this._updateSupplyPiles(dt, dweebs);
     this._updateHaulProps(dt);
     this._updateBushRegrowth(dt, colony);

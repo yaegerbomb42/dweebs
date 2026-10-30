@@ -17,6 +17,14 @@ import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward, DIFFI
  * behaviour definitions stay in src/warfare/WarfareCommander.js (which imports this way). */
 export const AI_PERSONALITIES = Object.freeze(['tactician', 'brawler', 'turtle', 'trickster']);
 
+// Sapper tunnelling: underground for SAPPER_BURROW_TICKS (untargetable, ignores barricades),
+// then pops up SAPPER_SURFACE_BEHIND past its target. One dig per SAPPER_BURROW_CD ticks.
+export const SAPPER_BURROW_MIN = 4;
+export const SAPPER_BURROW_TICKS = 36;
+export const SAPPER_BURROW_CD = 210;
+export const SAPPER_SURFACE_BEHIND = 1.5;
+export const SAPPER_DIG_SPEED = 1.6;
+
 export const WF_HZ = 30;
 export const WF_DT = 1 / WF_HZ;
 export const FIELD = Object.freeze({ halfX: 40, halfZ: 22 });
@@ -272,6 +280,10 @@ export const MUD_SPEED_MUL = 0.55;
 /** Mud terrain: rockets inside mud reload this fraction slower (multiply cooldown). */
 export const MUD_ROCKET_RELOAD_MUL = 1.25;
 const KNOCK_DECAY = 0.86;
+/** Netter: how long (ticks) a net pins its target. Brutes wriggle free in half the time. */
+export const NET_TICKS = 60;
+/** Magnet Crane commander toy: cost, pull radius, ring it drags enemies to, pull fraction, attack stun. */
+export const MAGNET = { cost: 30, radius: 14, ring: 2.5, pull: 0.6, stunTicks: 12 };
 /** Kills needed to reach rank 1/2/3. Ranks carry small deterministic stat bumps. */
 export const RANK_KILLS = Object.freeze([2, 4, 7]);
 export const RANK_MAX = RANK_KILLS.length;
@@ -390,6 +402,8 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     rageT: 0,
     lastAttackerId: 0, lastHurtTick: -1e9, grudgeId: 0, pushT: 0,
     decoy, ttl: decoy ? DECOY_TTL : 0,
+    net: 0,
+    burrow: 0, burrowCd: 0,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -568,6 +582,32 @@ export function applyCommand(st, c) {
     }
     return true;
   }
+  if (c.type === 'magnet') {
+    // Magnet Crane: yank every light enemy within MAGNET.radius toward a tight ring around our
+    // rally flag. It's a knockback slide (not a teleport), so barricades still block it and the
+    // view shows them skidding in. Bosses and brutes are too heavy to move.
+    if (st.coins[c.team] < MAGNET.cost) return false;
+    const rally = st.rally[c.team];
+    if (!rally) return false;
+    st.coins[c.team] -= MAGNET.cost;
+    const enemyTeam = otherTeam(c.team);
+    const tx = rally.x, tz = rally.z;
+    st.events.push({ type: 'magnet', team: c.team, x: tx, z: tz, radius: MAGNET.radius, ringRadius: MAGNET.ring });
+    const slide = (1 - KNOCK_DECAY) / WF_DT;   // knockback that integrates to the wanted distance
+    for (const u of st.units) {
+      if (!u.alive || u.team !== enemyTeam || u.carriedBy) continue;
+      if (u.type === 'boss' || u.type === 'brute') continue;
+      const dx = u.x - tx, dz = u.z - tz;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist >= MAGNET.radius || dist <= MAGNET.ring) continue;
+      const pull = (dist - MAGNET.ring) * MAGNET.pull;
+      u.kx -= (dx / dist) * pull * slide;
+      u.kz -= (dz / dist) * pull * slide;
+      u.cd = Math.max(u.cd, MAGNET.stunTicks);
+      st.events.push({ type: 'magnetPull', id: u.id, x: u.x, z: u.z });
+    }
+    return true;
+  }
   if (c.type === 'warhorn') {
     let n = 0;
     for (const u of st.units) if (u.alive && u.team === c.team && !u.carriedBy) n++;
@@ -697,7 +737,7 @@ function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, bas
   const srcDmg = propSrc ? propSrc.dmg : (stats(attType).dmg || 0);
   const hg = groundMult(st, ax ?? x, az ?? z);
   for (const e of st.units) {
-    if (!e.alive || e.team === attTeam) continue;
+    if (!e.alive || e.burrow > 0 || e.team === attTeam) continue;
     const dx = e.x - x, dz = e.z - z;
     const d = Math.sqrt(dx * dx + dz * dz);
     const f = splashFalloff(d, radius + e.radius * 0.5);
@@ -827,6 +867,12 @@ function halt(u) {
 
 function updateUnit(st, u, enemies) {
   const s = stats(u.type);
+  // Netted units are pinned in place but can still be pushed by blasts/knockback
+  if (u.net > 0) {
+    u.net--;
+    halt(u);
+    return;
+  }
   if (u.type === 'medic') {
     // Medic: heal the most wounded ally in range before normal targeting
     const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
@@ -988,11 +1034,30 @@ function updateUnit(st, u, enemies) {
     return;
   }
 
+  // Sapper burrow movement: move toward burrow target while burrowing
+  if (u.burrow > 0) {
+    u.burrow--;
+    if (u.burrowTarget) {
+      seek(u, u.burrowTarget.x, u.burrowTarget.z, speed * SAPPER_DIG_SPEED);
+      // Small dust/tunnel event every few ticks
+      if (u.burrow % 4 === 0) {
+        st.events.push({ type: 'tunnel', team: u.team, x: u.x, z: u.z });
+      }
+    }
+    if (u.burrow === 0) {
+      // Surface: brief cooldown before attacking
+      u.cd = 20;
+      u.burrowTarget = null;
+      st.events.push({ type: 'surface', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
+    return;
+  }
+
   // Target selection (staggered so 120 units don't all think on the same tick).
   // A grudge lets a stationary unit answer bombardment past aggro; a natural target always
   // ends one, so grudges never pull units off a real fight.
   let t = u.targetId ? st.byId.get(u.targetId) : null;
-  if (!t || !t.alive || t.carriedBy || t.team === u.team) {
+  if (!t || !t.alive || t.carriedBy || t.burrow > 0 || t.team === u.team) {
     u.grudgeId = 0;
     t = pickTarget(u, enemies) || fortAlarm(st, u, enemies) || startGrudge(st, u);
     u.targetId = t ? t.id : 0;
@@ -1001,6 +1066,21 @@ function updateUnit(st, u, enemies) {
     if (t) u.grudgeId = 0;
     else t = keepGrudge(st, u) || startGrudge(st, u);
     u.targetId = t ? t.id : 0;
+  }
+
+  // Sapper burrow: when targeting a rocket/stealer > 4 units away, dig under everything and
+  // surface just past the target (on the far side, so the back line has to turn around).
+  if (u.burrowCd > 0) u.burrowCd--;
+  if (t && u.type === 'sapper' && (t.type === 'rocket' || t.type === 'stealer') && !u.burrow && u.burrowCd <= 0) {
+    const dx = t.x - u.x, dz = t.z - u.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d > SAPPER_BURROW_MIN) {
+      u.burrow = SAPPER_BURROW_TICKS;
+      u.burrowCd = SAPPER_BURROW_CD;
+      u.vx = 0; u.vz = 0;
+      u.burrowTarget = { x: t.x + (dx / d) * SAPPER_SURFACE_BEHIND, z: t.z + (dz / d) * SAPPER_SURFACE_BEHIND };
+      st.events.push({ type: 'burrow', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
   }
 
   if (t) {
@@ -1028,6 +1108,18 @@ function updateUnit(st, u, enemies) {
         st.events.push({ type: 'explode', team: u.team, src: u.type, x: u.x, z: u.z, r: s.splash, big: true });
         splash(st, u.x, u.z, s.splash, u.team, u.type, dmgMulOf(u), { ax: u.x, az: u.z, attId: u.id });
         kill(st, u, null, 0, 0);
+        return;
+      }
+      if (s.attack === 'net') {
+        // Throw a net (on cooldown): pins the target for NET_TICKS. Never refreshes a net that's
+        // still on, so one netter can't perma-lock a unit, and bosses just shrug nets off.
+        if (u.cd > 0) return;
+        u.cd = Math.round(s.cooldown * u.cdMul);
+        if (t.net <= 0 && !t.carriedBy && !t.carrying && t.type !== 'boss') {
+          t.net = t.type === 'brute' ? Math.round(NET_TICKS / 2) : NET_TICKS;
+          t.vx = 0; t.vz = 0;
+          st.events.push({ type: 'net', id: u.id, victim: t.id, team: u.team, x: t.x, z: t.z });
+        }
         return;
       }
       if (s.attack === 'grab' && t.type === 'kami' && t !== u) {
@@ -1116,8 +1208,14 @@ function integrate(st) {
   const units = st.units;
   for (const u of units) {
     if (!u.alive || u.carriedBy) continue;
-    u.x += (u.vx + u.kx) * WF_DT;
-    u.z += (u.vz + u.kz) * WF_DT;
+    // Netted units don't move under their own power but still take knockback
+    if (u.net > 0) {
+      u.x += (u.kx) * WF_DT;
+      u.z += (u.kz) * WF_DT;
+    } else {
+      u.x += (u.vx + u.kx) * WF_DT;
+      u.z += (u.vz + u.kz) * WF_DT;
+    }
     u.kx *= KNOCK_DECAY;
     u.kz *= KNOCK_DECAY;
   }
@@ -1146,7 +1244,10 @@ function integrate(st) {
     if (!u.alive || u.carriedBy) continue;
     if (!u.touching) u.pushT = 0;
     u.touching = false;
-    for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
+    // Burrowing sappers ignore barricades (tunnel under them)
+    if (!u.burrow) {
+      for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
+    }
     for (const team of ['blue', 'red']) { const f = st.forts[team]; pushOut(u, f.x, f.z, f.r); }
     u.x = clamp(u.x, -FIELD.halfX, FIELD.halfX);
     u.z = clamp(u.z, -FIELD.halfZ, FIELD.halfZ);
@@ -1344,7 +1445,7 @@ export function battleHash(st) {
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
-    mix(u.carrying); mix(u.carriedBy); mix(u.rank || 0); mix(u.kills || 0); mix(u.rageT || 0);
+    mix(u.carrying); mix(u.carriedBy); mix(u.rank || 0); mix(u.kills || 0); mix(u.rageT || 0); mix(u.net || 0); mix(u.burrow || 0); mix(u.burrowCd || 0);
     mix(u.state === 'rout' ? 1 : u.state === 'retreat' ? 2 : 3);
     mix(u.routTicks || 0); mix(u.routCd || 0);
   }

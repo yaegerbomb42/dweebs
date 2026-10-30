@@ -17,25 +17,105 @@ export const MUTATION_TYPES = [
   { id: 'prodigy', name: 'PRODIGY', blurb: 'Nails it PERFECTLY on the first try. Show-off!' },
 ];
 
+/** Seconds of player input kept on tape. */
+const TAPE_KEEP = 4;
+/** Pupils copy from this long before the demonstrated beat … */
+const COPY_LEAD = 1.4;
+/** … to this long after it (the follow-through), then start performing. */
+const COPY_FOLLOW = 1.1;
+
 export class MimicLab {
-  constructor(physicsWorld, scene) {
+  constructor(physicsWorld, scene, options = {}) {
     this.physicsWorld = physicsWorld;
     this.scene = scene;
+    this.hud = options.hud || null;
+    this.fx = options.fx || null;
+    this.audio = options.audio || null;
+    this.arena = options.arena || null;   // props are real arena items: grab / throw / explode all work
+    this.combat = null;
+    this.items = [];
     this.group = new THREE.Group();
     this.scene.add(this.group);
 
     this.colliders = [];
+    this.bodyIds = [];
     this.props = [];
     this.clock = 0;
     this.lastAction = null;
     this.activeMutation = null;
     this.mutationCooldown = 0;
+    this.chain = 0;
+    this.chainTimer = 0;
+    this.hintEl = null;
+    this.hintTimer = null;
+
+    // Ghost replay: a rolling recording of the player's inputs so pupils copy the actual performance.
+    this.tape = [];            // { t, mx, my, x, z, ev } sampled every frame, last TAPE_KEEP seconds
+    this.pendingCopy = null;   // { at, from, mut, actionName, pupils } waiting for the follow-through
+    this.ghosts = [];          // pupils currently replaying a performance
+    this._tapeEv = null;
+
+    // Edge-detection state for real player demonstrations.
+    this._wasJumpRising = false;
+    this._wasDiving = false;
+    this._wasRagdolling = false;
+    this._prevHitstun = 0;
+    this._prevHeld = null;
     // PhysicsWorld body ids created by this lab — removed on dispose so
     // re-entering the lab doesn't stack invisible phantom colliders.
     this._physIds = [];
 
     this._buildAmphitheater();
     this._spawnToyTrunk();
+    this._showHint();
+  }
+
+  _trackBody(result) {
+    if (result?.id != null) this.bodyIds.push(result.id);
+    return result;
+  }
+
+  _showHint() {
+    if (typeof document === 'undefined' || !document.body) return;
+    const el = document.createElement('div');
+    el.textContent = "Do something dumb. They'll copy it... badly.";
+    el.style.cssText = [
+      'position:fixed',
+      'left:50%',
+      'bottom:118px',
+      'transform:translateX(-50%)',
+      'z-index:35',
+      'padding:8px 16px',
+      'border-radius:999px',
+      'background:rgba(23,23,23,.78)',
+      'border:2px solid rgba(250,204,21,.75)',
+      'color:#fef9c3',
+      'font:700 14px/1.3 "Nunito",system-ui,sans-serif',
+      'letter-spacing:.02em',
+      'text-align:center',
+      'pointer-events:none',
+      'text-shadow:0 2px 0 rgba(0,0,0,.45)',
+      'box-shadow:0 6px 18px rgba(0,0,0,.28)',
+    ].join(';');
+    document.body.appendChild(el);
+    this.hintEl = el;
+    this.hintTimer = setTimeout(() => {
+      this.hintEl?.remove();
+      this.hintEl = null;
+      this.hintTimer = null;
+    }, 7000);
+  }
+
+  _announce(text, style = 'trick', duration = 1.8) {
+    if (this.hud?.announce) {
+      this.hud.announce(text, style, duration);
+      return;
+    }
+    const announcer = document.getElementById('announcer');
+    if (announcer) {
+      announcer.className = `show ${style}`;
+      announcer.innerHTML = text;
+    }
   }
 
   /** Register a PhysicsWorld creation result for cleanup on dispose. */
@@ -62,7 +142,7 @@ export class MimicLab {
       new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.5, flatShading: true })
     );
     rug.rotation.x = -Math.PI / 2;
-    rug.position.y = 0.02;
+    rug.position.y = 0.03;
     this.group.add(rug);
     noOutline(rug);
 
@@ -102,13 +182,23 @@ export class MimicLab {
       this._trackPhysics(this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood'));
     }
 
-    // Spawn starting fun physics sandbox props
-    this._spawnProp('watermelon', 0, 1.5, -8, 'fruit', 2.0);
-    this._spawnProp('bowlingBall', -2.5, 1.5, -7, 'metal', 4.5);
-    this._spawnProp('crate', 2.5, 1.5, -7, 'wood', 3.0);
-    this._spawnProp('rubberChicken', -1.2, 1.5, -6, 'rubber', 0.8);
-    this._spawnProp('explosiveBarrel', 1.5, 1.5, -6, 'toy', 2.5, true);
-    this._spawnProp('giantDie', -3.5, 1.5, -5, 'toy', 2.0);
+    // Starting toys, as real arena items so the player can grab, throw and blow them up
+    // In the game they're real arena items; without an arena (standalone lab) they're local physics props.
+    const toys = [['watermelon', 0, -8, 'fruit', 2.0], ['bowlingBall', -2.5, -7, 'metal', 4.5], ['crate', 2.5, -7, 'wood', 3.0],
+      ['rubberChicken', -1.2, -6, 'rubber', 0.8], ['explosiveBarrel', 1.5, -6, 'toy', 2.5], ['giantDie', -3.5, -5, 'toy', 2.0]];
+    for (const [key, x, z, mat, mass] of toys) {
+      if (this.arena) this._spawnItem(key, x, 1.6, z);
+      else this._spawnProp(key, x, 1.5, z, mat, mass, key === 'explosiveBarrel');
+    }
+  }
+
+  _spawnItem(key, x, y, z) {
+    if (!this.arena) return null;
+    try {
+      const o = this.arena.spawnItem(key, { x, y, z });
+      if (o) this.items.push(o);
+      return o;
+    } catch { return null; }
   }
 
   /** Collider shape matched to the prop's visual so boxes don't roll like balls. */
@@ -158,81 +248,112 @@ export class MimicLab {
 
   update(dt, player, dweebs = [], combat = null) {
     this.clock += dt;
+    if (combat) this.combat = combat;
+    if (this.arena) this.items = this.items.filter(o => this.arena.objects.includes(o));
     this.mutationCooldown = Math.max(0, this.mutationCooldown - dt);
-
-    // Sync props physics
-    for (const p of this.props) {
-      if (p.body && p.mesh) {
-        const t = p.body.translation();
-        const r = p.body.rotation();
-        p.mesh.position.set(t.x, t.y, t.z);
-        p.mesh.quaternion.set(r.x, r.y, r.z, r.w);
-      }
+    if (this.chainTimer > 0) {
+      this.chainTimer = Math.max(0, this.chainTimer - dt);
+      if (this.chainTimer <= 0) this.chain = 0;
     }
 
-    if (!player || !player.body) return;
+    this._updateGhosts(dt, dweebs);
+    if (!player || !player.body || !player.active) return;
+    this._record(player);
 
-    // Detect Player Actions
-    const playerVel = player.body.linvel();
-    const speed = Math.hypot(playerVel.x, playerVel.z);
-
-    // 1. High Jump Action Detected
-    if (playerVel.y > 9.0 && this.mutationCooldown <= 0) {
-      this.triggerDemonstration('HIGH JUMP / DIVE', dweebs);
+    // Jump (the Dweeb sets jumpRising for both ground jumps and double jumps).
+    if (player.jumpRising && !this._wasJumpRising) {
+      this._tag('jump');
+      this.triggerDemonstration(player.jumpsLeft === 0 ? 'DOUBLE JUMP' : 'BIG JUMP', dweebs);
     }
+    this._wasJumpRising = !!player.jumpRising;
 
-    // 2. Heavy Throw Action Detected (checked via any prop moving fast away from player)
-    for (const p of this.props) {
-      if (p.body) {
-        const pv = p.body.linvel();
-        const pSpeed = Math.hypot(pv.x, pv.y, pv.z);
-        if (pSpeed > 14.0 && this.mutationCooldown <= 0) {
-          this.triggerDemonstration(`MEGA THROW (${p.name.toUpperCase()})`, dweebs);
-          break;
+    // Ground dive.
+    const diving = player.diveTimer > 0;
+    if (diving && !this._wasDiving) { this._tag('dive'); this.triggerDemonstration('FLYING DIVE', dweebs); }
+    this._wasDiving = diving;
+
+    // Getting launched: a fresh hit bumps hitstun; big ones also start a ragdoll.
+    const launched = player.hitstun > this._prevHitstun + 0.05;
+    if (launched || (player.ragdolling && !this._wasRagdolling)) {
+      this.triggerDemonstration('GETTING LAUNCHED', dweebs);
+    }
+    this._prevHitstun = player.hitstun || 0;
+    this._wasRagdolling = !!player.ragdolling;
+
+    // Grab / throw transitions. A drop (Q) throws nothing, so only count fast releases.
+    const held = player.held;
+    if (held && !this._prevHeld) {
+      this._tag('grab');
+      this.triggerDemonstration(`GRAB (${held.kind === 'dweeb' ? 'A PUPIL' : 'A TOY'})`, dweebs);
+    } else if (!held && this._prevHeld) {
+      this._tag('throw');
+      const ref = this._prevHeld.ref;
+      if (ref?.body) {
+        const v = ref.body.linvel();
+        if (Math.hypot(v.x, v.y, v.z) > 7) {
+          this.triggerDemonstration(`MEGA THROW (${this._prevHeld.kind === 'dweeb' ? 'PUPIL' : 'TOY'})`, dweebs);
         }
       }
     }
-
-    // 3. Punch / Attack Action Detected
-    if (player.punchTime !== undefined && player.punchTime < 0.15 && this.mutationCooldown <= 0) {
-      this.triggerDemonstration('MEGA BONK / PUNCH', dweebs);
-    }
-
-    // 4. Drop Kick / Slam Action Detected
-    if ((player.dropKicking || player.groundSlamming) && this.mutationCooldown <= 0) {
-      this.triggerDemonstration('FLYING DROP-KICK', dweebs);
-    }
+    this._prevHeld = held ? { kind: held.kind, ref: held.ref } : null;
   }
 
-  triggerDemonstration(actionName, dweebs, forceMutationId = null) {
+  triggerDemonstration(actionName, dweebs = [], forceMutationId = null) {
+    // Tests (and scripted demos) may force a mutation and bypass the cooldown.
+    if (!forceMutationId && this.mutationCooldown > 0) return false;
+
     // Encore escalation: repeating the same demo back-to-back hypes the
     // pupils up — impulses scale up to +75% by the 4th consecutive encore.
     if (actionName === this.lastAction) this.encoreCount = (this.encoreCount || 1) + 1;
     else this.encoreCount = 1;
     this.lastAction = actionName;
-    this.mutationCooldown = 6.0;
-    const boost = 1 + 0.25 * Math.min(3, this.encoreCount - 1);
+    this.mutationCooldown = 2.5;
+    this.boost = 1 + 0.25 * Math.min(3, this.encoreCount - 1);
 
-    // Pick random mutation archetype (tests can force one deterministically)
+    // Chain hype: repeated demos inside the 7s window build a bigger MIMIC combo.
+    this.chain = this.chainTimer > 0 ? Math.min(9, this.chain + 1) : 1;
+    this.chainTimer = 7.0;
+
+    // At chain 3+, the pupils attempt the spectacular mutations only.
+    const pool = this.chain >= 3
+      ? MUTATION_TYPES.filter(m => m.id === 'swarm' || m.id === 'substitute')
+      : MUTATION_TYPES;
     const mut = forceMutationId
       ? (MUTATION_TYPES.find(m => m.id === forceMutationId) || MUTATION_TYPES[0])
-      : MUTATION_TYPES[Math.floor(Math.random() * MUTATION_TYPES.length)];
+      : (pool[Math.floor(Math.random() * pool.length)] || MUTATION_TYPES[0]);
     this.activeMutation = mut;
 
-    // Show on Announcer HUD
-    const announcer = document.getElementById('announcer');
-    if (announcer) {
-      const encoreTag = this.encoreCount > 1 ? ` <small>ENCORE x${this.encoreCount}!</small>` : '';
-      announcer.className = 'show trick';
-      announcer.innerHTML = `MIMIC: ${mut.name}!<small>${mut.blurb}</small>${encoreTag}`;
-    }
+    const style = this.chain >= 3 ? 'danger' : 'trick';
+    const encoreTag = this.encoreCount > 1 ? ` <small>ENCORE x${this.encoreCount}!</small>` : '';
+    this._announce(
+      `MIMIC x${this.chain}: ${mut.name}!<small>${actionName} → ${mut.blurb}</small>${encoreTag}`,
+      style,
+      2.0
+    );
+    this.audio?.playCheer?.(Math.min(1, 0.3 + this.chain * 0.12));
 
-    // Choose 1 or 2 Dweeb pupils to execute the mutated copycat action
-    const pupils = dweebs.filter(d => !d.isPlayer);
-    if (pupils.length === 0) return;
+    // Choose a Dweeb pupil to execute the mutated copycat action.
+    const pupils = dweebs.filter(d => !d.isPlayer && d.active !== false && d.body && !d.mimicGhost);
+    if (pupils.length === 0) return true;
 
     const pupil = pupils[Math.floor(Math.random() * pupils.length)];
-    if (!pupil.body) return;
+
+    // Ghost replay: the pupil(s) take notes while you finish the move, then perform YOUR inputs
+    // back (run-up, jumps, dives, grabs, throws), mutated. The punchline fires at the copied beat.
+    if (this.tape.length > 10 && !this.pendingCopy) {
+      const crew = mut.id === 'swarm' ? pupils.slice(0, 6) : [pupil];
+      for (const p of crew) this.hud?.popup?.('📝 TAKING NOTES…', p.getPosition(), 'small', 0x7dd3fc);
+      this.pendingCopy = { at: this.clock + COPY_FOLLOW, beat: this.clock, mut, actionName, crew };
+      return true;
+    }
+    this._punchline(mut, pupil, pupils);
+    return true;
+  }
+
+  /** The mutation's comedic payoff (applied on the copied beat, or instantly if nothing was taped). */
+  _punchline(mut, pupil, pupils) {
+    const boost = this.boost || 1;
+    if (!pupil?.body || pupil.active === false) return;
 
     // The rest of the crowd cheers the performer with a little hop.
     const cheer = () => {
@@ -255,9 +376,14 @@ export class MimicLab {
       pupil.hitstun = 2.5;
       cheer();
     } else if (mut.id === 'substitute') {
-      // Blast forward carrying an explosive
-      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 16, y: 8.0 * boost, z: (Math.random() - 0.5) * 16 }, true);
-      cheer();
+      // Swapped the prop for an explosive barrel… with the fuse already lit
+      const pp = pupil.getPosition();
+      const barrel = this._spawnItem('explosiveBarrel', pp.x, pp.y + 1.6, pp.z);
+      if (barrel?.body) {
+        barrel.body.setLinvel({ x: (Math.random() - 0.5) * 6, y: 6, z: (Math.random() - 0.5) * 6 }, true);
+        this.combat?.lightFuse?.(barrel, pupil, 1.4);
+      }
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 10, y: 7.0, z: (Math.random() - 0.5) * 10 }, true);
     } else if (mut.id === 'swarm') {
       // Launch all pupils in a comedic fountain burst!
       for (const p of pupils) {
@@ -288,26 +414,150 @@ export class MimicLab {
     }
   }
 
+  // ═══ Ghost replay ═══
+
+  _tag(ev) { this._tapeEv = this._tapeEv ? `${this._tapeEv},${ev}` : ev; }
+
+  _record(player) {
+    const p = player.getPosition();
+    const mi = player.moveInput;
+    this.tape.push({ t: this.clock, mx: mi?.x || 0, my: mi?.y || 0, x: p.x, z: p.z, ev: this._tapeEv });
+    this._tapeEv = null;
+    while (this.tape.length && this.tape[0].t < this.clock - TAPE_KEEP) this.tape.shift();
+
+    const pc = this.pendingCopy;
+    if (pc && this.clock >= pc.at) {
+      this.pendingCopy = null;
+      const from = pc.beat - COPY_LEAD;
+      const clip = this.tape.filter(f => f.t >= from && f.t <= pc.at).map(f => ({ ...f, t: f.t - from }));
+      if (clip.length < 5) return;
+      const beatT = pc.beat - from;
+      const start = clip[0], end = clip[clip.length - 1];
+      const disp = { x: end.x - start.x, z: end.z - start.z };
+      pc.crew.forEach((d, i) => {
+        if (!d?.body || !d.active) return;
+        const o = d.getPosition();
+        d.mimicGhost = {
+          clip, i: 0, t: -i * 0.18, beatT, beatDone: false, mut: pc.mut, crewIdx: i,
+          ox: o.x, oz: o.z, disp, stumbleT: pc.mut.id === 'clumsy' ? beatT * (0.4 + Math.random() * 0.5) : -1,
+        };
+        this.ghosts.push(d);
+        this.hud?.popup?.(i === 0 ? 'MY TURN!' : 'ME TOO!', o, 'small', 0xffd23f);
+      });
+    }
+  }
+
+  _updateGhosts(dt, dweebs) {
+    if (!this.ghosts.length) return;
+    const pupils = dweebs.filter(d => !d.isPlayer && d.active && d.body);
+    for (let k = this.ghosts.length - 1; k >= 0; k--) {
+      const d = this.ghosts[k];
+      const g = d?.mimicGhost;
+      if (!g || !d.body || !d.active) { if (d) d.mimicGhost = null; this.ghosts.splice(k, 1); continue; }
+      g.t += dt;
+      if (g.t < 0) continue;               // swarm stagger
+      const clip = g.clip;
+      while (g.i < clip.length - 1 && clip[g.i + 1].t <= g.t) {
+        g.i++;
+        const ev = clip[g.i].ev;
+        if (ev) this._ghostEvent(d, g, ev);
+      }
+      const f = clip[g.i];
+      const wobble = g.mut.id === 'clumsy' ? 0.35 : 0;
+      let mx = f.mx + (Math.random() - 0.5) * wobble, my = f.my + (Math.random() - 0.5) * wobble;
+      d.moveInput?.set?.(mx, my);
+      if (g.stumbleT > 0 && g.t >= g.stumbleT) {
+        g.stumbleT = -1;
+        d.startRagdoll?.(1.4, 9);
+        this.hud?.popup?.('WHOOPS!', d.getPosition(), 'small', 0xff6fb5);
+      }
+      if (!g.beatDone && g.t >= g.beatT) {
+        g.beatDone = true;
+        if (g.crewIdx === 0) this._punchline(g.mut, d, pupils);
+      }
+      if (g.t >= clip[clip.length - 1].t) {
+        this._grade(d, g);
+        d.moveInput?.set?.(0, 0);
+        d.mimicGhost = null;
+        this.ghosts.splice(k, 1);
+      }
+    }
+  }
+
+  _ghostEvent(d, g, evs) {
+    const c = this.combat;
+    for (const ev of evs.split(',')) {
+      try {
+        if (ev === 'jump') {
+          d.requestJump?.();
+          if (g.mut.id === 'overachiever' && d.body) {
+            const v = d.body.linvel();
+            d.body.setLinvel({ x: v.x * 1.6, y: Math.max(v.y, 0) + 9, z: v.z * 1.6 }, true);
+          }
+        } else if (ev === 'dive') c?.dive?.(d);
+        else if (ev === 'grab') { if (!d.held) c?.grab?.(d); }
+        else if (ev === 'throw') {
+          if (d.held) c?.throwHeld?.(d, g.mut.id === 'overachiever' ? 1 : 0.6);
+          else if (g.mut.id === 'clumsy') this.hud?.popup?.('…NOTHING IN HAND', d.getPosition(), 'small', 0xb0b0b0);
+        }
+      } catch { /* a pupil mid-ragdoll can refuse an action; skip it */ }
+    }
+  }
+
+  /** Judge the copy: how closely did the pupil's path match the player's? */
+  _grade(d, g) {
+    const p = d.getPosition();
+    const dx = p.x - g.ox, dz = p.z - g.oz;
+    const want = Math.hypot(g.disp.x, g.disp.z);
+    const err = Math.hypot(dx - g.disp.x, dz - g.disp.z);
+    const score = 1 - err / (want + 2.5);
+    const [word, color] = score > 0.7 ? ['NAILED IT!', 0x4ade80]
+      : score > 0.35 ? ['CLOSE ENOUGH', 0xffd23f]
+      : ['WHAT WAS THAT?!', 0xff6a3c];
+    this.hud?.popup?.(word, p, score > 0.7 ? 'big' : 'small', color);
+    if (score > 0.7) this.audio?.playCheer?.(0.5);
+  }
+
   dispose() {
-    // Remove every physics body this lab created (floor, bleachers, trunk,
-    // props) through the world's bookkeeping so nothing lingers invisibly.
+    for (const d of this.ghosts) if (d) { d.mimicGhost = null; d.moveInput?.set?.(0, 0); }
+    this.ghosts.length = 0;
+    this.pendingCopy = null;
+    if (this.hintTimer) {
+      clearTimeout(this.hintTimer);
+      this.hintTimer = null;
+    }
+    if (this.hintEl) {
+      this.hintEl.remove();
+      this.hintEl = null;
+    }
+
+    // Remove every body this lab created, not just the dynamic props.
     if (this.physicsWorld) {
-      for (const id of this._physIds) {
+      for (const id of [...this.bodyIds, ...this._physIds]) {
         try { this.physicsWorld.removeBody(id); } catch { /* already gone */ }
       }
     }
+    this.bodyIds.length = 0;
     this._physIds = [];
-    this.props = [];
-    this.colliders = [];
 
-    // Free GPU buffers for the amphitheater + prop meshes.
-    this.group.traverse(child => {
-      if (child.isMesh) {
-        if (child.geometry) child.geometry.dispose();
-        const mats = Array.isArray(child.material) ? child.material : [child.material];
-        for (const m of mats) if (m && typeof m.dispose === 'function') m.dispose();
-      }
+    // Legacy collider entries (if any code pushed them manually).
+    for (const c of this.colliders) {
+      if (!this.physicsWorld || !c?.body) continue;
+      if (c.id) this.physicsWorld.removeBody(c.id);
+      else this.physicsWorld.world.removeRigidBody(c.body);
+    }
+    this.colliders.length = 0;
+    this.props.length = 0;
+    if (this.arena) for (const o of this.items) if (this.arena.objects.includes(o)) this.arena.removeObject(o);
+    this.items = [];
+
+    this.group.traverse(obj => {
+      if (!obj.isMesh) return;
+      obj.geometry?.dispose?.();
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) m?.dispose?.();
     });
+    this.group.clear();
     this.scene.remove(this.group);
   }
 }

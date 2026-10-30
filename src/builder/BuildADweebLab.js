@@ -38,6 +38,7 @@ import {
 
 const STORAGE_KEY = 'dweebs-custom-build';
 export const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+const LOCKS_KEY = 'dweebs-locks-v1';
 const GAUNTLET_KEY = 'dweebs-gauntlet-v1';
 const STABLE_KEY = 'dweebs-stable-v1';
 const STABLE_SLOTS = 6;
@@ -155,6 +156,64 @@ function decodeBase64Url(str) {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
+/** Mutation interval in seconds. */
+export const MUTATION_INTERVAL = 10;
+
+/**
+ * Mutate exactly one random field of a build config and return a new config.
+ * Used by Mutation Roulette arena mode to change one body part/stat/color mid-match.
+ */
+export function mutateRandomPart(config) {
+  const newConfig = JSON.parse(JSON.stringify(config)); // deep clone
+  newConfig.stats = newConfig.stats || {};
+  newConfig.dna = newConfig.dna || {};
+  const randomHex = () => '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  const randRange = (min, max) => Number((min + Math.random() * (max - min)).toFixed(2));
+
+  // All possible mutation categories, each with a mutator function
+  const mutations = [
+    // Shape
+    () => { newConfig.shape = pick(BODY_SHAPES); return 'shape'; },
+    // Appendage
+    () => { newConfig.appendage = pick(APPENDAGES); return 'appendage'; },
+    // Feet
+    () => { newConfig.feet = pick(FEET_TYPES); return 'feet'; },
+    // Eye count
+    () => { newConfig.eyeCount = pick([1, 2, 2, 2, 3, 4]); return 'eyeCount'; },
+    // Eye size
+    () => { newConfig.eyeSize = randRange(0.6, 1.5); return 'eyeSize'; },
+    // Eye spacing
+    () => { newConfig.eyeSpacing = randRange(0.7, 1.4); return 'eyeSpacing'; },
+    // Brows
+    () => { newConfig.brows = pick(BROW_STYLES); return 'brows'; },
+    // Mouth
+    () => { newConfig.mouth = pick(MOUTH_STYLES); return 'mouth'; },
+    // Primary color
+    () => { newConfig.primaryColor = randomHex(); return 'primaryColor'; },
+    // Accent color
+    () => { newConfig.accentColor = randomHex(); return 'accentColor'; },
+    // Body dimensions
+    () => { newConfig.width = randRange(0.6, 1.6); return 'width'; },
+    () => { newConfig.height = randRange(0.6, 1.5); return 'height'; },
+    () => { newConfig.depth = randRange(0.7, 1.4); return 'depth'; },
+    // Stats
+    () => { newConfig.stats.speed = randRange(0.7, 1.3); return 'speed'; },
+    () => { newConfig.stats.mass = randRange(2.0, 4.2); return 'mass'; },
+    () => { newConfig.stats.jump = randRange(0.8, 1.3); return 'jump'; },
+    () => { newConfig.stats.armor = randRange(0.8, 1.2); return 'armor'; },
+    // DNA
+    () => { newConfig.dna.confidence = randRange(0.2, 1.0); return 'confidence'; },
+    () => { newConfig.dna.aimAccuracy = randRange(0.2, 0.95); return 'aimAccuracy'; },
+    () => { newConfig.dna.scavenge = randRange(0.1, 0.9); return 'scavenge'; },
+    () => { newConfig.dna.agility = randRange(0.4, 0.95); return 'agility'; },
+  ];
+
+  const chosen = pick(mutations);
+  const field = chosen();
+  return { config: newConfig, field };
+}
+
 export class BuildADweebLab {
   constructor(scene, camera, renderer, opts = {}) {
     this.scene = scene;
@@ -179,6 +238,9 @@ export class BuildADweebLab {
     this.clock = 0;
     this._popT = 1;    // spawn-pop animation progress (1 = settled)
     this._flashT = 0;  // pedestal rim flash on rebuild
+
+    // Per-part locks for the reroll loop — persisted separately so existing builds still load.
+    this.lockedParts = this.loadLocks();
 
     // Live fighter synced to lab mutations (DNA → collider, no reload) and
     // the active tournament bracket (null when no tournament is running).
@@ -1019,6 +1081,79 @@ export class BuildADweebLab {
       }
     } catch { /* fallback */ }
     return { ...DEFAULT_BUILD_CONFIG };
+  }
+
+  // ─── Lock & Reroll ────────────────────────────────────────────────────────
+
+  /** Load persisted lock set from localStorage. */
+  loadLocks() {
+    try {
+      const saved = localStorage.getItem(LOCKS_KEY);
+      if (saved) return new Set(JSON.parse(saved));
+    } catch { /* private mode / corrupted */ }
+    return new Set();
+  }
+
+  /** Save current lock set to localStorage. */
+  saveLocks() {
+    try {
+      localStorage.setItem(LOCKS_KEY, JSON.stringify([...this.lockedParts]));
+    } catch { /* private mode */ }
+  }
+
+  /** Toggle lock state for a config key (e.g. 'shape', 'width', 'stats.speed', 'dna.confidence'). */
+  toggleLock(key) {
+    if (this.lockedParts.has(key)) {
+      this.lockedParts.delete(key);
+    } else {
+      this.lockedParts.add(key);
+    }
+    this.saveLocks();
+    return this.lockedParts.has(key);
+  }
+
+  /** Check if a config key is currently locked. */
+  isLocked(key) {
+    return this.lockedParts.has(key);
+  }
+
+  /** Get a nested value from config by dot-path (e.g. 'stats.speed'). */
+  _getConfigValue(obj, path) {
+    if (!obj) return undefined;
+    const parts = path.split('.');
+    let cur = obj;
+    for (const p of parts) {
+      if (cur === null || cur === undefined) return undefined;
+      cur = cur[p];
+    }
+    return cur;
+  }
+
+  /** Set a nested value on config by dot-path, returning a new config object. */
+  _setConfigValue(config, path, value) {
+    const parts = path.split('.');
+    const result = JSON.parse(JSON.stringify(config));
+    let cur = result;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts[i];
+      if (cur[p] === undefined) cur[p] = {};
+      cur = cur[p];
+    }
+    cur[parts[parts.length - 1]] = value;
+    return result;
+  }
+
+  /** Reroll all unlocked parts: roll a fresh random build, then put every locked value back. */
+  rerollUnlocked() {
+    const keep = [...this.lockedParts].map(k => [k, this._getConfigValue(this.config, k)]);
+    let candidate = this.mutateRandom();
+    for (const [key, val] of keep) {
+      if (val !== undefined) candidate = this._setConfigValue(candidate, key, val);
+    }
+    this.config = candidate;
+    this.rebuildModel();
+    this.saveConfig();
+    return this.config;
   }
 
   dispose() {
