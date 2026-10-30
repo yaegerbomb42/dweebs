@@ -8,6 +8,7 @@ import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { BALANCE } from '../game/Balance.js';
 import { RARE } from '../sim/tables.js';
 import { BUMPER_RADIUS, TRAMPOLINE_RADIUS, TRAMPOLINE_TOP, TRAMPOLINE_VEL, TRAMPOLINE_ITEM_VEL, bumperBounce } from '../world/Arena.js';
+import { getObjectDef } from '../world/ObjectRegistry.js';
 
 const CHARGE_TIME = 0.75;
 const _dir = new THREE.Vector3();
@@ -1010,12 +1011,77 @@ export class CombatSystem {
     this.arena.removeObject(obj);
     this.arena.spawnDebris(pos, color, 8, obj.def.material, obj.def.breakColors);
     this.fx.break(pos, obj);
+
+    // Piñata Loot Burst: spill candies if this object has spill metadata
+    if (obj.def?.spill) {
+      const { key, count = 6 } = obj.def.spill;
+      const candyDef = getObjectDef(key);
+      if (candyDef) {
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+          const radius = 0.4 + Math.random() * 0.3;
+          const x = pos.x + Math.cos(angle) * radius;
+          const z = pos.z + Math.sin(angle) * radius;
+          const y = pos.y + 0.5 + Math.random() * 0.5;
+          const candy = this.arena.spawnItem(key, { x, y, z });
+          if (candy && candy.body) {
+            const speed = 4 + Math.random() * 3;
+            candy.body.setLinvel({
+              x: Math.cos(angle) * speed * 0.7,
+              y: 3 + Math.random() * 4,
+              z: Math.sin(angle) * speed * 0.7,
+            }, true);
+            candy.body.setAngvel({
+              x: (Math.random() - 0.5) * 8,
+              y: (Math.random() - 0.5) * 8,
+              z: (Math.random() - 0.5) * 8,
+            }, true);
+            candy.candyLife = 12; // uneaten candy melts away
+            candy.candyGrace = 0.5; // can't be eaten mid-burst
+          }
+        }
+        if (Math.random() < 0.15) {
+          this.arena.spawnPowerUp(null);
+        }
+        // Juicy feedback
+        this.fx._toyWord?.('SWEET!', pos, 0xffd23f, 'big');
+        this.fx.cam?.shake?.(0.25);
+        this.arena.excite?.(0.3);
+      }
+    }
+  }
+
+  /** Spilled piñata candy: walk over it to eat it (small heal + a short sugar buzz). */
+  _updateCandy(dt) {
+    const objs = this.arena?.objects;
+    if (!objs) return;
+    for (let i = objs.length - 1; i >= 0; i--) {
+      const o = objs[i];
+      if (o.candyLife === undefined || o.broken || o.isGrabbed) continue;
+      o.candyLife -= dt;
+      o.candyGrace -= dt;
+      if (o.candyLife <= 0) { this.arena.removeObject(o); continue; }
+      if (o.candyGrace > 0) continue;
+      const p = o.getPosition();
+      for (const d of this.dweebs) {
+        if (!d.active || d.grabbedBy) continue;
+        const q = d.getPosition();
+        const dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
+        if (dx * dx + dz * dz > 0.81 || Math.abs(dy) > 1.4) continue;
+        d.percent = Math.max(0, d.percent - 2);
+        d.sugarTimer = Math.max(d.sugarTimer || 0, 1.5);
+        this.fx._toyWord?.('YUM!', p, 0xff4d5e, 'small');
+        this.arena.removeObject(o);
+        break;
+      }
+    }
   }
 
   // ═══ Per-frame ═══
 
   update(dt, time) {
     this.time = time;
+    this._updateCandy(dt);
 
     for (const d of this.dweebs) {
       if (!d.active) {

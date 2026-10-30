@@ -781,6 +781,16 @@ const BUILDERS = {
     k.eye([-0.07, 0.08, 0.22], [-0.3, 0.2, 1], 0.04);
     k.eye([0.07, 0.08, 0.22], [0.3, 0.2, 1], 0.04);
   },
+
+  // ─── Piñata Loot Burst ───
+  candy(k) {
+    const wrapper = 0xfff8ee, twist = 0xff4d5e;
+    k.add(Ico(0.1, 0), 0xff4d5e); // candy core
+    k.add(Tor(0.12, 0.025, 6, 10), twist, { p: [0, -0.11, 0], r: [PI / 2, 0, 0] }); // bottom twist
+    k.add(Tor(0.12, 0.025, 6, 10), twist, { p: [0, 0.11, 0], r: [PI / 2, 0, 0] }); // top twist
+    k.add(B(0.24, 0.04, 0.24, 0.02), wrapper, { p: [0, -0.12, 0] }); // bottom wrapper
+    k.add(B(0.24, 0.04, 0.24, 0.02), wrapper, { p: [0, 0.12, 0] }); // top wrapper
+  },
 };
 
 // ─── Public API ───
