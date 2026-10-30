@@ -42,6 +42,13 @@ function shared() {
   mat.mask = toonMat({ color: 0x2b2b3a });
   mat.shadow = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
   mat.retreat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
+  mat.barrel = toonMat({ color: 0xd9432f });
+  mat.crate = toonMat({ color: 0xc99a5b });
+  mat.crateEdge = toonMat({ color: 0x7a4a24 });
+  geo.barrel = new THREE.CylinderGeometry(0.45, 0.5, 1.1, 8);
+  geo.barrelBand = new THREE.TorusGeometry(0.48, 0.055, 4, 10);
+  geo.crate = new THREE.BoxGeometry(1, 0.9, 1);
+  geo.crateEdge = new THREE.BoxGeometry(0.12, 0.98, 0.12);
 }
 
 export function teamMat(team) { shared(); return mat[team]; }
@@ -166,6 +173,46 @@ export function buildShell(team) {
   nose.rotation.z = -Math.PI / 2;
   nose.position.x = 0.42;
   g.add(tube, nose);
+  return g;
+}
+
+/** Explosive barrel prop: red plastic drum with brass hoops. */
+export function buildBarrel() {
+  shared();
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(geo.barrel, mat.barrel);
+  body.position.y = 0.55;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  g.add(body);
+  for (const y of [0.28, 0.82]) {
+    const band = new THREE.Mesh(geo.barrelBand, mat.brass);
+    band.rotation.x = Math.PI / 2;
+    band.position.y = y;
+    g.add(band);
+  }
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.08, 8), mat.brass);
+  cap.position.y = 1.14;
+  g.add(cap);
+  return g;
+}
+
+/** Supply crate prop: a chunky wooden box with darker corner posts. */
+export function buildCrate() {
+  shared();
+  const g = new THREE.Group();
+  const box = new THREE.Mesh(geo.crate, mat.crate);
+  box.position.y = 0.45;
+  box.castShadow = true;
+  box.receiveShadow = true;
+  g.add(box);
+  for (const sx of [-0.5, 0.5]) {
+    for (const sz of [-0.5, 0.5]) {
+      const post = new THREE.Mesh(geo.crateEdge, mat.crateEdge);
+      post.position.set(sx, 0.49, sz);
+      g.add(post);
+    }
+  }
   return g;
 }
 

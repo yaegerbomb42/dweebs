@@ -8,7 +8,7 @@
 // Modes:
 //   defense — you hold the west fort against escalating waves (boss every 5, win after FINAL_WAVE)
 //   versus  — two commanders, two forts, passive income; destroy the other fort to win
-import { Rng } from './rng.js';
+import { Rng, hashString } from './rng.js';
 import { stats, otherTeam, bounty, RECRUITABLE } from './warfareUnits.js';
 import { computeDamage, splashFalloff, knockback, COVER_RADIUS } from './warfareDamage.js';
 import { pickTarget, shouldRetreat, flankGoal, REJOIN_AT } from './warfareAI.js';
@@ -35,6 +35,18 @@ export const VERSUS_INCOME = 4;          // coins per second per side in versus
 export const BARRICADES = Object.freeze([
   { x: -2, z: -13, r: 1.5 }, { x: 2, z: -4.5, r: 1.5 }, { x: -2, z: 4.5, r: 1.5 }, { x: 2, z: 13, r: 1.5 },
 ]);
+
+/**
+ * Destructible battlefield furniture. Barrels chain-explode; crates pop into a little loot for
+ * whoever broke them. These are intentionally non-blocking for pathing so they never make the
+ * sim unstable or trap a unit.
+ */
+export const PROP_TYPES = Object.freeze({
+  barrel: Object.freeze({ hp: 40, r: 0.52, blast: 4.6, dmg: 90 }),
+  crate: Object.freeze({ hp: 30, r: 0.6, blast: 3.0, dmg: 20 }),
+});
+const MAX_PROP_CHAIN = 3;
+const CRATE_LOOT = 8;
 
 /** Speed multiplier per formation stance (the [R] toggle). Recruits inherit the current stance. */
 export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
@@ -70,6 +82,98 @@ function damageBarricades(st, x, z, radius, dmg, attTeam) {
   }
 }
 
+function propStats(type) {
+  return PROP_TYPES[type] || PROP_TYPES.crate;
+}
+
+/**
+ * Seed barrels and crates from a dedicated stream (seed + map id) so adding props never shifts
+ * the main battle RNG. Positions avoid forts, barricades and the opening armies.
+ */
+function seedProps(st, seed, mapId) {
+  const props = [];
+  if (!st || !Array.isArray(st.barricades)) return props;
+  const rng = new Rng((seed ^ hashString(`props:${mapId}`)) >>> 0);
+  const fits = (x, z, gap) => {
+    if (!(Math.abs(x) <= FIELD.halfX - 5) || !(Math.abs(z) <= FIELD.halfZ - 4)) return false;
+    for (const team of ['blue', 'red']) {
+      const f = st.forts && st.forts[team];
+      if (f && Math.hypot(x - f.x, z - f.z) < f.r + 6) return false;
+    }
+    for (const b of st.barricades) {
+      if (b && Math.hypot(x - b.x, z - b.z) < (b.r || 0) + 2.6) return false;
+    }
+    for (const u of st.units || []) {
+      if (u && u.alive && Math.hypot(x - u.x, z - u.z) < 3) return false;
+    }
+    for (const p of props) {
+      if (Math.hypot(x - p.x, z - p.z) < gap) return false;
+    }
+    return true;
+  };
+  const spot = gap => {
+    for (let i = 0; i < 24; i++) {
+      const x = rng.range(-FIELD.halfX + 6, FIELD.halfX - 6);
+      const z = rng.range(-FIELD.halfZ + 4, FIELD.halfZ - 4);
+      if (fits(x, z, gap)) return { x, z };
+    }
+    return null;
+  };
+  const add = (type, x, z) => {
+    const cfg = propStats(type);
+    props.push({ id: props.length + 1, type, x, z, hp: cfg.hp, maxHp: cfg.hp, r: cfg.r });
+  };
+  // Barrel clusters: two or three close together, so one good rocket can start a chain.
+  const offsets = [[0, 0], [1.35, 0.45], [-0.9, 1.05]];
+  const clusters = 3 + rng.int(3);
+  for (let c = 0; c < clusters; c++) {
+    const base = spot(3.4);
+    if (!base) continue;
+    const n = 2 + rng.int(2);
+    for (let i = 0; i < Math.min(n, offsets.length); i++) {
+      const x = base.x + offsets[i][0] + rng.spread(0.22);
+      const z = base.z + offsets[i][1] + rng.spread(0.22);
+      if (fits(x, z, 0.95)) add('barrel', x, z);
+    }
+  }
+  // Loot crates spread around the field on their own.
+  const crates = 3 + rng.int(3);
+  for (let i = 0; i < crates; i++) {
+    const s = spot(2.6);
+    if (s) add('crate', s.x, s.z);
+  }
+  return props;
+}
+
+/**
+ * Chew through barrels/crates caught in a blast. Deterministic: reverse array order, no rng.
+ * A barrel that dies explodes for everyone (attTeam null), and can chain to nearby props.
+ */
+export function damageProps(st, x, z, radius, dmg, attTeam, { chain = 0 } = {}) {
+  if (!st || !Array.isArray(st.props) || !(dmg > 0)) return;
+  const boom = [];
+  for (let i = st.props.length - 1; i >= 0; i--) {
+    const p = st.props[i];
+    if (!p || !(p.hp > 0)) continue;
+    if (Math.hypot(p.x - x, p.z - z) > radius + (p.r || 0.6)) continue;
+    p.hp -= dmg;
+    if (p.hp > 0) continue;
+    st.props.splice(i, 1);
+    const cfg = propStats(p.type);
+    if (Array.isArray(st.events)) st.events.push({ type: 'propBoom', prop: p.type, id: p.id, x: p.x, z: p.z, r: cfg.blast, team: attTeam ?? null });
+    if (p.type === 'crate' && (attTeam === 'blue' || attTeam === 'red') && st.coins) {
+      st.coins[attTeam] += CRATE_LOOT;
+      if (st.stats && st.stats[attTeam]) st.stats[attTeam].coinsEarned += CRATE_LOOT;
+    }
+    if (p.type === 'barrel') boom.push(p);
+  }
+  for (const p of boom) {
+    if (chain >= MAX_PROP_CHAIN) continue;
+    const cfg = propStats(p.type);
+    splash(st, p.x, p.z, cfg.blast, null, 'barrel', 1, { chain: chain + 1 });
+  }
+}
+
 const ACCEL = 0.25;
 /** Brute charge: dash at a target 4–10 m away. */
 export const CHARGE = Object.freeze({ min: 4, max: 10, ticks: 18, cooldown: 150, speedMul: 2.4 });
@@ -93,15 +197,16 @@ function teamStats() {
  * @param {boolean} [o.army] spawn the starting armies (tests turn this off for duels)
  * @param {Array} [o.barricades] battleground barricade circles (default: the meadow ring)
  * @param {Array} [o.highGround] battleground high-ground rects {x,z,w,h}
+ * @param {string} [o.mapId] battleground id (seeds the deterministic prop layout)
  */
-export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround } = {}) {
+export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround, mapId = 'meadow' } = {}) {
   const versus = mode === 'versus';
   const dkey = !versus && Object.hasOwn(DIFFICULTY, difficulty) ? difficulty : 'normal';
   const diff = DIFFICULTY[dkey];
   const fortHp = versus ? 1200 : Math.round(DEFENSE_FORT_HP * diff.fort);
   const st = {
-    mode, seed, tick: 0, difficulty: dkey, diff, rng: new Rng(seed), nextId: 1,
-    units: [], shells: [], events: [],
+    mode, seed, mapId, tick: 0, difficulty: dkey, diff, rng: new Rng(seed), nextId: 1,
+    units: [], shells: [], events: [], props: [],
     forts: {
       blue: { x: -FORT_X, z: 0, hp: fortHp, maxHp: fortHp, r: FORT_RADIUS, invulnerable: false },
       red: { x: FORT_X, z: 0, hp: 1200, maxHp: 1200, r: FORT_RADIUS, invulnerable: !versus },
@@ -122,6 +227,7 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins, d
     for (const t of start) spawnUnit(st, 'blue', t, { x: -26 + st.rng.range(-3, 3), z: st.rng.range(-8, 8) });
     if (versus) for (const t of start) spawnUnit(st, 'red', t, { x: 26 + st.rng.range(-3, 3), z: st.rng.range(-8, 8) });
   }
+  st.props = seedProps(st, seed, mapId);
   return st;
 }
 
@@ -197,6 +303,7 @@ export function applyCommand(st, c) {
       }
     }
     damageBarricades(st, tx, tz, splashR, splashDmg, c.team);
+    damageProps(st, tx, tz, splashR, splashDmg, c.team);
     return true;
   }
   if (c.type === 'supply') {
@@ -269,7 +376,7 @@ function hurt(st, t, dmg, attTeam, attType, ax, az) {
   const kb = knockback(dmg, stats(t.type).mass);
   const kx = (dx / d) * kb, kz = (dz / d) * kb;
   if (!t.carriedBy) { t.kx += kx; t.kz += kz; }
-  st.stats[attTeam].dmgDealt += dmg;
+  if (attTeam && st.stats && st.stats[attTeam]) st.stats[attTeam].dmgDealt += dmg;
   st.events.push({ type: 'hit', id: t.id, team: t.team, unit: t.type, src: attType, dmg, x: t.x, z: t.z, kx, kz });
   if (t.hp <= 0) kill(st, t, attTeam, kx, kz);
 }
@@ -286,7 +393,11 @@ function isCovered(st, t) {
 }
 
 /** Splash damage centred at (x, z). ax/az = the attacker's position (high-ground bonus). */
-function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, ax, az } = {}) {
+function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, ax, az, chain = 0 } = {}) {
+  if (!st || !Array.isArray(st.units)) return;
+  const propSrc = attType === 'barrel' ? propStats('barrel') : null;
+  const srcBase = base ?? (propSrc ? propSrc.dmg : undefined);
+  const srcDmg = propSrc ? propSrc.dmg : (stats(attType).dmg || 0);
   const hg = groundMult(st, ax ?? x, az ?? z);
   for (const e of st.units) {
     if (!e.alive || e.team === attTeam) continue;
@@ -294,10 +405,11 @@ function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, bas
     const d = Math.sqrt(dx * dx + dz * dz);
     const f = splashFalloff(d, radius + e.radius * 0.5);
     if (f <= 0) continue;
-    const dmg = computeDamage(attType, e.type, { base, dmgMul: dmgMul * hg, falloff: f, covered: cover && isCovered(st, e) });
+    const dmg = computeDamage(attType, e.type, { base: srcBase, dmgMul: dmgMul * hg, falloff: f, covered: cover && isCovered(st, e) });
     hurt(st, e, dmg, attTeam, attType, x, z);
   }
-  damageBarricades(st, x, z, radius, (stats(attType).dmg || 0) * dmgMul, attTeam);
+  damageBarricades(st, x, z, radius, srcDmg * dmgMul, attTeam);
+  damageProps(st, x, z, radius, srcDmg * dmgMul, attTeam, { chain });
 }
 
 function hurtFort(st, team, dmg, attType) {
@@ -711,6 +823,13 @@ export function battleHash(st) {
   // or two peers could silently disagree about the board after a reconnect.
   mix(st.barricades.length);
   for (const b of st.barricades) if (b.hp > 0) mix(Math.round(b.hp * 10));
+  const props = Array.isArray(st.props) ? st.props : [];
+  mix(props.length);
+  for (const p of props) {
+    if (!p) continue;
+    mix(p.id); mix(p.type === 'barrel' ? 1 : 2);
+    mix(Math.round(p.x * 100)); mix(Math.round(p.z * 100)); mix(Math.round(p.hp * 10));
+  }
   mix(st.stance?.blue === 'defense' ? 2 : st.stance?.blue === 'charge' ? 3 : 1);
   mix(st.stance?.red === 'defense' ? 2 : st.stance?.red === 'charge' ? 3 : 1);
   mix(Math.round(st.rally.blue.x * 100)); mix(Math.round(st.rally.blue.z * 100));
