@@ -25,6 +25,7 @@ import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
+import { TutorialDirector } from './game/Tutorial.js';
 import { Sky, Water } from './render/Sky.js';
 import { Particles } from './render/Particles.js';
 import { Trails, Bursts, Decals } from './render/Juice.js';
@@ -103,6 +104,7 @@ let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
 let rematch = null;
+let tutorial = null;
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
 
@@ -179,7 +181,9 @@ async function init() {
   haptics = new Haptics();
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
+  tutorial = new TutorialDirector({ hud });
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  fx.tutorial = tutorial;
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
   match = new Match();
@@ -489,6 +493,7 @@ function toMenu() {
   audio.setCharge(0);
   hud.setSpectator('');
   hideSpectatorOverlay();
+  tutorial?.hide?.();
   for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud', 'spectator-duel-overlay']) $(id)?.classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
@@ -959,6 +964,11 @@ function startMatch() {
   audio.startMusic(false);
   startRound();
   cam.lock();
+  // Start tutorial for local brawl/derby modes (not online, not adventure, not build_arena)
+  const isOnline = !!window.__dweebsMatchOverride;
+  if ((currentMode === 'brawl' || currentMode === 'derby') && !isOnline) {
+    tutorial?.start(player);
+  }
 }
 
 function startRound() {
@@ -1095,6 +1105,7 @@ const matchEvents = {
     d.koedAt = t;
     const { line, context } = koLine(ctx, credited ? Hud.nameTag(credited) : '', Hud.nameTag(d));
     if (credited && !credited.eliminated) combat.addStyle(credited, 25, kind === 'star' ? 'STAR KO' : 'K.O.');
+    if (credited?.isPlayer) tutorial?.note('ko');
     hud.feed(line, `ko ${context}`);
     const tag = { revenge: 'REVENGE', trick: 'TRICKSHOT KO', sd: 'SUDDEN DEATH', style: 'STYLE KO', self: 'SELF-KO' }[context];
     if (d.isPlayer) hud.announce(d.eliminated ? 'ELIMINATED!' : playerKOWord(kind, false) + (tag ? `<small>${tag}</small>` : ''), 'ko', 1.2);
@@ -1386,6 +1397,7 @@ function loop() {
     combat.update(dt, match.time);
     updateDrops(dt);
     match.update(dt);
+    tutorial?.update(dt);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
       for (const d of dweebs) deathCinema.recordFrame(d, match.time);
     }

@@ -50,6 +50,8 @@ export class Fx {
     const involvesPlayer = victim.isPlayer || attacker?.isPlayer;
     const color = attacker ? attacker.color : 0xffffff;
 
+    if (attacker?.isPlayer) this.tutorial?.note('hit');
+
     if (tier >= 2) this.particles.bigHit(pos, color);
     else this.particles.hit(pos, color);
     if (tier >= 1) this.bursts.spawn(pos, 0.8 + power * 1.4, color);
@@ -254,6 +256,7 @@ export class Fx {
     const pan = this._pan(d.getPosition());
     this.audio.playThrow(pan, mass);
     if (mass >= 3 || mass < 0.5) this.audio.playSlideWhistle(pan);
+    if (d?.isPlayer) this.tutorial?.note('throw');
   }
 
   rocketLaunch(obj) {
