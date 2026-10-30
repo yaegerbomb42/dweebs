@@ -184,7 +184,7 @@ export class WarfareView {
         const m = buildUnit(u.type, u.team);
         m.root.position.set(u.x, 0, u.z);
         this.dyn.add(m.root);
-        e = { m, px: u.x, pz: u.z, x: u.x, z: u.z, team: u.team, yaw: u.team === 'blue' ? 0 : Math.PI, flash: 0, leanX: 0, leanZ: 0, spawnT: 0, type: u.type, flag: null };
+        e = { m, px: u.x, pz: u.z, x: u.x, z: u.z, team: u.team, yaw: u.team === 'blue' ? 0 : Math.PI, flash: 0, leanX: 0, leanZ: 0, spawnT: 0, type: u.type, flag: null, rank: 0, name: '' };
         this.entries.set(u.id, e);
       }
       e.px = e.x; e.pz = e.z;
@@ -194,6 +194,8 @@ export class WarfareView {
       e.carrying = !!u.carrying;
       e.retreat = u.state === 'retreat';
       e.hpFrac = u.hp / u.maxHp;
+      e.rank = u.rank || 0;
+      e.name = u.name || '';
       if (e.team !== u.team) {
         e.team = u.team;
         e.m.body.material = teamMat(u.team);
@@ -309,6 +311,13 @@ export class WarfareView {
         case 'charge': fx.number(ev.x, 3, ev.z, 'CHARGE!', 'weak'); fx.puff(ev.x, ev.z); if (e) e.leanX -= 1.5; break;
         case 'backstab': fx.number(ev.x, 2.9, ev.z, 'BACKSTAB!', 'crit'); break;
         case 'enrage': fx.shockwave(ev.x, ev.z, 7, 0xff4d5e); fx.addShake(0.8); fx.number(ev.x, 4.5, ev.z, 'ENRAGED!', 'crit'); if (e) e.enraged = true; break;
+        case 'promote': {
+          if (e) { e.rank = ev.rank; e.name = ev.name || ''; }
+          const label = ev.rank >= 3 && ev.name ? `${ev.name} ★★★` : `RANK ${ev.rank}!`;
+          fx.number(ev.x, 3.2, ev.z, label, 'crit');
+          fx.shockwave(ev.x, ev.z, 2.4, 0xd4a73a);
+          break;
+        }
         case 'rally': this.rally[ev.team].pulse = 0.5; break;
         case 'warhorn': fx.shockwave(ev.x, ev.z, 12, 0xffd23f); fx.number(ev.x, 3.4, ev.z, 'WAR HORN!', 'word'); fx.addShake(0.3); break;
         case 'repair': fx.number(ev.x, 3.2, ev.z, `+${ev.amount} FORT`, 'word'); fx.shockwave(ev.x, ev.z, 6, 0x5ee06a); break;
@@ -368,6 +377,13 @@ export class WarfareView {
         if (back) back.rotation.y += dt * (e.enraged ? 9 : 3);
         if (e.enraged) tilt.scale.multiplyScalar(1 + Math.abs(Math.sin(t * 10)) * 0.06);
         if (e.m.gear) e.m.gear.rotation.y += dt * 1.5;
+      }
+      // veteran rank pips (1–3 gold dots above the body)
+      if (e.m.rank) {
+        const rk = Math.max(0, Math.min(3, e.rank || 0));
+        e.m.rank.visible = rk > 0;
+        for (let i = 0; i < e.m.rank.children.length; i++) e.m.rank.children[i].visible = i < rk;
+        if (rk > 0) e.m.rank.scale.setScalar(1 + Math.sin(t * 4 + e.x) * 0.06);
       }
       // retreat flag: a little white plastic flag on a dowel
       if (e.retreat && !e.flag) {

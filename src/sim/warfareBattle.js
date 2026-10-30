@@ -124,6 +124,14 @@ export const BACKSTAB = 1.6;
 /** Rockets stay this far behind their side's most advanced shield. */
 export const ROCKET_BEHIND_SHIELD = 3;
 const KNOCK_DECAY = 0.86;
+/** Kills needed to reach rank 1/2/3. Ranks carry small deterministic stat bumps. */
+export const RANK_KILLS = Object.freeze([2, 4, 7]);
+export const RANK_MAX = RANK_KILLS.length;
+const RANK_DMG_MUL = 1.12;
+const RANK_HP_MUL = 1.12;
+const RANK_SPEED_MUL = 1.05;
+/** Callsigns handed to rank-3 survivors. Picked from the seeded rng, never Math.random. */
+const CALLSIGNS = Object.freeze(['Ace', 'Viper', 'Ghost', 'Maverick', 'Rook', 'Badger', 'Comet', 'Warden']);
 
 function teamStats() {
   return { kills: 0, lost: 0, converted: 0, recruited: 0, coinsEarned: 0, dmgDealt: 0 };
@@ -222,6 +230,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
     dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), boostMul: 1, boostT: 0, cdMul: 1,
+    kills: 0, rank: 0, name: null, rankSpeedMul: 1,
     rageT: 0,
     lastAttackerId: 0, lastHurtTick: -1e9, grudgeId: 0, pushT: 0,
   };
@@ -364,7 +373,24 @@ export function applyCommand(st, c) {
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-function kill(st, u, attTeam, kx, kz) {
+/** Credit a hostile kill to the attacking unit and promote it past any rank thresholds. */
+function creditKill(st, attId, attTeam) {
+  if (!attId || !st.byId) return;
+  const a = st.byId.get(attId);
+  if (!a || !a.alive || a.team !== attTeam) return;
+  a.kills = (a.kills || 0) + 1;
+  while (a.rank < RANK_MAX && a.kills >= RANK_KILLS[a.rank]) {
+    a.rank++;
+    a.dmgMul *= RANK_DMG_MUL;
+    a.maxHp = Math.round(a.maxHp * RANK_HP_MUL);
+    a.hp = Math.min(a.maxHp, a.hp + a.maxHp * (RANK_HP_MUL - 1));
+    a.rankSpeedMul = (a.rankSpeedMul || 1) * RANK_SPEED_MUL;
+    if (a.rank >= RANK_MAX && !a.name) a.name = CALLSIGNS[st.rng.int(CALLSIGNS.length)];
+    st.events.push({ type: 'promote', id: a.id, team: a.team, unit: a.type, rank: a.rank, name: a.name || '', x: a.x, z: a.z });
+  }
+}
+
+function kill(st, u, attTeam, kx, kz, attId = 0) {
   if (!u.alive) return;
   u.alive = false;
   u.hp = 0;
@@ -372,6 +398,7 @@ function kill(st, u, attTeam, kx, kz) {
   st.stats[u.team].lost++;
   if (attTeam && attTeam !== u.team) {
     st.stats[attTeam].kills++;
+    creditKill(st, attId, attTeam);
     const b = bounty(u.type);
     if (!(st.mode === 'defense' && attTeam === 'red')) {
       st.coins[attTeam] += b;
@@ -390,7 +417,7 @@ function kill(st, u, attTeam, kx, kz) {
   }
 }
 
-/** Damage `t` from an attacker of (team, type) at (ax, az). attId: the attacking unit, for retaliation. */
+/** Damage `t` from an attacker of (team, type) at (ax, az), crediting/retaliating against unit `attId`. */
 function hurt(st, t, dmg, attTeam, attType, ax, az, attId = 0) {
   if (!t.alive || dmg <= 0) return;
   t.hp -= dmg;
@@ -401,7 +428,7 @@ function hurt(st, t, dmg, attTeam, attType, ax, az, attId = 0) {
   if (!t.carriedBy) { t.kx += kx; t.kz += kz; }
   st.stats[attTeam].dmgDealt += dmg;
   st.events.push({ type: 'hit', id: t.id, team: t.team, unit: t.type, src: attType, dmg, x: t.x, z: t.z, kx, kz });
-  if (t.hp <= 0) kill(st, t, attTeam, kx, kz);
+  if (t.hp <= 0) kill(st, t, attTeam, kx, kz, attId);
   // Remember the attacker: a stationary unit with nothing to fight may nurse a grudge.
   // (The grudge itself is taken up in updateUnit — never here — so advancing walls don't scatter.)
   else if (attId && attId !== t.id) { t.lastAttackerId = attId; t.lastHurtTick = st.tick; }
@@ -610,7 +637,7 @@ function updateUnit(st, u, enemies) {
       spawnUnit(st, u.team, 'kami', { x: u.x + dirOf(u.team) * -1.5, z: u.z + (i - 1) * 2.2, hpMul: st.scaling.hpMul, dmgMul: st.scaling.dmgMul });
     }
   }
-  const speed = s.speed * u.speedMul * u.boostMul * (u.dash > 0 ? CHARGE.speedMul : 1);
+  const speed = s.speed * u.speedMul * (u.rankSpeedMul || 1) * u.boostMul * (u.dash > 0 ? CHARGE.speedMul : 1);
   const home = st.forts[u.team];
   const enemyTeam = otherTeam(u.team);
   const efort = st.forts[enemyTeam];
@@ -981,7 +1008,7 @@ export function battleHash(st) {
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
-    mix(u.carrying); mix(u.carriedBy); mix(u.rageT || 0);
+    mix(u.carrying); mix(u.carriedBy); mix(u.rank || 0); mix(u.kills || 0); mix(u.rageT || 0);
   }
   return h >>> 0;
 }
