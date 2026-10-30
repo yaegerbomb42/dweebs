@@ -795,6 +795,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   controller.enabled = false;
 
   combat.setDweebs(dweebs);
+  fx.reactions?.setDweebs(dweebs);
   arena.dweebs = dweebs;
   hud.setup(dweebs);
 
@@ -862,6 +863,7 @@ function startMatch() {
 
   controller = new Controller(player, cam, combat);
   combat.setDweebs(dweebs);
+  fx.reactions?.setDweebs(dweebs);
   // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;

@@ -813,6 +813,10 @@ export class Dweeb {
       } else {
         this.rig.rotation.x = 0;
       }
+      if (this.reactT > 0 && !(this.reactDelay > 0) && !this.held) {
+        if (this.reactKind === 'cheer') { rx = -2.9 + Math.sin(time * 14 + arm.side * 1.7) * 0.35; rz = arm.side * (0.45 + Math.sin(time * 9) * 0.1); }
+        else if (this.reactKind === 'dread' || this.reactKind === 'flinch') { rx = -1.9; rz = arm.side * 0.05; } // hands up, cover up
+      }
       if (this.charging > 0 && arm.side === 1) {
         rx = 0.6 + this.charging * 0.9;
         rz = 0.9;

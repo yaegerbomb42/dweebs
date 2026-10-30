@@ -11,8 +11,11 @@ const MEGA_WORDS = ['KABOOOM!', 'MEGA YEET!', 'SAYONARA!', 'BONKERS!'];
 const J = BALANCE.juice;
 const hitTier = launch => (launch >= J.tiers[2] ? 3 : launch >= J.tiers[1] ? 2 : launch >= J.tiers[0] ? 1 : 0);
 
+import { Reactions } from './Reactions.js';
+
 export class Fx {
   constructor({ particles, audio, camera, cameraController, hud, arena, bursts, decals, haptics }) {
+    this.reactions = new Reactions();
     this.bursts = bursts;
     this.decals = decals;
     this.particles = particles;
@@ -50,6 +53,7 @@ export class Fx {
     const involvesPlayer = victim.isPlayer || attacker?.isPlayer;
     const color = attacker ? attacker.color : 0xffffff;
 
+    if (tier >= 1) this.reactions.emit('gasp', pos, { exclude: [victim, attacker], cheerFor: attacker, intensity: 0.6 + tier * 0.4 });
     if (tier >= 2) this.particles.bigHit(pos, color);
     else this.particles.hit(pos, color);
     if (tier >= 1) this.bursts.spawn(pos, 0.8 + power * 1.4, color);
@@ -228,6 +232,7 @@ export class Fx {
     const pos = obj.getPosition();
     this.particles.emit(pos, { count: 10, colors: [0xffd23f, 0xff6a3c, 0xffffff], speed: 2.5, up: 2, size: 0.1, life: 0.4 });
     this.audio.playFuse(this._pan(pos));
+    this.reactions.emit('dread', pos, { exclude: obj.fuseBy });
     if (this._near(pos, 16) > 0) this.hud.popup('HISSS…', pos, 'small', 0xff6a3c);
   }
 
@@ -426,6 +431,7 @@ export class Fx {
 
   explosion(pos) {
     this.particles.explosion(pos);
+    this.reactions.emit('gasp', pos, { intensity: 1.6 });
     this.bursts.spawn(pos, 3.2, 0xffd23f);
     this.decals.spawnOnGround('scorch', pos, 5, 0x2a1a30, 0.7, 12);
     this.audio.playExplosion(this._pan(pos));
@@ -439,6 +445,7 @@ export class Fx {
   break(pos, obj) {
     const def = obj.def;
     const color = def.color ?? 0xc4a06a;
+    this.reactions.emit('wince', pos, { exclude: obj.thrownBy });
     const p = this.particles;
     let word = def.breakWord ?? 'CRUNCH!';
     switch (def.material) {
@@ -657,6 +664,7 @@ export class Fx {
     const { a, b, speed, pos } = imp;
     // Dweeb-on-stage landings are handled by land(); skip them here
     if ((a.kind === 'dweeb' && b.kind === 'stage') || (b.kind === 'dweeb' && a.kind === 'stage')) return;
+    if (speed > 11) this.reactions.emit('flinch', pos, { intensity: speed / 14 });
     const gain = 0.25 + this._near(pos, 30) * 0.75;
     const src = a.kind === 'object' || a.kind === 'dweeb' ? a : b;
     const other = src === a ? b : a;
@@ -732,6 +740,7 @@ export class Fx {
   }
 
   update(dt) {
+    this.reactions.update(dt);
     this.hitStop = Math.max(0, this.hitStop - dt);
   }
 
