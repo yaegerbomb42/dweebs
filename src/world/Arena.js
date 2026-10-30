@@ -140,6 +140,8 @@ export class Arena {
     this.powerups = [];
     this.crowd = null;
     this.cheer = 0;
+    this.crowdGiftTimer = BALANCE.crowd.giftCooldown ?? 8;
+    this.fx = null;           // set by main.js so crowd gifts can pop FX
     this.time = 0;
     this.itemTimer = 6;
     this.powerupTimer = 10;
@@ -2290,6 +2292,7 @@ export class Arena {
 
   _updateCrowd(dt) {
     if (!this.crowd) return;
+    this.crowdGiftTimer = Math.max(0, (this.crowdGiftTimer ?? 0) - dt);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const up = new THREE.Vector3(0, 1, 0);
@@ -2306,6 +2309,73 @@ export class Arena {
       this.crowd.setMatrixAt(i, m);
     });
     this.crowd.instanceMatrix.needsUpdate = true;
+    if (dt > 0) this._updateCrowdGifts();
+  }
+
+  /** Front-row fans toss a care package into the ring when the place is loud enough. */
+  _updateCrowdGifts() {
+    const C = BALANCE.crowd;
+    if (!C || !this.hazardsActive) return;
+    if (this.cheer < (C.giftThreshold ?? 0.9)) return;
+    if ((this.crowdGiftTimer ?? 0) > 0) return;
+
+    const live = this.objects.filter(o => !o.isDebris && !o.broken).length;
+    if (live >= 10) {
+      this.crowdGiftTimer = 1.5;
+      return;
+    }
+
+    const seat = this._pickCrowdGiftSeat();
+    if (!seat) return;
+
+    let key = this.pickDropItem(this.time, C.giftBias);
+    for (let tries = 0; tries < 4 && OBJECT_DEFS[key]?.explosive; tries++) {
+      key = this.pickDropItem(this.time, C.giftBias);
+    }
+    if (!key || !OBJECT_DEFS[key] || OBJECT_DEFS[key].explosive) {
+      this.crowdGiftTimer = 1.5;
+      return;
+    }
+
+    const obj = this.spawnItem(key, { x: seat.x, y: seat.y + 1.8, z: seat.z });
+    if (!obj) {
+      this.crowdGiftTimer = 1.5;
+      return;
+    }
+
+    this._tossCrowdGift(obj, seat);
+    this.cheer = Math.max(0, this.cheer - 0.3);
+    this.crowdGiftTimer = C.giftCooldown ?? 8;
+    this.fx?.crowdRoar?.(1, 'gift');
+    this.fx?.crowdGift?.(seat, OBJECT_DEFS[key]?.name);
+  }
+
+  _pickCrowdGiftSeat() {
+    const seats = this.crowdSeats;
+    if (!seats?.length) return null;
+    let minY = Infinity;
+    for (const seat of seats) if (seat.y < minY) minY = seat.y;
+    const front = seats.filter(seat => seat.y <= minY + 0.3);
+    return front[Math.floor(Math.random() * front.length)] ?? seats[0] ?? null;
+  }
+
+  /** Lob the gift from the seat toward a clear patch of stage, so it is actually usable. */
+  _tossCrowdGift(obj, seat) {
+    if (!obj?.body?.setLinvel) return;
+    const target = this.randomGroundPoint(7);
+    const tx = target?.x ?? 0, tz = target?.z ?? 0;
+    const releaseY = seat.y + 1.8;
+    const ty = 0.9;
+    const dx = tx - seat.x, dz = tz - seat.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const flight = THREE.MathUtils.clamp(dist / 30, 0.9, 1.6);
+    const g = 25; // matches PhysicsWorld's toy gravity
+    obj.body.setLinvel({
+      x: dx / flight,
+      y: (ty - releaseY + 0.5 * g * flight * flight) / flight,
+      z: dz / flight,
+    }, true);
+    obj.pop?.(0.3);
   }
 
   /** Make the crowd go wild (0..1). */
@@ -2334,6 +2404,7 @@ export class Arena {
     this.crumbleQueue = [];
     this.itemTimer = 6;
     this.powerupTimer = 10;
+    this.crowdGiftTimer = BALANCE.crowd.giftCooldown ?? 8;
     this.lastRareDrop = {};
     this._resetArenaHazards();
     this._spawnStartItems();

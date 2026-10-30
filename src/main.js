@@ -232,6 +232,7 @@ async function init() {
   hud = new Hud($('hud'));
   tutorial = new TutorialDirector({ hud });
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  arena.fx = fx;
   fx.tutorial = tutorial;
   comboDirector = new ComboDirector({ hud, audio, particles });
   fx.combo = comboDirector;

@@ -894,6 +894,16 @@ export class Fx {
     if (level >= 3) this.cam.shake(0.12 * level);
   }
 
+  /** A front-row care package: comic callout, crowd noise and a little camera jolt. */
+  crowdGift(pos, label) {
+    const at = { x: pos?.x ?? 0, y: pos?.y ?? 0, z: pos?.z ?? 0 };
+    this._toyWord('FROM THE CROWD!', at, 0xffd23f, 'big');
+    if (label) this.hud?.popup?.(`${label}!`, { x: at.x, y: at.y + 1.5, z: at.z }, 'small', 0xff8fc0);
+    this.audio?.playCheer?.(0.55);
+    this.cam?.shake?.(0.12);
+    this.particles?.confetti?.(at, 16);
+  }
+
   /** The podium: champion banner, victory sting, confetti over the winner. */
   victoryCelebration(d) {
     const pos = d.getPosition();
