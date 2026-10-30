@@ -29,7 +29,7 @@ export const DEFAULTS = {
   master: 0.8,
   sfx: 1,
   musicVol: 0.6,
-  quality: 'high',        // low | medium | high
+  quality: 'auto',        // low | medium | high | auto
   reducedMotion: false,
   gamepad: true,
   invertY: false,
@@ -126,6 +126,7 @@ export function prettyCode(code) {
 /** Render a quality preset for the UI. */
 export function describeQuality(q) {
   return {
+    auto: { label: 'Auto', detail: 'Adapts to device performance' },
     low: { label: 'Low', detail: 'No shadows · half res · 30 fps cap' },
     medium: { label: 'Medium', detail: 'Shadows on · full res' },
     high: { label: 'High', detail: 'Shadows + outlines · full res' },
