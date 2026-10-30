@@ -1648,6 +1648,13 @@ export class CombatSystem {
       sw.vz += (Math.random() - 0.5) * (0.6 + thrash * 3) * dt * 10;
       t.body.setTranslation({ x: pos.x + sw.x, y: pos.y + 1.15 * s + sw.y, z: pos.z + sw.z }, true);
       t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      t.yaw = d.yaw + Math.PI / 2;
+      // The held Dweeb is also a shield: a point out front soaks incoming throws.
+      const S = BALANCE.humanShield;
+      const sp = t.shieldPoint ?? (t.shieldPoint = { x: 0, y: 0, z: 0 });
+      sp.x = pos.x + f.x * S.reach;
+      sp.y = pos.y + S.height;
+      sp.z = pos.z + f.z * S.reach;
       t.yaw = d.yaw + Math.PI / 2 + sw.x * 0.6 - sw.z * 0.6;
       t.carrySwayX = sw.x; t.carrySwayZ = sw.z;
       t.escapeTimer -= dt;
@@ -1775,6 +1782,11 @@ export class CombatSystem {
       const r = (obj.def.dims.radius ?? Math.max(obj.def.dims.hx ?? 0.3, obj.def.dims.hz ?? 0.3)) + 0.5;
       for (const t of this.dweebs) {
         if (!t.active || obj.hitList.has(t) || t.grabbedBy) continue;
+        // A held Dweeb soaks the throw before it reaches the holder.
+        if (this._humanShieldBlock(t, obj, prev, op, v)) {
+          if (obj.broken) break;
+          continue;
+        }
         if (segDist(prev, op, t.getPosition()) > r) continue;
         obj.hitList.add(t);
         const by = obj.thrownBy;
@@ -1808,6 +1820,39 @@ export class CombatSystem {
         if (this.damageObject(obj, 2500, by, { dir: { x: v.x, y: 0, z: v.z }, speed: Math.hypot(v.x, v.z) })) break;
       }
     }
+  }
+
+  /** A held Dweeb intercepts an incoming thrown prop: redirect ~60% of the hit to the shield. */
+  _humanShieldBlock(holder, obj, prev, op, v) {
+    const shield = holder.held?.kind === 'dweeb' ? holder.held.ref : null;
+    const S = BALANCE.humanShield;
+    if (!shield || !shield.active || !shield.shieldPoint) return false;
+    if (obj.def?.explosive || obj.thrownBy === shield) return false;
+    const dims = obj.def?.dims ?? {};
+    const pr = dims.radius ?? Math.max(dims.hx ?? 0.3, dims.hz ?? 0.3);
+    if (segDist(prev, op, shield.shieldPoint) > pr + S.pad) return false;
+
+    obj.hitList.add(holder);
+    const by = obj.thrownBy;
+    const speed = Math.hypot(v.x, v.y, v.z);
+    const w = (obj.def?.damage ?? 1) * (0.75 + Math.min(1, obj.body.mass() / 4) * 0.5);
+    const yeet = obj.superYeet ? SUPER : 1;
+    const sk = Math.min(1.4, speed / 18);
+    _dir.set(v.x, 0, v.z);
+    if (_dir.lengthSq() < 1e-4) _dir.set(holder.forward.x, 0, holder.forward.z);
+    _dir.normalize();
+    _dir.y = 0.45;
+    const atk = scaled(A.thrown(w, sk), yeet * S.damageScale, yeet * S.damageScale);
+    const launch = shield.receiveHit({ dir: _dir, ...atk, attacker: by, time: this.time });
+    shield.escapeTimer = Math.max(0, shield.escapeTimer || 0) + S.escapeBonus;
+    this.fx.humanShield?.(holder, shield, launch);
+    this.addStyle(holder, S.style, 'BLOCKED!');
+    if (!shield.active || shield.out || shield.eliminated) this.drop(holder);
+    obj.superYeet = false;
+    const keep = obj.def.multiHit ? 0.7 : -0.25;
+    obj.body.setLinvel({ x: v.x * keep, y: Math.abs(v.y) * 0.3 + (obj.def.roll ? 0.5 : 3), z: v.z * keep }, true);
+    if (obj.applyDamage(2500)) this.breakObject(obj, by);
+    return true;
   }
 
   /** Style points for a thrown hit: distance, bank shots, ricochets, air shots. Each adds knockback. */

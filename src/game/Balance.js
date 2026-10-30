@@ -51,6 +51,16 @@ export const BALANCE = {
     heavyThrowFrom: 4,     // throws at/above this mass get a grunt, dust and a micro hit-stop
   },
 
+  // Human Shield: a held Dweeb can soak an incoming thrown prop.
+  humanShield: {
+    reach: 0.8,            // metres in front of the holder along facing
+    height: 1.05,          // shield point height above the holder's feet
+    pad: 0.5,              // extra interception radius beyond the projectile's own
+    damageScale: 0.6,      // redirected damage / knockback strength
+    escapeBonus: 0.35,     // seconds added to the victim's escape timer (straining)
+    style: 8,
+  },
+
   // Stage toys (Spec 12)
   bounce: {
     bumperMinSpeed: 9,     // items leave a bumper at least this fast across the floor

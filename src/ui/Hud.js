@@ -320,6 +320,7 @@ export class Hud {
     this.holdEl.classList.toggle('show', !!player?.held || (player?.catchWindow > 0));
     if (player?.held) {
       const gadget = player.held.ref.def?.gadget;
+      if (player.held.kind === 'dweeb') this.holdEl.innerHTML = '<b>HUMAN SHIELD</b> · soak throws · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       if (player.catchWindow > 0) this.holdEl.innerHTML = '<b>CAUGHT!</b> <kbd>LMB</kbd>/<kbd>RMB</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'magnet') this.holdEl.innerHTML = '<kbd>LMB</kbd> MAGNET PULL · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';

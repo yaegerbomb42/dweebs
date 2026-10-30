@@ -332,6 +332,24 @@ export class Fx {
     this._toyWord('DENIED!', pos, 0xff6a3c, 'small');
   }
 
+  /** A held Dweeb soaks an incoming throw: clang, shield ring, comic BLOCKED! popup. */
+  humanShield(holder, shield, launch = 0) {
+    const pos = shield.getPosition();
+    const sp = shield.shieldPoint ?? pos;
+    const power = Math.min(1, Math.max(0, launch) / 20);
+    const color = holder?.color ?? 0xffd23f;
+    this.particles.ring({ x: sp.x, y: sp.y, z: sp.z }, { color, size: 1.8 + power * 1.5, life: 0.35 });
+    this.particles.sparkle(sp, color);
+    this.bursts.spawn(sp, 0.8 + power, color);
+    this.audio.playComicBonk(this._pan(sp));
+    this.audio.playPunch(0.25 + power * 0.5, this._pan(sp));
+    this.cam.shake(0.18 + power * 0.35);
+    this.hitStop = Math.max(this.hitStop, 0.04 + power * 0.05);
+    this.haptics?.hit(1, this._near(sp, 24), !!(holder?.isPlayer || shield.isPlayer));
+    this.hud.popup('BLOCKED!', pos, power >= 0.45 ? 'big' : 'small', color);
+    this.arena.excite?.(0.15 + power * 0.2);
+  }
+
   escape(t) {
     const pos = t.getPosition();
     this.particles.sparkle(pos, t.color);

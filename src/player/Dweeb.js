@@ -68,6 +68,7 @@ export class Dweeb {
     this.catchWindow = 0;       // brief window after a timed catch (HUD callout)
     this.catchFlash = 0;        // flash timer for catch juice
     this.escapeTimer = 0;
+    this.shieldPoint = null;    // world point a held Dweeb uses to block throws
     this.flashTimer = 0;
     this.diBudget = 0;          // Δv left to steer this launch with (directional influence)
     this.landLag = 0;
@@ -1107,6 +1108,7 @@ export class Dweeb {
       this.body.setGravityScale(0, true);
       this.collider.setCollisionGroups(this.physicsWorld.makeGroups(CollisionGroups.OBJECT, CollisionGroups.ALL & ~CollisionGroups.PLAYER));
     } else {
+      this.shieldPoint = null;
       this.body.setGravityScale(this._grav(1), true);
       this.collider.setCollisionGroups(this.defaultGroups);
     }
