@@ -68,6 +68,9 @@ export class Dweeb {
     this.catchWindow = 0;       // brief window after a timed catch (HUD callout)
     this.catchFlash = 0;        // flash timer for catch juice
     this.escapeTimer = 0;
+    this.escapeMash = 0;        // built up by mashing while grabbed; speeds the escape
+    this.escapeMashDecay = 2.5;   // how fast escapeMash bleeds off (per second)
+    this.mashWordCd = 0;
     // Thrown-Dweeb bowling: while this body is a flying projectile it can clip others
     this.thrownBy = null;
     this.thrownTimer = 0;
@@ -1109,6 +1112,9 @@ export class Dweeb {
 
   setGrabbed(holder) {
     this.grabbedBy = holder;
+    this.escapeMash = 0;
+    this.escapeMashDecay = 2.5;
+    this.mashWordCd = 0;
     if (holder) {
       this.escapeTimer = (1.4 + this.percent * 0.008) * this.stats.escape;
       this.charging = 0;
@@ -1119,6 +1125,14 @@ export class Dweeb {
       this.body.setGravityScale(this._grav(1), true);
       this.collider.setCollisionGroups(this.defaultGroups);
     }
+  }
+
+  /** A grab/jump/attack press while captured: build up struggle. */
+  mashEscape() {
+    if (!this.grabbedBy) return false;
+    this.escapeMash = Math.min(5, (this.escapeMash || 0) + 1);
+    this.escapeMashDecay = 2.5;
+    return true;
   }
 
   applyPowerUp(kind) {
@@ -1221,6 +1235,9 @@ export class Dweeb {
     this.sugarTimer = 0;
     this.lastHitBy = null;
     this.grabbedBy = null;
+    this.escapeMash = 0;
+    this.escapeMashDecay = 2.5;
+    this.mashWordCd = 0;
     this.thrownBy = null;
     this.thrownTimer = 0;
     this.bowlingHits = null;

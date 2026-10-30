@@ -317,6 +317,23 @@ export class Hud {
       this.chargeFill.style.width = `${Math.round(player.charging * 100)}%`;
       this.chargeEl.classList.toggle('full', player.charging >= 1);
     } else this.chargeEl.classList.remove('show');
+    const grabbed = !!player?.grabbedBy;
+    this.holdEl.classList.toggle('show', !!player?.held || grabbed);
+    if (grabbed) {
+      this.holdEl.innerHTML = '<kbd>SPACE</kbd>/<kbd>LMB</kbd>/<kbd>E</kbd> MASH TO BREAK FREE!';
+    } else if (player?.held) {
+      const gadget = player.held.ref.def?.gadget;
+      if (player.held.kind === 'dweeb') this.holdEl.innerHTML = '<b>HUMAN SHIELD</b> · soak throws · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
+      if (player.catchWindow > 0) this.holdEl.innerHTML = '<b>CAUGHT!</b> <kbd>LMB</kbd>/<kbd>RMB</kbd> throw · <kbd>Q</kbd> drop';
+      else if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
+      else if (gadget === 'magnet') this.holdEl.innerHTML = '<kbd>LMB</kbd> MAGNET PULL · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
+      else if (player.held.ref.isWeapon) {
+        const wname = { spiky: 'spiky ball', glove: 'boxing glove' }[player.held.ref.def.weapon] || player.held.ref.def.weapon;
+        this.holdEl.innerHTML = `<kbd>LMB</kbd> swing ${wname} · <kbd>RMB</kbd> throw · <kbd>Q</kbd> drop`;
+      }
+      else this.holdEl.innerHTML = '<kbd>LMB</kbd>/<kbd>RMB</kbd> throw (hold to charge) · <kbd>Q</kbd> drop';
+    }
+
     this.holdEl.classList.toggle('show', !!player?.held || (player?.catchWindow > 0));
     if (player?.held) {
       const gadget = player.held.ref.def?.gadget;

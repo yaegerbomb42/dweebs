@@ -148,6 +148,40 @@ export class Controller {
     if (e.isTrusted) this.padActive = false;
     if (!this.live || e.repeat) return;
     const d = this.dweeb;
+    // Captured: Space/E become struggle presses instead of actions.
+    if (d.grabbedBy && (e.code === 'Space' || e.code === 'KeyE')) {
+      d.mashEscape?.();
+      e.preventDefault();
+      return;
+    }
+    switch (e.code) {
+      case 'Space':
+        // Down + jump on a floating platform slips you through it instead of hopping.
+        if (d.grounded && (this.keys.KeyS || this.keys.ArrowDown)) d.requestDropThrough();
+        else d.requestJump();
+        e.preventDefault();
+        break;
+      case 'KeyE':
+        this._startGrabOrThrow();
+        break;
+      case 'KeyQ':
+        this.combat.drop(d);
+        break;
+      case 'ShiftLeft':
+      case 'ShiftRight': {
+        const m = this._moveDir();
+        if (d.grounded) this._faceCamera(true);
+        this.combat.dodgeOrDive(d, m.x, m.y, !!this.keys.Space);
+        break;
+      }
+      case 'KeyF':
+        this.combat.armSuper(d);
+        break;
+      case 'KeyC':
+        this.combat.startParry(d);
+        break;
+    }
+
     if (this._isBound('jump', e.code)) {
       // Down + jump on a floating platform slips you through it instead of hopping.
       if (d.grounded && this._isHeld('back')) d.requestDropThrough();
@@ -175,8 +209,14 @@ export class Controller {
 
   _onMouseDown(e) {
     if (!this.live) return;
+    const d = this.dweeb;
+    // Captured: LMB is another struggle press.
+    if (d.grabbedBy && e.button === 0) {
+      d.mashEscape?.();
+      e.preventDefault();
+      return;
+    }
     if (e.button === 0) {
-      const d = this.dweeb;
       // In the air with empty hands, LMB is an aerial: S+LMB slams straight down,
       // otherwise you commit to a drop-kick.
       if (!d.grounded && !d.held) {
