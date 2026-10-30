@@ -77,6 +77,7 @@ export class InteractiveObject {
     this.eyes = [];
     this.flickers = [];
     this.screen = null;
+    this.jaw = null;
     model.traverse(o => {
       const pu = o.userData.pupil;
       if (pu) {
@@ -88,6 +89,7 @@ export class InteractiveObject {
         });
       }
       if (o.userData.flicker) this.flickers.push(o);
+      if (o.userData.jaw) this.jaw = o;
       if (o.userData.flame) this.flame = o;
       if (o.userData.screen) {
         o.material = o.material.clone(); // per-instance face
@@ -210,6 +212,10 @@ export class InteractiveObject {
   applyDamage(force) {
     if (this.broken || !this.def.breakable) return false;
     this.hp -= force;
+    // Visible wear: a hit that doesn't break it still makes it flinch, harder the closer it is to going.
+    const max = this.def.breakForce || 99999;
+    this.wear = Math.min(1, 1 - Math.max(0, this.hp) / max);
+    this.popV += 2 + this.wear * 6;
     if (this.hp <= 0) {
       this.broken = true;
       return true;
