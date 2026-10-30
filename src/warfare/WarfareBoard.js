@@ -6,6 +6,42 @@ import { FIELD, FORT_X, FORT_RADIUS } from '../sim/warfareBattle.js';
 import { getBattleground } from './Battlegrounds.js';
 import { TEAM_COLORS, sharedMats } from './WarfareModels.js';
 
+/** Barricades: three stacked dowel logs with brass bands, at each circle in `list`.
+ *  Destructible bundles (with hp) get scorched bands so commanders can tell them apart.
+ *  Returns { group, meshes } where meshes = [{x, z, r, g}] is tracked so the view can
+ *  hide a barricade when the sim reports it broken (barricadeDown). */
+export function buildBarricades(list) {
+  const mats = sharedMats();
+  const g = new THREE.Group();
+  const meshes = [];
+  const logGeo = new THREE.CylinderGeometry(0.42, 0.42, 3.4, 7);
+  const bandGeo = new THREE.TorusGeometry(0.5, 0.08, 4, 10);
+  for (const b of list) {
+    const bg = new THREE.Group();
+    const spots = [[-0.45, 0.42], [0.45, 0.42], [0, 1.1]];
+    for (const [ox, y] of spots) {
+      const log = new THREE.Mesh(logGeo, mats.wood);
+      log.rotation.x = Math.PI / 2;
+      log.position.set(ox, y, 0);
+      log.castShadow = true;
+      bg.add(log);
+    }
+    const bandMat = b.hp > 0 ? toonMat({ color: 0x8a5a2a }) : mats.brass;
+    for (const oz of [-1.1, 1.1]) {
+      const band = new THREE.Mesh(bandGeo, bandMat);
+      band.scale.set(1.6, 1.5, 1);
+      band.position.set(0, 0.75, oz);
+      bg.add(band);
+    }
+    const s = b.r / 1.5;
+    bg.scale.set(s, 1, s);
+    bg.position.set(b.x, 0, b.z);
+    g.add(bg);
+    meshes.push({ x: b.x, z: b.z, r: b.r, g: bg });
+  }
+  return { group: g, meshes };
+}
+
 function roundedRect(w, h, r) {
   const s = new THREE.Shape();
   const x = -w / 2, y = -h / 2;
@@ -54,6 +90,29 @@ export function buildBoard(map = getBattleground('meadow')) {
     m.position.set(gl.x, 0.012, gl.z);
     noOutline(m);
     group.add(m);
+  }
+
+  // Mud: dark glossy discs with a subtle ripple. Rendered before high ground so plateaus sit on top.
+  const mudMeshes = [];
+  for (const m of map.mud || []) {
+    const mudGeo = new THREE.CircleGeometry(m.r, 32);
+    const mudMat = new THREE.MeshStandardMaterial({
+      color: 0x2d2520,
+      roughness: 0.15,
+      metalness: 0.35,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const mud = new THREE.Mesh(mudGeo, mudMat);
+    mud.rotation.x = -Math.PI / 2;
+    mud.position.set(m.x, 0.02, m.z);
+    mud.receiveShadow = true;
+    noOutline(mud);
+    // Store time offset for ripple animation in the view
+    mud.userData = { mudTimeOffset: m.x * 0.7 + m.z * 0.3, radius: m.r };
+    group.add(mud);
+    mudMeshes.push(mud);
   }
 
   // High ground: raised plastic plateaus (the sim grants +damage from up here).
@@ -117,30 +176,10 @@ export function buildBoard(map = getBattleground('meadow')) {
 
   // Barricades: three stacked dowel logs with brass bands. Destructible bundles (map hp)
   // get scorched bands so commanders can tell them apart; the view hides them when broken.
-  const barricadeMeshes = [];
-  const logGeo = new THREE.CylinderGeometry(0.42, 0.42, 3.4, 7);
-  const bandGeo = new THREE.TorusGeometry(0.5, 0.08, 4, 10);
-  for (const b of map.barricades) {
-    const g = new THREE.Group();
-    const spots = [[-0.45, 0.42], [0.45, 0.42], [0, 1.1]];
-    for (const [ox, y] of spots) {
-      const log = new THREE.Mesh(logGeo, mats.wood);
-      log.rotation.x = Math.PI / 2;
-      log.position.set(ox, y, 0);
-      log.castShadow = true;
-      g.add(log);
-    }
-    const bandMat = b.hp > 0 ? toonMat({ color: 0x8a5a2a }) : mats.brass;
-    for (const oz of [-1.1, 1.1]) {
-      const band = new THREE.Mesh(bandGeo, bandMat);
-      band.scale.set(1.6, 1.5, 1);
-      band.position.set(0, 0.75, oz);
-      g.add(band);
-    }
-    g.position.set(b.x, 0, b.z);
-    group.add(g);
-    barricadeMeshes.push({ x: b.x, z: b.z, r: b.r, g });
-  }
+  // Built into a sub-group so setBarricades can swap just the barricades per battle/map.
+  const barr = buildBarricades(map.barricades);
+  group.add(barr.group);
+  const barricadeMeshes = barr.meshes;
 
   const forts = { blue: buildFort('blue', -FORT_X), red: buildFort('red', FORT_X) };
   group.add(forts.blue.group, forts.red.group);
@@ -150,7 +189,7 @@ export function buildBoard(map = getBattleground('meadow')) {
   pick.rotation.x = -Math.PI / 2;
   group.add(pick);
 
-  return { group, pick, forts, barricades: barricadeMeshes, mapId: map.id };
+  return { group, pick, forts, barricades: barricadeMeshes, barr: barr.group, mud: mudMeshes, mapId: map.id };
 }
 
 function buildFort(team, x) {
