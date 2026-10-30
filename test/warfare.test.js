@@ -46,8 +46,10 @@ describe('warfare balance (real equal-cost duels)', () => {
     for (const a of RECRUITABLE) {
       const others = RECRUITABLE.filter(b => b !== a);
       const beatenBy = others.filter(b => wins(b, a) >= 4);
-      const beats = others.filter(b => wins(a, b) >= 4);
       expect(beatenBy.length, `${a} is never beaten`).toBeGreaterThan(0);
+      // Support units (healers) aren't duelists — they're meant to be protected, not to win 1v1s.
+      if (UNIT_TYPES[a].attack === 'heal') continue;
+      const beats = others.filter(b => wins(a, b) >= 4);
       expect(beats.length, `${a} beats nothing`).toBeGreaterThan(0);
     }
   });

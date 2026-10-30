@@ -5,10 +5,12 @@
 //   playing→ defense (waves, boss every 5, win after FINAL_WAVE) or versus AI
 //   paused / over → pause menu, win/lose screen with stats and restart
 import * as THREE from 'three';
-import { createBattle, stepBattle, battleHash, WF_DT, FIELD } from '../sim/warfareBattle.js';
+import { createBattle, stepBattle, battleHash, WF_DT, FIELD, DECOY_COST } from '../sim/warfareBattle.js';
 import { commanderDecide } from '../sim/warfareAI.js';
+import { commanderTurn, createCommanderBrain, personalityOf } from './WarfareCommander.js';
 import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
 import { DIFFICULTY, FINAL_WAVE } from '../sim/warfareWaves.js';
+import { CAMPAIGN, missionById, loadCampaign, saveCampaign, recordWin, missionStars, collectVeterans } from './WarfareCampaign.js';
 import { WarfareView } from './WarfareView.js';
 import { WarfareHud, bestKey } from './WarfareHud.js';
 import { WarfareAudio } from './WarfareAudio.js';
@@ -21,7 +23,19 @@ export const POWER_COOLDOWNS = {
   artillery: 10.0,
   supply: 8.0,
   stance: 4.0,
+  decoy: 12.0,
+  warhorn: 18.0,
+  repair: 25.0,
+  trap: 15.0,
 };
+
+/** Coin costs mirror the sim-side costs in src/sim/warfareBattle.js. */
+export const POWER_COSTS = {
+  artillery: 25, supply: 15, stance: 0, warhorn: 20, repair: 30, trap: 20,
+};
+
+/** Versus AI income handicap by defense difficulty. */
+const AI_LEVEL = { easy: 0.8, normal: 1, hard: 1.2 };
 
 const ENEMY_HINTS = {
   rocket: 'Enemy <b>rockets</b> lob splash shells. Walk <b>shields</b> into them.',
@@ -75,7 +89,10 @@ export class DweebWarfare {
     this.difficulty = 'normal';
     try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, decoy: 0 };
+    this.brain = createCommanderBrain();
+    this.aiming = null; // { kind: 'artillery'|'trap', team } while the player picks a target
+    this.campaignRun = null; // { idx, veterans } while playing the campaign
     this.pending = [];
     this.acc = 0;
     this.seen = new Set();
@@ -104,26 +121,45 @@ export class DweebWarfare {
   _startAttract() {
     this.phase = 'title';
     this.overlay = false;
-    this.st = createBattle({ seed: (Date.now() & 0xffff) + 1, mode: 'versus' });
+    this.st = createBattle({ seed: (Date.now() & 0xffff) + 1, mode: 'versus', map: 'random' });
     this.attract = true;
     this.view.setMap(getBattleground('meadow'));
+    this.brain = createCommanderBrain();
+    this._cancelAim();
     this.view.reset();
+    this.view.setBarricades(this.st.barricades);
     this.view.localTeam = this.team;
     this.hud.setDifficulty(this.difficulty);
     this.hud.screen('title');
     this.cam.tx = 0; this.cam.tz = 2; this.cam.tdist = 56;
   }
 
+  /** Drop any in-progress power targeting (Esc, new battle, mode switch). */
+  _cancelAim() {
+    this.aiming = null;
+    if (this.canvas) this.canvas.style.cursor = '';
+  }
+
   start(mode = 'defense', mapId) {
     this._leaveOnline();
+    this.campaignRun = null;
     this.setMap(mapId || this.hud.mapId);
-    this._begin(mode, (Date.now() & 0x7fffffff) | 1, 'blue', this.difficulty, this.mapId);
+    this._begin(mode, (Date.now() & 0x7fffffff) | 1, 'blue', this.difficulty, {
+      mapId: this.mapId, personality: 'random', aiLevel: AI_LEVEL[this.difficulty] ?? 1,
+    });
+    const mapTag = ` · ${this.st.mapName} MAP`;
     if (mode === 'defense') {
       this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}`, '', 2.6);
-      this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
+      this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–5</b> to recruit.', 8);
+      this.hud.banner('DEFEND THE FORT', `Survive ${this.st.finalWave} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}${mapTag}`, '', 2.6);
+    } else if (this.isLocalPvp) {
+      this.hud.banner('VERSUS', `Smash the red fort before they smash yours${mapTag}`, '', 2.6);
+      this.hud.toast('Two commanders, one board. Player 2 uses <b>7–0</b>, <b>[</b> and <b>]</b>.', 8);
     } else {
-      this.hud.banner('VERSUS', 'Smash the red fort before they smash yours', '', 2.6);
-      this.hud.toast('The AI buys counters to your army. Mix it up!', 8);
+      const foe = this.team === 'blue' ? 'red' : 'blue';
+      const P = personalityOf(this.st.aiPersonality[foe]);
+      this.hud.banner('VERSUS', `${P.title} commands the enemy — ${P.desc}${mapTag}`, '', 3.2);
+      this.hud.toast('The AI buys counters to your army — and shells your clumps. Mix it up!', 8);
     }
   }
 
@@ -134,14 +170,28 @@ export class DweebWarfare {
     return bg;
   }
 
-  _begin(mode, seed, team, difficulty = 'normal', mapId) {
+  _begin(mode, seed, team, difficulty = 'normal', opts = {}) {
     this.mode = mode;
     this.attract = false;
     this.team = team;
-    const bg = getBattleground(mapId || this.mapId || 'meadow');
-    this.mapId = bg.id;
-    this.st = createBattle({ seed, mode, difficulty, barricades: bg.barricades, highGround: bg.highGround });
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    // 5th arg: an opts object (campaign/skirmish) or a battleground id string (the online
+    // handshake and the legacy map-picker path). A battleground feeds explicit
+    // barricades/highGround; a named wave-2 layout goes through `map`. Both peers see the
+    // same seed, so lockstep agrees on whichever is used.
+    const o = typeof opts === 'string' ? { mapId: opts } : opts;
+    this.campaignIdx = o.campaignIdx ?? null;
+    const bg = o.mapId ? getBattleground(o.mapId) : null;
+    if (bg) this.mapId = bg.id;
+    this.st = createBattle({
+      seed, mode, difficulty,
+      map: o.map ?? 'random', waves: o.waves, personality: o.personality ?? 'random',
+      aiLevel: o.aiLevel ?? 1, veterans: o.veterans,
+      barricades: bg?.barricades, highGround: bg?.highGround, mud: bg?.mud, mapId: bg?.id,
+    });
+    if (bg) this.st.mapName = bg.name.toUpperCase();
+    this.powerCooldowns = Object.fromEntries(Object.keys(POWER_COOLDOWNS).map(k => [k, 0]));
+    this.brain = createCommanderBrain();
+    this._cancelAim();
     this.pending = [];
     this.outbox = [];
     this.seen = new Set();
@@ -150,6 +200,7 @@ export class DweebWarfare {
     this.overlay = false;
     this.view.setMap(bg);
     this.view.reset();
+    this.view.setBarricades(this.st.barricades);
     this.view.localTeam = team;
     this.phase = 'playing';
     this.hud.last = {};
@@ -157,6 +208,44 @@ export class DweebWarfare {
     const side = team === 'blue' ? -1 : 1;
     this.cam.tx = 16 * side; this.cam.tz = 3; this.cam.tdist = 40;
     this.audio?.unlock();
+  }
+
+  /** Start a campaign mission by id (from the campaign screen). */
+  startCampaign(id) {
+    const idx = CAMPAIGN.findIndex(m => m.id === id);
+    if (idx < 0) return;
+    if (idx > loadCampaign().unlocked) { this.audio?.deny(); return; }
+    this._leaveOnline();
+    this.isLocalPvp = false;
+    this.campaignRun = { idx, veterans: [] };
+    this._beginCampaignMission();
+  }
+
+  _beginCampaignMission() {
+    const m = CAMPAIGN[this.campaignRun.idx];
+    this._begin(m.mode, m.seed, 'blue', m.difficulty, {
+      map: m.map, waves: m.waves, personality: m.personality ?? 'random',
+      aiLevel: m.aiLevel ?? 1, veterans: this.campaignRun.veterans, campaignIdx: this.campaignRun.idx,
+    });
+    const vets = this.campaignRun.veterans.length;
+    this.hud.banner(`MISSION ${this.campaignRun.idx + 1}/${CAMPAIGN.length}: ${m.name.toUpperCase()}`, `${m.briefing}${vets ? ` · ${vets} veteran${vets === 1 ? '' : 's'} return!` : ''}`, '', 3.4);
+    if (m.mode === 'versus') {
+      const P = personalityOf(this.st.aiPersonality.red);
+      this.hud.toast(`Enemy commander: <b>${P.title}</b> — ${P.desc}`, 8);
+    } else {
+      this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
+    }
+  }
+
+  _nextMission() {
+    if (!this.campaignRun) return;
+    if (this.campaignRun.idx + 1 >= CAMPAIGN.length) {
+      this.campaignRun = null;
+      this._startAttract();
+      return;
+    }
+    this.campaignRun.idx++;
+    this._beginCampaignMission();
   }
 
   // ── online (lockstep over the dweebs-server WebSocket) ──
@@ -324,10 +413,23 @@ export class DweebWarfare {
       this.hud.toast('Need 🪙 25 for Artillery Barrage', 2.0);
       return;
     }
+    // Arm the barrage: the next board tap picks the impact point (Esc cancels).
+    this.aiming = { kind: 'artillery', team };
+    if (this.canvas) this.canvas.style.cursor = 'crosshair';
+    this.audio?.click();
+    this.hud.toast('🎯 <b>Click the board</b> to call the barrage — <b>Esc</b> cancels', 6);
+  }
+
+  _fireArtillery(x, z, team) {
+    this._cancelAim();
+    if (this.phase !== 'playing') return;
+    if (this.st.coins[team] < 25) {
+      this.audio?.deny();
+      this.hud.toast('Need 🪙 25 for Artillery Barrage', 2.0);
+      return;
+    }
     this.powerCooldowns.artillery = POWER_COOLDOWNS.artillery;
-    const targetX = this.st.rally[team]?.x ?? (team === 'blue' ? 10 : -10);
-    const targetZ = this.st.rally[team]?.z ?? 0;
-    this._cmd({ type: 'artillery', team, x: targetX, z: targetZ });
+    this._cmd({ type: 'artillery', team, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10 });
   }
 
   callSupply(team = this.team) {
@@ -344,6 +446,95 @@ export class DweebWarfare {
     }
     this.powerCooldowns.supply = POWER_COOLDOWNS.supply;
     this._cmd({ type: 'supply', team });
+  }
+
+  callDecoy(team = this.team) {
+    if (this.phase !== 'playing' || !this.st) return;
+    if (this.powerCooldowns.decoy > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Decoy inflating (${this.powerCooldowns.decoy.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < DECOY_COST) {
+      this.audio?.deny();
+      this.hud.toast(`Need 🪙 ${DECOY_COST} for an Inflatable Decoy`, 2.0);
+      return;
+    }
+    this.powerCooldowns.decoy = POWER_COOLDOWNS.decoy;
+    // Plant it a few strides ahead of the rally point so it baits the enemy before they reach our line.
+    const ahead = team === 'blue' ? 8 : -8;
+    const targetX = (this.st.rally[team]?.x ?? (team === 'blue' ? -18 : 18)) + ahead;
+    const targetZ = this.st.rally[team]?.z ?? 0;
+    this._cmd({ type: 'decoy', team, x: targetX, z: targetZ });
+  }
+
+  callWarhorn(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.warhorn > 0) {
+      this.audio?.deny();
+      this.hud.toast(`War horn recharging (${this.powerCooldowns.warhorn.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < POWER_COSTS.warhorn) {
+      this.audio?.deny();
+      this.hud.toast(`Need 🪙 ${POWER_COSTS.warhorn} for War Horn`, 2.0);
+      return;
+    }
+    this.powerCooldowns.warhorn = POWER_COOLDOWNS.warhorn;
+    this._cmd({ type: 'warhorn', team });
+  }
+
+  callRepair(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.repair > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Fortify recharging (${this.powerCooldowns.repair.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < POWER_COSTS.repair) {
+      this.audio?.deny();
+      this.hud.toast(`Need 🪙 ${POWER_COSTS.repair} to Fortify`, 2.0);
+      return;
+    }
+    const f = this.st.forts[team];
+    if (f.hp >= f.maxHp) {
+      this.audio?.deny();
+      this.hud.toast('Your fort is already at full HP', 2.0);
+      return;
+    }
+    this.powerCooldowns.repair = POWER_COOLDOWNS.repair;
+    this._cmd({ type: 'repair', team });
+  }
+
+  callTrap(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.trap > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Spike pit recharging (${this.powerCooldowns.trap.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < POWER_COSTS.trap) {
+      this.audio?.deny();
+      this.hud.toast(`Need 🪙 ${POWER_COSTS.trap} for Spike Pit`, 2.0);
+      return;
+    }
+    // Arm the pit: the next board tap buries it (Esc cancels).
+    this.aiming = { kind: 'trap', team };
+    if (this.canvas) this.canvas.style.cursor = 'crosshair';
+    this.audio?.click();
+    this.hud.toast('🕳️ <b>Click the board</b> to bury the spike pit — <b>Esc</b> cancels', 6);
+  }
+
+  _fireTrap(x, z, team) {
+    this._cancelAim();
+    if (this.phase !== 'playing') return;
+    if (this.st.coins[team] < POWER_COSTS.trap) {
+      this.audio?.deny();
+      this.hud.toast(`Need 🪙 ${POWER_COSTS.trap} for Spike Pit`, 2.0);
+      return;
+    }
+    this.powerCooldowns.trap = POWER_COOLDOWNS.trap;
+    this._cmd({ type: 'trap', team, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10 });
   }
 
   toggleFormation(team = this.team) {
@@ -366,6 +557,14 @@ export class DweebWarfare {
     else if (a === 'artillery') this.callArtillery();
     else if (a === 'supply') this.callSupply();
     else if (a === 'stance') this.toggleFormation();
+    else if (a === 'decoy') this.callDecoy();
+    else if (a === 'warhorn') this.callWarhorn();
+    else if (a === 'repair') this.callRepair();
+    else if (a === 'trap') this.callTrap();
+    else if (a === 'campaign') { this.hud.setCampaign(loadCampaign(), CAMPAIGN); this.hud.screen('campaign'); }
+    else if (a === 'campaignBack') this.hud.screen('title');
+    else if (a === 'nextMission') this._nextMission();
+    else if (a.startsWith('mission-')) { const m = missionById(a.slice(8)); if (m) this.startCampaign(m.id); }
     else if (a.startsWith('diff-') && DIFFICULTY[a.slice(5)]) {
       this.difficulty = a.slice(5);
       try { localStorage.setItem('dweebs-warfare-diff', this.difficulty); } catch { /* private mode */ }
@@ -375,7 +574,11 @@ export class DweebWarfare {
     else if (a.startsWith('map-')) { this.setMap(a.slice(4)); this.audio?.click(); }
     else if (a === 'pause') this.setPaused(true);
     else if (a === 'resume') this.setPaused(false);
-    else if (a === 'restart') { if (this.onlineKind && (this.online || this.lastWasOnline)) this._goOnline(this.onlineKind); else this.start(this.mode, this.mapId); }
+    else if (a === 'restart') {
+      if (this.campaignRun) this._beginCampaignMission();
+      else if (this.onlineKind && (this.online || this.lastWasOnline)) this._goOnline(this.onlineKind);
+      else this.start(this.mode, this.mapId);
+    }
     else if (a === 'quit') { this._leaveOnline(); this._startAttract(); }
     else if (a === 'exit') { this._leaveOnline(); this.onExit?.(); }
     else if (a === 'joinCode') { const code = this.hud.codeInput; if (code.length === 4) { this.net?.cancel(); this._goOnline(this.onlineKind || 'coop', code); } }
@@ -407,18 +610,27 @@ export class DweebWarfare {
       const k = e.key.toLowerCase();
       if (e.type === 'keyup') { this.keys.delete(k); return; }
       this.keys.add(k);
-      if (k === 'escape') { if (this.phase === 'playing' && !this.overlay) this.setPaused(true); else if (this.phase === 'paused' || this.overlay) this.setPaused(false); e.preventDefault(); return; }
+      if (k === 'escape') {
+        if (this.aiming) { this._cancelAim(); this.hud.toast('Targeting cancelled', 1.5); e.preventDefault(); return; }
+        if (this.phase === 'playing' && !this.overlay) this.setPaused(true);
+        else if (this.phase === 'paused' || this.overlay) this.setPaused(false);
+        e.preventDefault(); return;
+      }
       if (k === 'm') { this.toggleMute(); return; }
       if (this.phase !== 'playing') return;
-      const n = '1234'.indexOf(e.key);
+      const n = '12345'.indexOf(e.key);
       if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
       else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
       else if (k === 'e') { this.callSupply(); e.preventDefault(); }
       else if (k === 'r') { this.toggleFormation(); e.preventDefault(); }
+      else if (k === 'g') { this.callDecoy(); e.preventDefault(); }
+      else if (k === 't') { this.callWarhorn(); e.preventDefault(); }
+      else if (k === 'f') { this.callRepair(); e.preventDefault(); }
+      else if (k === 'y') { this.callTrap(); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
-      // Player 2 local PvP controls (keys 7, 8, 9, 0, and [)
+      // Player 2 local PvP controls (keys 7, 8, 9, 0, -)
       else if (this.isLocalPvp) {
-        const p2n = '7890'.indexOf(e.key);
+        const p2n = '7890-'.indexOf(e.key);
         if (p2n >= 0) { this.recruit(RECRUITABLE[p2n], 'red'); e.preventDefault(); }
         else if (k === '[') { this.callArtillery('red'); e.preventDefault(); }
         else if (k === ']') { this.callSupply('red'); e.preventDefault(); }
@@ -455,7 +667,11 @@ export class DweebWarfare {
       if (this._ptrs.size < 2) this._pinch = this._ptrs.size ? this._pinch : null;
       if (e.type === 'pointerup' && !p.moved && !wasMulti && this.phase === 'playing') {
         const hit = this._pick(e.clientX, e.clientY);
-        if (hit) { this.setRallyPoint(hit.x, hit.z); this.audio?.click(); }
+        if (hit) {
+          if (this.aiming?.kind === 'artillery') this._fireArtillery(hit.x, hit.z, this.aiming.team);
+          else if (this.aiming?.kind === 'trap') this._fireTrap(hit.x, hit.z, this.aiming.team);
+          else { this.setRallyPoint(hit.x, hit.z); this.audio?.click(); }
+        }
       }
       if (!this._ptrs.size) this._pinch = null;
     };
@@ -482,11 +698,13 @@ export class DweebWarfare {
 
   _stepOnce() {
     const st = this.st;
+    const blueP = st.aiPersonality?.blue || 'tactician';
+    const redP = st.aiPersonality?.red || 'tactician';
     let cmds;
-    if (this.attract) cmds = [...commanderDecide(st, 'blue'), ...commanderDecide(st, 'red')];
+    if (this.attract) cmds = [...commanderTurn(st, this.brain, 'blue', blueP), ...commanderTurn(st, this.brain, 'red', redP)];
     else {
       cmds = this.pending.splice(0);
-      if (st.mode === 'versus' && !this.isLocalPvp) cmds.push(...commanderDecide(st, 'red'));
+      if (st.mode === 'versus' && !this.isLocalPvp) cmds.push(...commanderTurn(st, this.brain, 'red', redP));
     }
     if (!this.attract) { this._stepWith(cmds); return; }
     stepBattle(st, cmds);
@@ -503,10 +721,28 @@ export class DweebWarfare {
         hud.toast(`📦 Supplies air-dropped! Nearby units healed!`, 2.5);
       } else if (ev.type === 'stance') {
         hud.toast(ev.stance === 'charge' ? `⚔️ CHARGE! Speed boosted!` : `🛡️ DEFENSIVE WALL! Holding ground!`, 2.0);
+      } else if (ev.type === 'decoy') {
+        hud.toast('🎈 Inflatable Decoy planted! The enemy will dump fire into it.', 2.8);
+      } else if (ev.type === 'pop') {
+        hud.toast('💥 POP! The decoy took the bait.', 2.2);
+      } else if (ev.type === 'warhorn') {
+        hud.toast(ev.team === this.team ? `📯 <b>WAR HORN!</b> Your army hits +30% harder!` : `📯 Enemy war horn! Brace for a push.`, 2.5);
+      } else if (ev.type === 'repair') {
+        hud.toast(ev.team === this.team ? `🛠️ Fort patched <b>+${ev.amount} HP</b>!` : `🛠️ The enemy is repairing their fort!`, 2.5);
+      } else if (ev.type === 'trap' && ev.team !== this.team && !this.seen.has('foeTrap')) {
+        this.seen.add('foeTrap');
+        hud.toast(`🕳️ The enemy buried a <b>spike pit</b>! Steer around the spikes.`, 5);
+      } else if (ev.type === 'veteran' && !this.seen.has('veteran')) {
+        this.seen.add('veteran');
+        hud.toast(`⭐ <b>Veterans</b> return to the field (+15% HP)!`, 5);
       } else if (ev.type === 'waveStart') {
         hud.banner(ev.boss ? 'BOSS WAVE!' : `WAVE ${ev.wave}`, ev.boss ? 'The Brass Bully rolls in' : `${ev.count} enemies incoming`, ev.boss ? 'boss' : '');
       } else if (ev.type === 'waveClear') {
         hud.banner('WAVE CLEARED', `+🪙 ${ev.reward} · your army patches up`, 'good');
+      } else if (ev.type === 'promote') {
+        const unitName = UNIT_TYPES[ev.unit]?.name || 'Unit';
+        if (ev.rank >= 3 && ev.name) hud.toast(`★ <b>${ev.name}</b> · ${unitName} reached rank 3!`, 3.5);
+        else if (ev.team === this.team && ev.rank >= 2) hud.toast(`▲ ${unitName} promoted to rank ${ev.rank}`, 2.5);
       } else if (ev.type === 'spawn' && ev.team !== this.team && !this.seen.has(ev.unit)) {
         this.seen.add(ev.unit);
         if (ENEMY_HINTS[ev.unit] && (st.wave > 1 || ev.unit !== 'shield')) hud.toast(ENEMY_HINTS[ev.unit], 7);
@@ -526,6 +762,16 @@ export class DweebWarfare {
       } else if (ev.type === 'backstab' && ev.team !== this.team && !this.seen.has('backstab')) {
         this.seen.add('backstab');
         hud.toast('<b>Backstab!</b> Sneaks hit units that are busy fighting. Guard your flanks.', 6);
+      } else if (ev.type === 'rout') {
+        const mine = ev.team === this.team;
+        hud.banner(mine ? 'ROUT!' : 'ENEMY ROUT!', mine ? 'Your line breaks — rally to steady them' : 'The enemy line breaks', mine ? 'boss' : 'good', 2.2);
+        hud.toast(mine
+          ? '<b>Morale broken!</b> Your army is routing — click the board to <b>rally</b>.'
+          : 'The enemy is <b>routing</b>! Press the attack.', 6);
+      } else if (ev.type === 'rally' && ev.recovered) {
+        const mine = ev.team === this.team;
+        hud.banner(mine ? 'RALLY!' : 'ENEMY RALLY', mine ? 'The line steadies' : 'The enemy regroups', mine ? 'good' : '', 1.8);
+        hud.toast(mine ? '💪 Your army <b>rallies</b>!' : 'The enemy <b>rallies</b>.', 3);
       } else if (ev.type === 'win' || ev.type === 'lose') {
         this.endTimer = 1.6;
       }
@@ -535,31 +781,50 @@ export class DweebWarfare {
   _end() {
     const st = this.st, s = st.stats[this.team];
     const won = st.winner === this.team;
+    const fw = st.finalWave || FINAL_WAVE;
     this.phase = 'over';
-    if (this.mode === 'defense') {
-      const reached = won ? FINAL_WAVE : st.wave;
+    if (this.mode === 'defense' && this.campaignIdx == null) {
+      const reached = won ? fw : st.wave;
       try {
         const key = bestKey(st.difficulty);
         const best = +localStorage.getItem(key) || 0;
         if (reached > best) localStorage.setItem(key, String(reached));
       } catch { /* private mode */ }
     }
+    // Campaign: bank the win, carry survivors forward as veterans.
+    let nextMission = false;
+    if (this.campaignIdx != null && this.campaignRun) {
+      const m = CAMPAIGN[this.campaignIdx];
+      if (won && m) {
+        const stars = missionStars(m, st);
+        saveCampaign(recordWin(loadCampaign(), this.campaignIdx, stars));
+        this.campaignRun.veterans = collectVeterans(st);
+        nextMission = this.campaignIdx + 1 < CAMPAIGN.length;
+      }
+    }
     const secs = Math.round(st.tick * WF_DT);
     const time = `${(secs / 60) | 0}:${String(secs % 60).padStart(2, '0')}`;
-    const wavesDefended = this.mode === 'defense' ? (won ? FINAL_WAVE : Math.max(0, st.wave - 1)) : (won ? 1 : 0);
-    const wavesStr = this.mode === 'defense' ? `${wavesDefended} / ${FINAL_WAVE}` : (won ? 'VICTORY' : 'DEFEAT');
+    const wavesDefended = this.mode === 'defense' ? (won ? fw : Math.max(0, st.wave - 1)) : (won ? 1 : 0);
+    const wavesStr = this.mode === 'defense' ? `${wavesDefended} / ${fw}` : (won ? 'VICTORY' : 'DEFEAT');
     const totalScore = ((this.mode === 'defense' ? wavesDefended : (won ? 10 : 2)) * 500) + (s.kills * 25) + Math.round((s.dmgDealt || 0) * 0.5) + (won ? 2000 : 0);
-    const sub = this.mode === 'defense'
-      ? (won ? `The fort held through all ${FINAL_WAVE} waves on ${st.diff.label}!` : `The fort fell on wave ${st.wave} (${st.diff.label}).`)
+    let sub = this.mode === 'defense'
+      ? (won ? `The fort held through all ${fw} waves on ${st.diff.label}!` : `The fort fell on wave ${st.wave} (${st.diff.label}).`)
       : (won ? `The ${this.team === 'blue' ? 'red' : 'blue'} fort is rubble.` : 'Your fort got flattened.');
+    if (this.campaignIdx != null && won) {
+      const vets = this.campaignRun?.veterans.length || 0;
+      sub = nextMission
+        ? `${sub} ${vets} veteran${vets === 1 ? '' : 's'} will fight on in the next mission.`
+        : `🏆 CAMPAIGN COMPLETE! ${sub}`;
+    }
     this.hud.showEnd({
       won, sub,
       waves: wavesStr,
       kills: s.kills,
       time,
       score: totalScore,
+      nextMission,
       stats: [
-        [this.mode === 'defense' ? 'waves cleared' : 'time', this.mode === 'defense' ? `${wavesDefended}/${FINAL_WAVE}` : time],
+        [this.mode === 'defense' ? 'waves cleared' : 'time', this.mode === 'defense' ? `${wavesDefended}/${fw}` : time],
         ['enemies popped', s.kills],
         ['dweebs lost', s.lost],
         ['kidnapped & converted', s.converted],
@@ -573,7 +838,7 @@ export class DweebWarfare {
 
   update(rawDt) {
     const dt = Math.min(rawDt, 0.1);
-    for (const k of ['artillery', 'supply', 'stance']) {
+    for (const k of Object.keys(POWER_COOLDOWNS)) {
       if (this.powerCooldowns[k] > 0) {
         this.powerCooldowns[k] = Math.max(0, this.powerCooldowns[k] - dt);
       }
@@ -594,7 +859,7 @@ export class DweebWarfare {
     this.view.frame(this.st, alpha, this.phase === 'paused' ? 0 : dt);
     if (this.phase !== 'title') {
       this.hud.update(this.st, this.team, dt, this.powerCooldowns);
-      this.hud.render(this.st, this.powerCooldowns);
+      this.hud.render(this.st, this.team, this.powerCooldowns);
     }
     this._camera(dt);
   }
@@ -624,6 +889,7 @@ export class DweebWarfare {
   }
 
   dispose() {
+    this._cancelAim();
     window.removeEventListener('keydown', this._onKey);
     window.removeEventListener('keyup', this._onKey);
     this.canvas?.removeEventListener('pointerdown', this._onPointer);
