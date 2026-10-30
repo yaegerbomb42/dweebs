@@ -962,6 +962,47 @@ const BUILDERS = {
     k.eye([0.07, 0.08, 0.22], [0.3, 0.2, 1], 0.04);
   },
 
+  hoverboard(k) {
+    // Sleek low-profile board with glowing underside
+    const deck = 0x1b1030;
+    const glow = 0x3fa9ff;
+    const accent = 0xffd23f;
+    const chrome = 0xc9d3e6;
+
+    // Main deck - thin rounded box
+    k.add(B(1.3, 0.08, 0.44, 0.04), deck, { p: [0, 0, 0] });
+
+    // Glowing underside strip (center channel)
+    k.add(B(1.1, 0.02, 0.12, 0.01), glow, { p: [0, -0.05, 0] }, { emissive: glow, emissiveIntensity: 0.8 });
+
+    // Side glow strips
+    for (const x of [-0.35, 0.35]) {
+      k.add(B(0.1, 0.03, 0.38, 0.02), glow, { p: [x, -0.04, 0] }, { emissive: glow, emissiveIntensity: 0.6 });
+    }
+
+    // Front nose light
+    k.add(Cyl(0.06, 0.04, 0.02, 8), glow, { p: [0, -0.03, 0.21], r: [PI / 2, 0, 0] }, { emissive: glow, emissiveIntensity: 1 });
+    k.add(B(0.12, 0.02, 0.04, 0.01), accent, { p: [0, 0.03, 0.2] });
+
+    // Rear thrust vents
+    for (const x of [-0.15, 0, 0.15]) {
+      k.add(Cyl(0.03, 0.03, 0.02, 6), chrome, { p: [x, -0.04, -0.2], r: [PI / 2, 0, 0] });
+    }
+
+    // Top grip tape pattern
+    k.add(B(1.2, 0.008, 0.38, 0.01), 0x0a0812, { p: [0, 0.045, 0] });
+    for (const z of [-0.15, -0.05, 0.05, 0.15]) {
+      k.add(B(1.0, 0.004, 0.02, 0.005), 0x2a2442, { p: [0, 0.047, z] });
+    }
+
+    // Center logo strip
+    k.add(B(0.4, 0.01, 0.08, 0.01), accent, { p: [0, 0.049, 0] });
+    k.add(B(0.08, 0.01, 0.3, 0.005), accent, { p: [0, 0.049, 0] });
+
+    // Googly eyes on the nose
+    k.eye([-0.08, 0.07, 0.18], [0, 0.1, 1], 0.04);
+    k.eye([0.08, 0.07, 0.18], [0, 0.1, 1], 0.04);
+  },
   chatteringTeeth(k) {
     const W = 0xfff8ee, gum = 0xd94a5a, tongue = 0xff7a9a, key = 0xc9d3e6;
     // Upper jaw, teeth and little skittering feet

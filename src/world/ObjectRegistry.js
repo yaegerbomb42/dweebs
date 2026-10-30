@@ -489,6 +489,14 @@ export const OBJECT_DEFS = {
     breakable: true, breakForce: 900, damage: 1.0, color: 0xff8fc0,
     breakWord: 'CHA-CHING!', breakColors: [0xffd23f, 0xffc21f, 0xff8fc0],
   },
+  hoverboard: {
+    name: 'Hoverboard',
+    shape: 'box', dims: { hx: 0.65, hy: 0.04, hz: 0.22 },
+    visualScale: [1.3, 0.08, 0.44],
+    material: 'plastic', mass: 0.8, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.5, color: 0x3fa9ff,
+    rideable: true,
+  },
   chatteringTeeth: {
     name: 'Wind-Up Chattering Teeth',
     shape: 'box', dims: { hx: 0.22, hy: 0.14, hz: 0.18 },
