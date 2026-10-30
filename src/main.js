@@ -1005,6 +1005,37 @@ function startBuildLab() {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
     },
+    // Stable handlers
+    onStableGet: () => currentBuildLab?.stableSlots ?? [],
+    onStableSave: idx => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const entry = currentBuildLab.saveStableSlot(idx);
+      if (entry) {
+        currentBuildHud.renderStable(currentBuildLab.stableSlots);
+        fx?._toyWord?.('SAVED!', { x: 0, y: 1.2, z: 0 }, 0xffd23f, 1.2);
+        fx?.cam?.shake?.(0.15);
+      }
+    },
+    onStableLoad: idx => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const ok = currentBuildLab.loadStableSlot(idx);
+      if (ok) {
+        currentBuildHud.syncForm(currentBuildLab.config);
+        currentBuildHud.renderStable(currentBuildLab.stableSlots);
+        fx?._toyWord?.('LOADED!', { x: 0, y: 1.2, z: 0 }, 0x5ee06a, 1.2);
+        fx?.cam?.shake?.(0.1);
+      }
+    },
+    onStableDelete: idx => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const ok = currentBuildLab.deleteStableSlot(idx);
+      if (ok) {
+        currentBuildHud._stableSelected = -1;
+        currentBuildHud.renderStable(currentBuildLab.stableSlots);
+        fx?._toyWord?.('CLEARED!', { x: 0, y: 1.2, z: 0 }, 0xff4d5e, 1.2);
+        fx?.cam?.shake?.(0.15);
+      }
+    },
     onTournamentState: () => adoptTournamentBracket()?.state?.() ?? null,
     onTournamentStart: () => {
       if (currentBuildLab) {

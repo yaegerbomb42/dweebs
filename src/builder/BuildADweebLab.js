@@ -38,6 +38,8 @@ import {
 
 const STORAGE_KEY = 'dweebs-custom-build';
 export const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+const STABLE_KEY = 'dweebs-stable-v1';
+const STABLE_SLOTS = 6;
 const SLOTS_KEY = 'dweebs-build-slots-v1';
 const DOJO_RECORDS_KEY = 'dweebs-dojo-records-v1';
 const MAX_SLOTS = 3;
@@ -181,6 +183,9 @@ export class BuildADweebLab {
     // the active tournament bracket (null when no tournament is running).
     this.attachedFighter = null;
     this.tournament = this.loadTournament();
+
+    // Dweeb Stable — six saved creature slots
+    this.stableSlots = this.loadStable();
 
     this._buildStage();
     // Note: no seed snapshot — the first change records its own pre-change
@@ -839,6 +844,71 @@ export class BuildADweebLab {
 
   clearTournamentStorage() {
     try { localStorage.removeItem(TOURNAMENT_KEY); } catch { /* private mode */ }
+  }
+
+  // ─── Dweeb Stable (six saved creature slots) ────────────────────────────────
+
+  /** Load the stable from localStorage, returning an array of 6 slots (null or {name, shape, savedAt, config}). */
+  loadStable() {
+    try {
+      const saved = localStorage.getItem(STABLE_KEY);
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) {
+          // Ensure exactly 6 slots, pad with null
+          const slots = new Array(STABLE_SLOTS).fill(null);
+          arr.forEach((entry, i) => {
+            if (i < STABLE_SLOTS && entry && entry.config) slots[i] = entry;
+          });
+          return slots;
+        }
+      }
+    } catch { /* corrupted / private mode */ }
+    return new Array(STABLE_SLOTS).fill(null);
+  }
+
+  /** Persist the stable array to localStorage. */
+  saveStable() {
+    try {
+      localStorage.setItem(STABLE_KEY, JSON.stringify(this.stableSlots));
+    } catch { /* private mode */ }
+  }
+
+  /** Snapshot the current lab config into stable slot `i` (0–5). Returns the saved entry or null on failure. */
+  saveStableSlot(i) {
+    if (i < 0 || i >= STABLE_SLOTS) return null;
+    const entry = {
+      name: this.config?.name || `Dweeb ${i + 1}`,
+      shape: this.config?.shape || 'block',
+      savedAt: Date.now(),
+      config: { ...this.config }, // deep-ish clone of current config
+    };
+    this.stableSlots[i] = entry;
+    this.saveStable();
+    return entry;
+  }
+
+  /** Load stable slot `i` into the lab (triggers rebuild + collider sync). Returns true on success. */
+  loadStableSlot(i) {
+    if (i < 0 || i >= STABLE_SLOTS) return false;
+    const entry = this.stableSlots[i];
+    if (!entry || !entry.config) return false;
+    this.updateConfig(entry.config); // rebuilds model, syncs attached fighter, saves to dweebs-custom-build
+    return true;
+  }
+
+  /** Clear stable slot `i` only. Returns true if a slot was cleared. */
+  deleteStableSlot(i) {
+    if (i < 0 || i >= STABLE_SLOTS) return false;
+    if (!this.stableSlots[i]) return false;
+    this.stableSlots[i] = null;
+    this.saveStable();
+    return true;
+  }
+
+  /** Alias for deleteStableSlot for clarity. */
+  clearStableSlot(i) {
+    return this.deleteStableSlot(i);
   }
 
   update(dt) {
