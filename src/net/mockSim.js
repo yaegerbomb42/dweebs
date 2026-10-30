@@ -22,7 +22,15 @@ export class MockSim {
     for (let i = 0; i < 4; i++) this.spawnBox(this.nextId());
   }
 
-  nextId() { let m = 0; for (const id of this.entities.keys()) m = Math.max(m, id); return m + 1; }
+  nextId() {
+    // Item ids start past the dweeb id space (dweebs are slot+1, i.e. 1..MAX_PLAYERS),
+    // mirroring the real sim's ITEM_WIRE_BASE discipline. Before this, boxes took
+    // ids 1..4 and a client adopting "its" entity on the first snapshot would grab
+    // a box instead of its dweeb — a 15 m "correction" out of nowhere.
+    let m = MAX_PLAYERS;
+    for (const id of this.entities.keys()) m = Math.max(m, id);
+    return m + 1;
+  }
   rand() { // xorshift32, so a match replays identically
     let x = this.rngState;
     x ^= x << 13; x ^= x >>> 17; x ^= x << 5;

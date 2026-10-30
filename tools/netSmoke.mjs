@@ -48,7 +48,7 @@ function makeClient(i, flags) {
   };
   sock.on('open', () => {
     c.status = 'connected';
-    c.send({ t: 'hello', client: 'smoke', clientTime: Date.now(), protocol: PROTOCOL_VERSION });
+    c.send({ t: 'hello', client: 'smoke', clientTime: Date.now(), protocol: PROTOCOL_VERSION, codec: CODEC });
     c.join();
   });
   sock.on('message', data => {
@@ -64,6 +64,12 @@ function makeClient(i, flags) {
       // the sim does not step until then. Without this the whole harness measured a
       // frozen world and reported perfect agreement — a false PASS.
       c.send({ t: 'ready', ready: true });
+    }
+    if (m.t === 'room' && m.phase === 'lobby' && c.slot >= 0) {
+      // Lost-frame recovery, same as NetClient._confirmReady: a dropped ready used to
+      // strand the harness in a frozen lobby with a spurious FAIL.
+      const me = (m.players || []).find(p => p.slot === c.slot && !p.bot);
+      if (me && !me.ready) c.send({ t: 'ready', ready: true });
     }
     if (m.t === 'error') {
       c.errors.push(m.code);
