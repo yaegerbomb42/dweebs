@@ -39,6 +39,8 @@ import { Colony } from './adventure/colony.js';
 import { BuildingManager } from './adventure/building.js';
 import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
+import { HillZone } from './world/HillZone.js';
+let hillZone = null;
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
 import { BuildADweebLab } from './builder/BuildADweebLab.js';
@@ -474,6 +476,7 @@ function toMenu() {
     buildingManager = null;
   }
   colony = null;
+  if (hillZone) { hillZone.dispose(); hillZone = null; }
   audio.stopAmbience?.();
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
@@ -984,6 +987,11 @@ function startRound() {
   decals.clear();
   $('round-screen').classList.add('hidden');
 
+  // King of the Hill: draw the zone + race board, and point the bots at it
+  if (hillZone) { hillZone.dispose(); hillZone = null; }
+  if (modeDef.isHill) hillZone = new HillZone(scene, BALANCE.hill);
+  for (const b of bots) b.hill = modeDef.isHill ? { x: 0, z: 0, r: BALANCE.hill.radius } : null;
+
   // Spawn batteries if in escape mode
   // Spawn arcing cannons and bouncy melons in Wall Drop mode
   if (modeDef.hasWallDrop) {
@@ -1102,6 +1110,20 @@ const matchEvents = {
     if (d.eliminated && !d.isPlayer) hud.popup('OUT!', pos, 'big', d.color);
     // Kill-cam lite: lean toward where they went when the player was part of it
     if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
+  },
+  onHillHold(holder) {
+    if (!holder) return;
+    const p = holder.getPosition();
+    hud.feed(`${Hud.nameTag(holder)} <b>takes the hill!</b>`, holder.isPlayer ? 'style' : '');
+    hud.popup(holder.isPlayer ? 'YOUR HILL!' : 'KING!', { x: p.x, y: p.y + 1.8, z: p.z }, 'small', holder.color);
+    particles.ring({ x: 0, y: 0.1, z: 0 }, { color: holder.color, size: BALANCE.hill.radius * 1.6, life: 0.45 });
+    arena.excite?.(0.25);
+  },
+  onHillScore(d, score) {
+    fx.hillScoreFx(d, score);
+    const left = BALANCE.hill.target - score;
+    if (left > 0 && left <= 10) hud.announce(`${nameOf(d)}: ${left} TO GO!`, d.isPlayer ? 'go' : 'danger', 1.0);
+    arena.excite?.(0.4);
   },
   onFlail(d, pos) {
     fx.flail(d, pos);
@@ -1386,6 +1408,7 @@ function loop() {
     combat.update(dt, match.time);
     updateDrops(dt);
     match.update(dt);
+    if (hillZone) hillZone.update(dt, dweebs, match.hillHolder, nameOf);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
       for (const d of dweebs) deathCinema.recordFrame(d, match.time);
     }
