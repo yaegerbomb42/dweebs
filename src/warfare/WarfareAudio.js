@@ -3,7 +3,7 @@
 // boss drone, win fanfare, lose trombone, UI clicks. Mute persists in localStorage.
 const KEY = 'dweebs-warfare-muted';
 const store = typeof localStorage !== 'undefined' ? localStorage : { getItem: () => null, setItem: () => {} };
-const LIMITS = { hit: 14, death: 8, explode: 6, fire: 8, slam: 4, grab: 4, convert: 4, fortHit: 4, recruit: 6 };
+const LIMITS = { hit: 14, death: 8, pop: 6, explode: 6, fire: 8, slam: 4, grab: 4, convert: 4, fortHit: 4, recruit: 6, warhorn: 2, repair: 2, trap: 4 };
 
 export class WarfareAudio {
   constructor({ enabled = true } = {}) {
@@ -151,6 +151,25 @@ export class WarfareAudio {
     [523.3, 659.3, 784, 1046.5].forEach((f, i) => this._tone({ type: 'square', f0: f, dur: 0.16, vol: 0.09, at: i * 0.08, filter: 3000 }));
   }
   enrage() { if (!this.live) return; this._tone({ type: 'sawtooth', f0: 90, f1: 45, dur: 0.9, vol: 0.3, filter: 700 }); this._noise({ dur: 0.6, vol: 0.25, type: 'lowpass', f0: 800, f1: 100 }); }
+  magnet(x) {
+    if (!this.live) return;
+    this._tone({ type: 'sine', f0: 120, f1: 60, dur: 1.2, vol: 0.25, attack: 0.3, filter: 300, x });
+    this._noise({ dur: 0.8, vol: 0.15, type: 'bandpass', f0: 800, f1: 400, q: 3, x });
+  }
+  warhorn(x) {
+    if (!this.live) return;
+    [196, 261.6, 329.6].forEach((f, i) => this._tone({ type: 'sawtooth', f0: f * 0.99, f1: f, dur: 0.5, vol: 0.16, at: i * 0.16, attack: 0.06, filter: 1400, x }));
+  }
+  mend(x) {
+    if (!this.live) return;
+    [880, 1174.7].forEach((f, i) => this._tone({ type: 'triangle', f0: f, dur: 0.12, vol: 0.18, at: i * 0.09, x }));
+    this._noise({ dur: 0.08, vol: 0.14, f0: 2400, q: 3, x });
+  }
+  trapSnap(x) {
+    if (!this.live) return;
+    this._noise({ dur: 0.1, vol: 0.3, f0: 3200, f1: 700, q: 2, x });
+    this._tone({ type: 'square', f0: 180, f1: 90, dur: 0.1, vol: 0.14, filter: 900, x });
+  }
   win() {
     if (!this.live) return;
     [523.3, 659.3, 784, 1046.5, 784, 1046.5].forEach((f, i) => this._tone({ type: 'square', f0: f, dur: i === 5 ? 0.7 : 0.16, vol: 0.1, at: i * 0.13, filter: 3200 }));
@@ -168,17 +187,23 @@ export class WarfareAudio {
     for (const ev of events) {
       switch (ev.type) {
         case 'hit': if (this._take('hit')) this.hit(ev.x, ev.dmg > 40); break;
-        case 'death': if (this._take('death')) this.pop(ev.x, ev.unit === 'boss' || ev.unit === 'brute'); break;
+        case 'death': if (ev.unit !== 'decoy' && this._take('death')) this.pop(ev.x, ev.unit === 'boss' || ev.unit === 'brute'); break;
+        case 'pop': if (this._take('pop')) this.pop(ev.x, false); break;
         case 'explode': if (this._take('explode')) this.boom(ev.x, !!ev.big); break;
         case 'fire': if (this._take('fire')) this.thoomp(ev.x); break;
         case 'slam': if (this._take('slam')) this.slam(ev.x, ev.unit === 'boss'); break;
         case 'grab': if (this._take('grab')) this.grab(ev.x); break;
         case 'convert': if (this._take('convert')) this.convert(ev.x); break;
+        case 'artillery': if (this._take('explode')) this.boom(ev.x, true); break;
         case 'recruit': if (ev.team === team && this._take('recruit')) this.recruit(); break;
         case 'fortHit': if (ev.team === team && this._take('fortHit')) this.fortThunk(); break;
         case 'waveStart': this.waveStart(ev.boss); break;
         case 'waveClear': this.waveClear(); break;
         case 'enrage': this.enrage(); break;
+        case 'magnet': if (this._take('explode')) this.magnet(ev.x); break;
+        case 'warhorn': if (this._take('warhorn')) this.warhorn(ev.x); break;
+        case 'repair': if (this._take('repair')) this.mend(ev.x); break;
+        case 'trap': if (this._take('trap')) this.trapSnap(ev.x); break;
         default: break;
       }
     }

@@ -11,7 +11,8 @@
 // recordTournamentResult); the arena bout itself is launched through the HUD's
 // onLaunchTournament handler (main.js follow-up).
 
-import { ELEMENTAL_PALETTES } from './CustomDweebModel.js';
+import { ELEMENTAL_PALETTES, APPENDAGE_GAMEPLAY } from './CustomDweebModel.js';
+import { BALANCE } from '../game/Balance.js';
 
 export const TOURNAMENT_ROUNDS = [
   { id: 'quarterfinal', name: 'QUARTERFINALS', bouts: 4 },
@@ -124,6 +125,40 @@ export function simulateAiMatch(a, b, rng = Math.random) {
   const pb = powerOf(b);
   const pA = pa / Math.max(1e-6, pa + pb);
   return rng() < pA ? a : b;
+}
+
+/**
+ * Generate a gauntlet opponent for a wave: a random champion that gets heavier, tougher, a little
+ * faster and a lot smarter every wave (each stat has its own cap so late waves stay playable),
+ * with one appendage re-rolled so the run doesn't feel like the same fight on repeat.
+ */
+export function gauntletOpponent(wave, rng = Math.random) {
+  const G = BALANCE.gauntlet;
+  const n = Math.max(0, wave - 1);
+  const pick = CHAMPION_BUILDS[Math.floor(rng() * CHAMPION_BUILDS.length)];
+  const grow = (base, per, cap) => Number((base * Math.min(cap, 1 + per * n)).toFixed(2));
+  const st = pick.stats || {};
+  const stats = {
+    ...st,
+    mass: grow(st.mass ?? 2.8, G.massPerWave, G.massCap),
+    armor: grow(st.armor ?? 1, G.armorPerWave, G.armorCap),
+    speed: grow(st.speed ?? 1, G.speedPerWave, G.speedCap),
+    jump: grow(st.jump ?? 1, G.jumpPerWave, G.jumpCap),
+  };
+  // AI brains sharpen toward G.dnaMax over the first G.dnaWaves waves.
+  const t = Math.min(1, n / G.dnaWaves);
+  const dna = {};
+  for (const [k, v] of Object.entries(pick.dna || {})) dna[k] = Number((v + (Math.max(v, G.dnaMax) - v) * t).toFixed(2));
+  const appendages = Object.keys(APPENDAGE_GAMEPLAY || {}).filter(k => k !== 'none');
+  const appendage = n > 0 && appendages.length ? appendages[Math.floor(rng() * appendages.length)] : pick.appendage;
+  return {
+    ...pick,
+    stats, dna, appendage,
+    badge: `🌊 WAVE ${wave} · ${pick.badge}`,
+    name: wave > 1 ? `${pick.name} Mk.${wave}` : pick.name,
+    isGauntlet: true,
+    wave,
+  };
 }
 
 let _boutSeq = 0;
