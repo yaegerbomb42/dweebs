@@ -303,7 +303,11 @@ export class Hud {
     this.holdEl.classList.toggle('show', !!player?.held);
     if (player?.held) {
       const gadget = player.held.ref.def?.gadget;
-      if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
+      if (player.held.kind === 'dweeb') {
+        const n = player.pummelCount || 0;
+        this.holdEl.innerHTML = `<kbd>LMB</kbd> PUMMEL${n ? ` ×${n}` : ''} · <kbd>HOLD RMB</kbd>/<kbd>E</kbd> TO THROW`;
+      }
+      else if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'magnet') this.holdEl.innerHTML = '<kbd>LMB</kbd> MAGNET PULL · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (player.held.ref.isWeapon) {
         const wname = { spiky: 'spiky ball', glove: 'boxing glove' }[player.held.ref.def.weapon] || player.held.ref.def.weapon;

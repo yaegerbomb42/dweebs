@@ -237,6 +237,20 @@ export class Fx {
     if (target) this.hud.popup('GOTCHA!', target.getPosition(), 'small', d.color);
   }
 
+  /** A pummel landed on a held victim: comic impact, rising combo count. */
+  pummel(d, t, count = 1) {
+    const pos = t.getPosition();
+    const color = d?.color ?? 0xffd23f;
+    this.particles.hit(pos, color);
+    this.particles.emit(pos, { count: 8, colors: [color, 0xffffff], speed: 5, up: 3, size: 0.12, life: 0.32 });
+    this.bursts?.spawn(pos, 0.55 + Math.min(1, count * 0.12), color);
+    this.audio.playPunch(0.3, this._pan(pos));
+    const word = count > 1 ? `POW! ×${count}` : 'POW!';
+    this._toyWord(word, { x: pos.x, y: pos.y + 0.7, z: pos.z }, 0xffd23f, count >= 3 ? 'big' : 'small');
+    this.cam?.shake?.(d?.isPlayer ? 0.1 : 0.04);
+    this.hitStop = Math.max(this.hitStop, 0.03);
+  }
+
   escape(t) {
     const pos = t.getPosition();
     this.particles.sparkle(pos, t.color);

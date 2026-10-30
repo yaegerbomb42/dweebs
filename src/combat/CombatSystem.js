@@ -79,6 +79,11 @@ export class CombatSystem {
     if (!d.canAct) return;
 
     if (d.held && !(d.held.kind === 'object' && d.held.ref.isWeapon)) {
+      // Tapping LMB with a Dweeb in hand pummels; a held charge still throws.
+      if (d.held.kind === 'dweeb' && charge === 0) {
+        this.pummelHeld(d);
+        return;
+      }
       if (d.held.kind === 'object' && d.held.ref.def.gadget) {
         this.useGadget(d, charge);
         return;
@@ -189,6 +194,29 @@ export class CombatSystem {
       // A whiffed jab breaks the streak: the super-smash meter wants consecutive LANDED punches.
       if (!weapon) d.punchStreak = 0;
     }
+  }
+
+  /** Tap LMB while holding a Dweeb: a quick knee to the face. Each pummel feeds the next throw. */
+  pummelHeld(d) {
+    if (!d || !d.held || d.held.kind !== 'dweeb') return false;
+    const t = d.held.ref;
+    if (!t || !t.active || t.invulnTimer > 0) return false;
+    if ((d.attackCooldown || 0) > 0) return false; // no machine-gun knees
+    const damage = 2 + Math.random() * 2;
+    t.percent = Math.min(999, (t.percent || 0) + damage);
+    t.flashTimer = Math.max(t.flashTimer || 0, 0.1);
+    t.landSquash = Math.max(t.landSquash || 0, 0.25);
+    t.punchStreak = 0;
+    t.lastHitBy = d;
+    t.lastHitTime = this.time;
+    d.damageDealt = (d.damageDealt || 0) + damage;
+    d.pummelCount = (d.pummelCount || 0) + 1;
+    d.attackAnim = 0.18;
+    d.attackCooldown = Math.max(d.attackCooldown || 0, 0.18);
+    d.swingT = 0.15;
+    this.fx?.pummel?.(d, t, d.pummelCount);
+    this.addStyle(d, 2);
+    return true;
   }
 
   // ═══ New moves: parry, slam, drop-kick, gadgets ═══
@@ -439,6 +467,7 @@ export class CombatSystem {
         return false;
       }
       d.held = { kind: 'dweeb', ref: best };
+      d.pummelCount = 0;
       best.setGrabbed(d);
       d.attackCooldown = 0.25;
       // Air grab refreshes one air jump: a risky catch becomes a recovery route.
@@ -453,6 +482,7 @@ export class CombatSystem {
 
   _holdObject(d, obj) {
     d.held = { kind: 'object', ref: obj };
+    d.pummelCount = 0;
     obj.grab(d);
     // Heft: heavy props take a beat to settle and slow your walk; featherweights are instant
     const C = BALANCE.carry, mass = obj.def.mass ?? 1;
@@ -495,10 +525,13 @@ export class CombatSystem {
 
     if (held.kind === 'dweeb') {
       const t = held.ref;
+      const pummels = Math.max(0, d.pummelCount || 0);
+      d.pummelCount = 0;
       t.setGrabbed(null);
       t.body.setTranslation({ x: pos.x + f.x * 0.9, y: pos.y + 0.9, z: pos.z + f.z * 0.9 }, true);
       _tmp.set(f.x, 0.55, f.z);
-      const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1), p * (yeet ? SUPER : 1));
+      const throwCharge = Math.min(1, charge + pummels * 0.15);
+      const atk = scaled(A.dweebThrow(throwCharge), p * (yeet ? SUPER : 1), p * (yeet ? SUPER : 1));
       const launch = t.receiveHit({ dir: _tmp, ...atk, attacker: d, time: this.time });
       t.invulnTimer = 0;
       if (launch > 0) {
@@ -551,6 +584,7 @@ export class CombatSystem {
     if (!d.held) return;
     const held = d.held;
     d.held = null;
+    d.pummelCount = 0;
     if (held.kind === 'dweeb') {
       held.ref.setGrabbed(null);
       held.ref.invulnTimer = 0.3;

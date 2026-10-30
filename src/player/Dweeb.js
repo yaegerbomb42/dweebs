@@ -59,6 +59,7 @@ export class Dweeb {
     this.held = null;           // { kind: 'object'|'dweeb', ref }
     this.grabbedBy = null;
     this.escapeTimer = 0;
+    this.pummelCount = 0;       // grab combo hits banked before the throw
     this.flashTimer = 0;
     this.diBudget = 0;          // Δv left to steer this launch with (directional influence)
     this.landLag = 0;
@@ -963,6 +964,7 @@ export class Dweeb {
 
   setGrabbed(holder) {
     this.grabbedBy = holder;
+    this.pummelCount = 0;
     if (holder) {
       this.escapeTimer = (1.4 + this.percent * 0.008) * this.stats.escape;
       this.charging = 0;
@@ -1036,6 +1038,7 @@ export class Dweeb {
     this.superArmed = false;
     this.punchStreak = 0;
     this.punchStreakT = -99;
+    this.pummelCount = 0;
   }
 
   eliminate() {
