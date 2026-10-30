@@ -95,6 +95,12 @@ export function buildScreens() {
           <div class="hub-profile" id="hub-profile" aria-label="Your dweeb profile"></div>
         </header>
 
+        <!-- DWEEB NEWS: live ticker under the header -->
+        <div class="hub-news-ticker" id="hub-news" aria-label="Dweeb News" role="status" aria-live="polite">
+          <span class="hub-news-label" id="hub-news-label">📰 DWEEB NEWS</span>
+          <div class="hub-news-track" id="hub-news-track" aria-hidden="true"></div>
+        </div>
+
         <!-- HERO: Build-A-Dweeb is the main experience -->
         <article class="hub-hero" id="hub-hero-builder" aria-label="Build-A-Dweeb, the main experience">
           <div class="hero-glow" aria-hidden="true"></div>
