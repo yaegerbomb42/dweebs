@@ -296,6 +296,14 @@ export const OBJECT_DEFS = {
     breakable: false, breakForce: 50000, damage: 0.8, color: 0xff9a3c,
     gadget: 'magnet',
   },
+  boomerangBass: {
+    name: 'Boomerang Bass',
+    shape: 'box', dims: { hx: 0.42, hy: 0.06, hz: 0.16 },
+    visualScale: [1, 1, 1],
+    material: 'rubber', mass: 1.4, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 1.6, color: 0x3fa9ff,
+    boomerang: { delay: 0.55, returnSpeed: 17, catchRadius: 2.2, maxTime: 2.6 },
+  },
   grappleGlove: {
     name: 'Grapple Glove',
     shape: 'box', dims: { hx: 0.22, hy: 0.18, hz: 0.22 },

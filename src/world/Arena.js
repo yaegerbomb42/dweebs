@@ -32,6 +32,7 @@ const START_ITEMS = [
   ['bowlingBall', 5, 1, -4],
   ['beachBall', 0, 1, 5.5],
   ['spikyBall', -5.5, 1, -1],
+  ['boomerangBass', 4.5, 1, 2.5],
   ['crate', 8.5, 1, -1],
   ['explosiveBarrel', -8, 1, 5],
   ['watermelon', 1.5, 1, 9],
