@@ -36,7 +36,11 @@ export const FORT_ALARM = 16;
 /** Stealers convert captives anywhere inside this ring around their fort (the pen). */
 export const PEN_REACH = 4;
 export const SPAWN_GAP = 8;
-export const VERSUS_INCOME = 4;          // coins per second per side in versus
+export const VERSUS_INCOME = 4;
+/** Versus sudden death: after this many ticks both forts start to crumble and repairs stop working.
+ *  The side with the stronger standing army crumbles slower, so a stalemate always ends. */
+export const SUDDEN_DEATH_TICK = 30 * 150;
+export const SUDDEN_DEATH_DRAIN = 1;     // base fort hp lost per tick in sudden death          // coins per second per side in versus
 
 // Army morale (separate from per-unit shouldRetreat): losses shake the whole line, kills steady it.
 export const MORALE_ROUT_AT = 0.3;       // below this a broken army starts to rout
@@ -50,6 +54,11 @@ export const MORALE_BOSS_GAIN = 0.25;    // felling a boss is a big swing
 export const MORALE_BOSS_LOSS = 0.4;     // losing a boss is a big swing
 export const ROUT_TICKS = 4 * WF_HZ;     // a rout is dramatic but temporary
 export const ROUT_COOLDOWN = 6 * WF_HZ;  // grace before the same unit can break again
+/** Units that never rout: bosses, and shields — the wall holds even when the army wavers,
+ *  otherwise one barrel chain breaks the line and the rockets it exists to counter mop it up. */
+export const STEADFAST = new Set(['boss', 'shield']);
+/** Shields take this fraction of barrel-blast damage. */
+export const BARREL_SHIELD_BRACE = 0.4;
 export const ROUT_TAKE_DMG = 0.5;        // routed units take reduced damage while fleeing
 /** Commander stances and their army-wide speed multiplier. */
 export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
@@ -574,7 +583,7 @@ export function applyCommand(st, c) {
   }
   if (c.type === 'repair') {
     const f = st.forts[c.team];
-    if (f.invulnerable || f.hp >= f.maxHp || st.coins[c.team] < REPAIR_COST) return false;
+    if (f.invulnerable || f.hp >= f.maxHp || (st.mode === 'versus' && st.tick >= SUDDEN_DEATH_TICK) || st.coins[c.team] < REPAIR_COST) return false;
     st.coins[c.team] -= REPAIR_COST;
     f.hp = Math.min(f.maxHp, f.hp + REPAIR_AMOUNT);
     st.events.push({ type: 'repair', team: c.team, x: f.x, z: f.z, amount: REPAIR_AMOUNT });
@@ -693,7 +702,9 @@ function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, bas
     const d = Math.sqrt(dx * dx + dz * dz);
     const f = splashFalloff(d, radius + e.radius * 0.5);
     if (f <= 0) continue;
-    const dmg = computeDamage(attType, e.type, { base: srcBase, dmgMul: dmgMul * hg, falloff: f, covered: cover && isCovered(st, e) });
+    // Shields brace behind their disc against raw barrel blasts, like they soak rocket splash.
+    const braced = propSrc && e.type === 'shield' ? BARREL_SHIELD_BRACE : 1;
+    const dmg = braced * computeDamage(attType, e.type, { base: srcBase, dmgMul: dmgMul * hg, falloff: f, covered: cover && isCovered(st, e) });
     hurt(st, e, dmg, attTeam, attType, x, z, attId);
   }
   damageBarricades(st, x, z, radius, srcDmg * dmgMul, attTeam);
@@ -920,7 +931,7 @@ function updateUnit(st, u, enemies) {
       return;
     }
   }
-  if (u.state !== 'rout' && u.type !== 'boss' && u.routCd <= 0 && armyMorale < MORALE_ROUT_AT) {
+  if (u.state !== 'rout' && !STEADFAST.has(u.type) && u.routCd <= 0 && armyMorale < MORALE_ROUT_AT) {
     u.state = 'rout';
     u.routTicks = ROUT_TICKS;
     u.targetId = 0;
@@ -1187,9 +1198,24 @@ function updateTraps(st) {
   }
 }
 
+function armyValue(st, team) {
+  let v = 0;
+  for (const u of st.units) if (u.alive && u.team === team && !u.decoy) v += stats(u.type).cost;
+  return v;
+}
+
+function suddenDeath(st) {
+  if (st.tick === SUDDEN_DEATH_TICK) st.events.push({ type: 'suddenDeath' });
+  const blue = armyValue(st, 'blue'), red = armyValue(st, 'red');
+  const ratio = (own, foe) => Math.min(2, Math.max(0.5, (foe + 1) / (own + 1)));
+  st.forts.blue.hp -= SUDDEN_DEATH_DRAIN * ratio(blue, red);
+  st.forts.red.hp -= SUDDEN_DEATH_DRAIN * ratio(red, blue);
+}
+
 function updatePhase(st) {
   if (st.mode === 'versus') {
     if (st.income && st.tick % WF_HZ === 0) { st.coins.blue += st.income; st.coins.red += st.incomeRed; }
+    if (st.tick >= SUDDEN_DEATH_TICK) suddenDeath(st);
     return;
   }
   if (st.phase === 'prep') {

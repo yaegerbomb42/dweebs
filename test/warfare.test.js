@@ -17,6 +17,7 @@ const unit = (o) => ({ id: 1, team: 'blue', type: 'shield', x: 0, z: 0, vx: 0, v
 describe('warfare units', () => {
   it('every unit has sane stats and a recruitable counter', () => {
     for (const [type, s] of Object.entries(UNIT_TYPES)) {
+      if (type === 'decoy') continue; // commander-power balloon, not a fighting unit
       expect(s.hp, type).toBeGreaterThan(0);
       expect(s.speed, type).toBeGreaterThan(0);
       expect(s.cost, type).toBeGreaterThan(0);

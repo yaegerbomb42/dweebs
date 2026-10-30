@@ -675,7 +675,8 @@ describe('BuildADweebHud wave3', () => {
     });
     globalThis.document = {
       getElementById: () => null,
-      createElement: tag => (tag === 'div' ? root : mkEl()),
+      // Only the first div is the HUD root; later divs (e.g. Stable slots) are plain stubs.
+      createElement: (() => { let rootUsed = false; return tag => (tag === 'div' && !rootUsed ? (rootUsed = true, root) : mkEl()); })(),
       head: mkEl(),
       body: mkEl(),
       addEventListener() {}, removeEventListener() {},

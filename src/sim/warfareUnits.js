@@ -31,7 +31,7 @@ export const UNIT_TYPES = Object.freeze({
   shield: {
     name: 'Shield', blurb: 'Plastic-disc tank. Too bulky to steal. Blocks rocket splash for nearby allies.',
     hp: 190, speed: 3.6, radius: 0.6, mass: 3,
-    attack: 'melee', range: 1.0, dmg: 18, cooldown: 30,
+    attack: 'melee', range: 1.0, dmg: 22, cooldown: 30,
     cost: 30, retreatAt: 0.15, flanker: false, grabbable: false, aggro: 14,
   },
   rocket: {
