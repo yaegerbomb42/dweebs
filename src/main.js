@@ -34,6 +34,7 @@ import { OBJECT_DEFS } from './world/ObjectRegistry.js';
 import { PALETTE } from './render/Toon.js';
 import { statsFor, BALANCE } from './game/Balance.js';
 import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
+import { MutatorDirector } from './game/Mutators.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
 import { BuildingManager } from './adventure/building.js';
@@ -103,6 +104,7 @@ let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
 let rematch = null;
+let mutatorDirector = new MutatorDirector();
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
 
@@ -484,6 +486,7 @@ function toMenu() {
   arena.hazardsActive = false;
   controller && (controller.enabled = false);
   resetSuddenDeathFx();
+  try { mutatorDirector.end(mutatorCtx()); } catch (e) { console.error('[Mutator] end error:', e); }
   cam.unlock();
   audio.stopMusic();
   audio.setCharge(0);
@@ -964,8 +967,17 @@ function startMatch() {
   cam.lock();
 }
 
+// Build ctx for mutators: { physics, arena, dweebs, hud, combat, time, match }
+// One persistent ctx: mutators keep their timers on it between frames.
+const _mutatorCtx = {};
+function mutatorCtx() {
+  return Object.assign(_mutatorCtx, { physics, arena, dweebs, hud, combat, time: match?.time ?? 0, match });
+}
+
 function startRound() {
   const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
+  // Undo last round's mutator before the round reset re-applies arena stats.
+  try { mutatorDirector.end(mutatorCtx()); } catch (e) { console.error('[Mutator] end error:', e); }
   if (arena.dropWall) {
     if (modeDef.hasWallDrop) {
       arena.dropWall.dropped = false;
@@ -1025,6 +1037,12 @@ function startRound() {
     }
   });
   match.beginRound();
+  // Pick and begin round mutator (brawl-like modes only)
+  try {
+    const def = mutatorDirector.pick(currentMode);
+    mutatorDirector.begin(def, mutatorCtx());
+    if (def) { hud.announce(def.name, 'mutator', 2.4); hud.feed?.(`MUTATOR · ${def.blurb}`); }
+  } catch (e) { console.error('[Mutator] startRound error:', e); }
   hud.setRound(match.round, winsHtml());
   controller.enabled = false;
   cam.targetDistance = 9;
@@ -1373,6 +1391,7 @@ function loop() {
     if (match.running) {
       for (const b of bots) b.update(dt, dweebs);
       for (const b of builderBots) b.update(dt, dweebs);
+      try { mutatorDirector.update(dt, mutatorCtx()); } catch (e) { console.error('[Mutator] update error:', e); }
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
     for (const d of dweebs) d.preStep(dt);
