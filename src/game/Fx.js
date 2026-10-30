@@ -1,5 +1,6 @@
 // Fx.js — "game feel" hub: particles, sound, camera shake, hit-stop and comic popups for every event.
 
+import { DweebVoices } from '../audio/Voices.js';
 import * as THREE from 'three';
 import { BALANCE } from './Balance.js';
 
@@ -11,8 +12,11 @@ const MEGA_WORDS = ['KABOOOM!', 'MEGA YEET!', 'SAYONARA!', 'BONKERS!'];
 const J = BALANCE.juice;
 const hitTier = launch => (launch >= J.tiers[2] ? 3 : launch >= J.tiers[1] ? 2 : launch >= J.tiers[0] ? 1 : 0);
 
+import { Reactions } from './Reactions.js';
+
 export class Fx {
   constructor({ particles, audio, camera, cameraController, hud, arena, bursts, decals, haptics }) {
+    this.reactions = new Reactions();
     this.bursts = bursts;
     this.decals = decals;
     this.particles = particles;
@@ -26,6 +30,14 @@ export class Fx {
     this.player = null;
     this.reducedMotion = false;     // accessibility: skip hit-stop, confetti, cam effects, flash, halve particles
     this.colorblindMode = 'off';    // accessibility: colorblind mode for particle colors
+    this.voices = new DweebVoices(audio);
+  }
+
+  /** Voice line for a dweeb, panned and distance-scaled. */
+  voice(d, kind, delay = 0) {
+    if (!d?.getPosition) return;
+    const p = d.getPosition();
+    this.voices.say(d, kind, this._pan(p), d.isPlayer ? 1 : 0.35 + this._near(p, 30) * 0.65, delay);
   }
 
   /** Stereo pan (-1..1) and a distance-based volume factor for a world position. */
@@ -46,14 +58,19 @@ export class Fx {
 
   /** Hit feedback in four tiers (jab / solid / ragdoll / fireworks): small hits stay crisp, big ones get loud. */
   hit(victim, attacker, launch, kind) {
+    this.combo?.registerHit?.(victim, attacker, launch, performance.now() / 1000);
     const pos = victim.getPosition();
     const power = Math.min(1, launch / 20);
     const tier = hitTier(launch);
     const involvesPlayer = victim.isPlayer || attacker?.isPlayer;
+    if (launch > 0.5) this.voice(victim, tier >= 2 ? 'yeet' : 'ow');
     const color = attacker ? attacker.color : 0xffffff;
 
     const particleCount = this.reducedMotion ? 0.5 : 1;
 
+    if (attacker?.isPlayer) this.tutorial?.note('hit');
+
+    if (tier >= 1) this.reactions.emit('gasp', pos, { exclude: [victim, attacker], cheerFor: attacker, intensity: 0.6 + tier * 0.4 });
     if (tier >= 2) this.particles.bigHit(pos, color);
     else this.particles.hit(pos, color);
     if (tier >= 1) this.bursts.spawn(pos, 0.8 + power * 1.4, color);
@@ -68,6 +85,10 @@ export class Fx {
     this.haptics?.hit(tier, this._near(pos, 24), involvesPlayer);
     victim.landSquash = Math.max(victim.landSquash || 0, J.squash[tier]);
     if (involvesPlayer && tier >= 2) this.cam.kickFov(tier === 3 ? 12 : 7);
+    // Camera roll when player is victim and hit is tier 2+
+    if (victim.isPlayer && tier >= 2) {
+      this.cam?.addRoll?.((Math.random() < 0.5 ? -1 : 1) * 0.05 * tier);
+    }
 
     // Fireworks tier: confetti pop, colour ring, impact frame — a toybox gag, not gore
     if (tier === 3) {
@@ -88,6 +109,22 @@ export class Fx {
       const words = tier === 3 ? MEGA_WORDS : tier === 2 ? BIG_WORDS : HIT_WORDS;
       const word = kind === 'boom' ? 'KABOOM!' : words[Math.floor(Math.random() * words.length)];
       this.hud.popup(word, pos, tier >= 2 ? 'big' : 'small', color);
+    }
+  }
+
+  /**
+   * Footstep (Dweeb.onStep). main.js has wired this since the footstep cadence landed, but the
+   * method was missing, so every stride threw. Now: a soft, weighted pat, plus a little dust kick
+   * when sprinting near the camera.
+   */
+  step(d, speed = 0) {
+    const pos = d.getPosition();
+    const near = this._near(pos, 18);
+    if (near <= 0 && !d.isPlayer) return;
+    const w = Math.min(1, speed / 10) * 0.6 + ((d.stats?.mass ?? 3) / 3) * 0.2;
+    this.audio.playFootstep?.(this._pan(pos), w);
+    if (speed > 7 && near > 0.3 && Math.random() < 0.5) {
+      this.particles.emit({ x: pos.x, y: pos.y - 0.45, z: pos.z }, { count: 3, colors: [0xe8dcc4, 0xd2c3a3], speed: 1.2, up: 0.8, size: 0.09, life: 0.35 });
     }
   }
 
@@ -225,6 +262,7 @@ export class Fx {
     const pos = obj.getPosition();
     this.particles.emit(pos, { count: 10, colors: [0xffd23f, 0xff6a3c, 0xffffff], speed: 2.5, up: 2, size: 0.1, life: 0.4 });
     this.audio.playFuse(this._pan(pos));
+    this.reactions.emit('dread', pos, { exclude: obj.fuseBy });
     if (this._near(pos, 16) > 0) this.hud.popup('HISSS…', pos, 'small', 0xff6a3c);
   }
 
@@ -240,6 +278,19 @@ export class Fx {
     this.audio.playComicBonk(this._pan(pos));
   }
 
+  slip(victim) {
+    const pos = victim.getPosition();
+    this.particles.dust({ x: pos.x, y: pos.y - 0.45, z: pos.z }, 10);
+    this.particles.ring({ x: pos.x, y: pos.y - 0.4, z: pos.z }, { color: 0xffd93b, size: 2.4, life: 0.35 });
+    this.particles.emit(pos, { count: 12, colors: [0xffd93b, 0xfff1b8, 0xffffff], speed: 4, up: 2, size: 0.1, life: 0.45 });
+    this.audio.playSlideWhistle(this._pan(pos));
+    this.hud.popup('WIPEOUT!', { x: pos.x, y: pos.y + 0.9, z: pos.z }, 'big', 0xffd93b);
+    this.cam.shake(0.16);
+    this.hitStop = Math.max(this.hitStop, 0.03);
+    this.haptics?.hit(1, this._near(pos, 24), !!victim.isPlayer);
+    this.arena?.excite?.(0.35);
+  }
+
   whiff(d, weapon) {
     if (d.isPlayer || this._near(d.getPosition(), 8) > 0) this.audio.playWhoosh(this._pan(d.getPosition()));
   }
@@ -248,6 +299,26 @@ export class Fx {
     const pos = d.getPosition();
     this.audio.playGrab(this._pan(pos));
     if (target) this.hud.popup('GOTCHA!', target.getPosition(), 'small', d.color);
+    if (target?.receiveHit) this.voice(target, 'eep');
+  }
+
+  /** Timed grab catch: snatch a thrown prop out of the air. */
+  catchProp(d, obj) {
+    if (!d) return;
+    const pos = obj?.getPosition?.() ?? d.getPosition();
+    this.audio.playGrab?.(this._pan(pos));
+    this.particles?.sparkle?.(pos, d.color ?? 0xffd23f);
+    this.cam?.shake?.(0.2);
+    this._toyWord('CAUGHT!', pos, d.color ?? 0xffd23f, 'big');
+  }
+
+  /** A grab that just misses a flying prop. */
+  catchDenied(d, obj) {
+    if (!d) return;
+    const pos = obj?.getPosition?.() ?? d.getPosition();
+    this.audio.playWhoosh?.(this._pan(pos), 0.7);
+    this.cam?.shake?.(0.08);
+    this._toyWord('DENIED!', pos, 0xff6a3c, 'small');
   }
 
   escape(t) {
@@ -267,6 +338,7 @@ export class Fx {
     const pan = this._pan(d.getPosition());
     this.audio.playThrow(pan, mass);
     if (mass >= 3 || mass < 0.5) this.audio.playSlideWhistle(pan);
+    if (d?.isPlayer) this.tutorial?.note('throw');
   }
 
   rocketLaunch(obj) {
@@ -423,6 +495,7 @@ export class Fx {
 
   explosion(pos) {
     this.particles.explosion(pos);
+    this.reactions.emit('gasp', pos, { intensity: 1.6 });
     this.bursts.spawn(pos, 3.2, 0xffd23f);
     this.decals.spawnOnGround('scorch', pos, 5, 0x2a1a30, 0.7, 12);
     this.audio.playExplosion(this._pan(pos));
@@ -436,6 +509,7 @@ export class Fx {
   break(pos, obj) {
     const def = obj.def;
     const color = def.color ?? 0xc4a06a;
+    this.reactions.emit('wince', pos, { exclude: obj.thrownBy });
     const p = this.particles;
     const particleCount = this.reducedMotion ? 0.5 : 1;
     let word = def.breakWord ?? 'CRUNCH!';
@@ -597,6 +671,42 @@ export class Fx {
     if (!hit && d.isPlayer) this.hud.popup('WHIFF!', pos, 'small', 0xbff4ff);
   }
 
+  /** Grapple cable: add a THREE.Line from hand to anchor. */
+  addGrappleCable(d, anchor) {
+    const scene = d.scene; if (!scene) return;
+    this.removeGrappleCable(d);
+    const material = new THREE.LineBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8, linewidth: 3 });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
+    const line = new THREE.Line(geometry, material);
+    line.userData.grappleOwner = d;
+    scene.add(line);
+    d.grappleCable = line;
+    this.updateGrappleCable(d, anchor);
+  }
+
+  /** Update cable endpoints each frame. */
+  updateGrappleCable(d, anchor) {
+    if (!d.grappleCable) return;
+    const pos = d.getPosition();
+    const f = d.forward;
+    const handPos = { x: pos.x + f.x * 0.5, y: pos.y + 1.1, z: pos.z + f.z * 0.5 };
+    const positions = d.grappleCable.geometry.attributes.position.array;
+    positions[0] = handPos.x; positions[1] = handPos.y; positions[2] = handPos.z;
+    positions[3] = anchor.x; positions[4] = anchor.y; positions[5] = anchor.z;
+    d.grappleCable.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /** Remove grapple cable from scene. */
+  removeGrappleCable(d) {
+    if (d.grappleCable) {
+      d.grappleCable.parent?.remove(d.grappleCable);
+      d.grappleCable.geometry.dispose();
+      d.grappleCable.material.dispose();
+      d.grappleCable = null;
+    }
+  }
+
   /** Volcano lava splash when someone dips into the lagoon. */
   lavaHit(d, launch) {
     const pos = d.getPosition();
@@ -612,6 +722,7 @@ export class Fx {
 
   jump(d, double) {
     const pos = d.getPosition();
+    if (double && Math.random() < 0.5) this.voice(d, 'hup');
     if (double) this.particles.ring({ x: pos.x, y: pos.y - 0.5, z: pos.z }, { color: 0xffffff, size: 1.6, life: 0.25 });
     else this.particles.dust({ x: pos.x, y: pos.y - 0.5, z: pos.z }, 5);
     if (d.isPlayer || this._near(pos, 10) > 0) this.audio.playJump(this._pan(pos), double);
@@ -625,6 +736,10 @@ export class Fx {
     this.haptics?.land(speed, !!d.isPlayer, near);
     if (d.isPlayer && speed > 13) this.cam.shake(Math.min(0.24, (speed - 13) * 0.016));
     if (speed > 14) this.cam.shake(near * Math.min(0.18, speed * 0.006));
+    // Landing dip for player: spring offset on camera Y, scaled by fall speed
+    if (d.isPlayer && speed > 10) {
+      this.cam?.addLandingDip?.(Math.min(1.2, (speed - 10) * 0.08));
+    }
   }
 
   /** Fast-fall start: a short downward puff so the commit reads at a glance. */
@@ -657,6 +772,7 @@ export class Fx {
     const { a, b, speed, pos } = imp;
     // Dweeb-on-stage landings are handled by land(); skip them here
     if ((a.kind === 'dweeb' && b.kind === 'stage') || (b.kind === 'dweeb' && a.kind === 'stage')) return;
+    if (speed > 11) this.reactions.emit('flinch', pos, { intensity: speed / 14 });
     const gain = 0.25 + this._near(pos, 30) * 0.75;
     const src = a.kind === 'object' || a.kind === 'dweeb' ? a : b;
     const other = src === a ? b : a;
@@ -676,6 +792,23 @@ export class Fx {
       const power = Math.min(0.34, (speed - 4) * 0.02) * (involvesPlayer ? 1 : 0.35 + near * 0.5);
       this.haptics?.pulse(power, 45 + Math.min(70, speed * 4), 0.22);
       if (involvesPlayer) this.cam.shake(Math.min(0.16, speed * 0.007));
+    }
+  }
+
+  /** A ragdolling dweeb slams into the floor or a prop: thud, dust, scuff mark, a tiny jolt. */
+  ragdollContact(d, speed, pos) {
+    const p = pos ?? d.getPosition();
+    const near = this._near(p, 30);
+    if (near <= 0 && !d.isPlayer) return;
+    this.audio.playRagdollHit?.(speed * speed * 18, this._pan(p));
+    this.particles.dust({ x: p.x, y: p.y - 0.3, z: p.z }, Math.min(10, 2 + Math.floor(speed / 2.5)));
+    if (speed > 9) this.decals.spawnOnGround?.('crack', p, 0.7 + speed * 0.04, 0x1b1030, 0.3, 4);
+    if (d.isPlayer || near > 0.5) this.cam.shake(Math.min(0.12, speed * 0.006) * (d.isPlayer ? 1 : 0.5));
+    if (d.isPlayer) this.haptics?.pulse(Math.min(0.3, speed * 0.02), 40, 0.2);
+    // A rubbery bounce: take a bit of the impact back up so bodies skip instead of sticking
+    if (speed > 7 && d.body) {
+      const v = d.body.linvel();
+      if (Math.abs(v.y) < 3) d.body.setLinvel({ x: v.x * 0.85, y: Math.min(6, speed * 0.28), z: v.z * 0.85 }, true);
     }
   }
 
@@ -713,6 +846,8 @@ export class Fx {
   }
 
   ko(victim, credited, kind, pos, suddenDeath = false) {
+    this.voice(victim, 'ko');
+    if (credited && credited !== victim) this.voice(credited, 'cheer', 0.35);
     if (kind === 'splash') this.splash(pos);
     else {
       if (!this.reducedMotion) this.particles.confetti(pos, 50);
@@ -734,6 +869,7 @@ export class Fx {
   }
 
   update(dt) {
+    this.reactions.update(dt);
     this.hitStop = Math.max(0, this.hitStop - dt);
   }
 

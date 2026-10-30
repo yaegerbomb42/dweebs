@@ -95,6 +95,12 @@ export function buildScreens() {
           <div class="hub-profile" id="hub-profile" aria-label="Your dweeb profile"></div>
         </header>
 
+        <!-- DWEEB NEWS: live ticker under the header -->
+        <div class="hub-news-ticker" id="hub-news" aria-label="Dweeb News" role="status" aria-live="polite">
+          <span class="hub-news-label" id="hub-news-label">📰 DWEEB NEWS</span>
+          <div class="hub-news-track" id="hub-news-track" aria-hidden="true"></div>
+        </div>
+
         <!-- HERO: Build-A-Dweeb is the main experience -->
         <article class="hub-hero" id="hub-hero-builder" aria-label="Build-A-Dweeb, the main experience">
           <div class="hero-glow" aria-hidden="true"></div>
@@ -218,15 +224,30 @@ export function buildScreens() {
               <span class="hub-trophy-value">6</span>
               <span class="hub-trophy-label">ways to play</span>
             </div>
+            <div class="hub-trophy" style="--i:4">
+              <span class="hub-trophy-icon" aria-hidden="true">🏅</span>
+              <span class="hub-trophy-value" data-trophy="career">—</span>
+              <span class="hub-trophy-label">brawl career</span>
+            </div>
           </div>
         </section>
 
-        <!-- DAILY CHALLENGE: one per calendar day, wired into the arcade -->
-        <section class="hub-daily" id="hub-daily" aria-label="Daily challenge">
+        <!-- DAILY CONTRACT: one per calendar day, with progress, streak, rewards -->
+        <section class="hub-daily" id="hub-daily" aria-label="Daily contract">
           <div class="hub-daily-copy">
-            <span class="hub-daily-kicker">🎯 DAILY CHALLENGE</span>
+            <span class="hub-daily-kicker">🎯 DAILY CONTRACT</span>
             <h3 class="hub-daily-title" id="daily-title">…</h3>
             <p class="hub-daily-desc" id="daily-desc">…</p>
+            <div class="hub-daily-progress-wrap hidden" id="daily-progress-wrap">
+              <div class="hub-daily-progress-track">
+                <div class="hub-daily-progress-bar" id="daily-progress-bar"></div>
+              </div>
+              <span class="hub-daily-progress-text" id="daily-progress-text">0 / 1</span>
+            </div>
+            <div class="hub-daily-meta">
+              <span class="hub-daily-streak hidden" id="daily-streak"></span>
+              <span class="hub-daily-coins hidden" id="daily-total-coins"></span>
+            </div>
           </div>
           <button class="btn big yellow hub-daily-cta" id="app-btn-daily" data-launch data-target="">TAKE THE CHALLENGE</button>
         </section>
@@ -400,7 +421,7 @@ function buildSettings() {
           </div>
           <div class="app-col">
             <h3>Video &amp; motion</h3>
-            ${seg('quality', 'Quality', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']])}
+            ${seg('quality', 'Quality', [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']])}
             ${seg('reducedMotion', 'Reduced motion', [['false', 'Off'], ['true', 'On']])}
             <p class="app-note">Reduced motion turns off screen shake, hit-stop and confetti.</p>
             ${seg('colorblind', 'Colorblind', [['off', 'Off'], ['deuteranopia', 'Deuteranopia'], ['protanopia', 'Protanopia'], ['tritanopia', 'Tritanopia']])}
