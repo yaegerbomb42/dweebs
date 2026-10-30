@@ -1025,9 +1025,9 @@ function startRound() {
     }
   });
   match.beginRound();
-  if (match.round === 1 && !currentMeadowlands) hud.feed('<b>EMOTES</b> · 1 Taunt · 2 Cheer · 3 Dance · 4 Sweat · 5 GG · 6 Flex');
   hud.setRound(match.round, winsHtml());
   controller.enabled = false;
+  if (match.round === 1 && !currentMeadowlands) hud.feed('<b>EMOTES</b> · 1 Taunt · 2 Cheer · 3 Dance · 4 Sweat · 5 GG · 6 Flex');
   cam.targetDistance = 9;
   cam.pitch = -0.42;
   const pp = player.getPosition();

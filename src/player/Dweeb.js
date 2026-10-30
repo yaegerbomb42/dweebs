@@ -762,18 +762,6 @@ export class Dweeb {
       } else {
         this.rig.rotation.x = 0;
       }
-      // Emotes (game/Emotes.js)
-      if (this.emoteT > 0) {
-        const e = 1 - this.emoteT / (this.emoteMax || 1), w = time * 12;
-        switch (this.emote) {
-          case 'taunt': rx = arm.side === 1 ? -1.6 + Math.sin(w * 1.5) * 0.25 : 0.4; rz = arm.side * (arm.side === 1 ? 0.2 : 1.2); break;
-          case 'cheer': rx = -2.9 + Math.sin(w + arm.side) * 0.3; rz = arm.side * 0.5; break;
-          case 'dance': rx = -1.4 + Math.sin(w * 0.8 + arm.side * 1.6) * 1.2; rz = arm.side * (0.9 + Math.sin(w * 0.8) * 0.5); break;
-          case 'sweat': rx = -0.6 + Math.sin(w * 2) * 0.05; rz = arm.side * 0.1; break;
-          case 'gg': rx = arm.side === 1 ? -2.2 + Math.sin(w * 0.9) * 0.4 : 0.2; rz = arm.side * 0.6; break;
-          case 'flex': rx = -1.5; rz = arm.side * (1.6 + Math.sin(w * 0.7) * 0.15 + e * 0.2); break;
-        }
-      }
       if (this.charging > 0 && arm.side === 1) {
         rx = 0.6 + this.charging * 0.9;
         rz = 0.9;
@@ -786,6 +774,18 @@ export class Dweeb {
       if (this.diveTimer > 0) {
         rx = -Math.PI * 0.9;
         rz = arm.side * 0.2;
+      }
+      // Emotes (game/Emotes.js)
+      if (this.emoteT > 0) {
+        const e = 1 - this.emoteT / (this.emoteMax || 1), w = time * 12;
+        switch (this.emote) {
+          case 'taunt': rx = arm.side === 1 ? -1.6 + Math.sin(w * 1.5) * 0.25 : 0.4; rz = arm.side * (arm.side === 1 ? 0.2 : 1.2); break;
+          case 'cheer': rx = -2.9 + Math.sin(w + arm.side) * 0.3; rz = arm.side * 0.5; break;
+          case 'dance': rx = -1.4 + Math.sin(w * 0.8 + arm.side * 1.6) * 1.2; rz = arm.side * (0.9 + Math.sin(w * 0.8) * 0.5); break;
+          case 'sweat': rx = -0.6 + Math.sin(w * 2) * 0.05; rz = arm.side * 0.1; break;
+          case 'gg': rx = arm.side === 1 ? -2.2 + Math.sin(w * 0.9) * 0.4 : 0.2; rz = arm.side * 0.6; break;
+          case 'flex': rx = -1.5; rz = arm.side * (1.6 + Math.sin(w * 0.7) * 0.15 + e * 0.2); break;
+        }
       }
       if (this.ragdolling || this.hitstun > 0) {
         rx = Math.sin(this.wobblePhase * 3 + arm.side) * 1.4;

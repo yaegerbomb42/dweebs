@@ -774,6 +774,7 @@ export function animateDweebFace(d, dt, time) {
 
   if (d.kos > d._seenKOs) { d._seenKOs = d.kos; d.gloatTimer = 2.5; }
   d.gloatTimer -= dt;
+  if (d.emoteT > 0 && d.emoteMood) { d.idleMood = d.emoteMood; d.moodTimer = Math.max(d.moodTimer, 0.3); } // emote face
   d.moodTimer -= dt;
   if (d.moodTimer < 0) {
     d.moodTimer = 2.5 + Math.random() * 5;
@@ -781,7 +782,6 @@ export function animateDweebFace(d, dt, time) {
     d.idleMood = r < 0.6 ? L.mood : r < 0.85 ? (L.mood === 'grumpy' ? 'calm' : 'grumpy') : 'smug';
   }
   d.mood = d.gloatTimer > 0 ? 'smug' : d.percent >= 100 ? 'worried' : d.idleMood;
-  if (d.emoteT > 0 && d.emoteMood) d.mood = d.emoteMood;
   const m = MOODS[d.mood];
   const browTarget = screaming || gritting ? 1.15 : m.brow;
   d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);
