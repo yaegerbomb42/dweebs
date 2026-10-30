@@ -297,6 +297,13 @@ export const OBJECT_DEFS = {
     material: 'rubber', mass: 0.6, grabbable: true, throwable: true,
     breakable: false, breakForce: 50000, damage: 0.8, color: 0xffe14d,
   },
+  bubbleGum: {
+    name: 'Bubble Gum',
+    shape: 'sphere', dims: { radius: 0.2 },
+    material: 'rubber', mass: 0.4, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.3, color: 0xff7ac8,
+    sticky: { time: 3, speed: 0.45, jump: 0.6 },
+  },
   giantDie: {
     name: 'Giant Die',
     shape: 'box', dims: { hx: 0.3, hy: 0.3, hz: 0.3 },

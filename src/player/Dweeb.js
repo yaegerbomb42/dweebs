@@ -98,6 +98,9 @@ export class Dweeb {
     this.rollDirZ = 0;
     this.shieldCharges = 0;
     this.sugarTimer = 0;
+    this.gumTimer = 0;          // stuck in bubble gum: slowed, shorter jumps
+    this.gumDef = null;
+    this.gumMesh = null;
 
     // Style meter (see CombatSystem.addStyle)
     this.styleScore = 0;
@@ -469,6 +472,7 @@ export class Dweeb {
       if (this.zoomTimer > 0) speed *= 1.5;
       if (this.sugarTimer > 0) speed *= BALANCE.powerups.sugar.speed;
       if (this.megaTimer > 0) speed *= 0.9;
+      if (this.gumTimer > 0) speed *= this.gumDef ? this.gumDef.speed : 1;
       if (this.held?.kind === 'dweeb') speed *= 0.72;
       else if (this.held) speed *= (this.carryMul ?? 1) * (this.grabSettle > 0 ? 0.5 : 1);
       if (this.charging > 0) speed *= 0.35;
@@ -510,7 +514,7 @@ export class Dweeb {
       }
 
       if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
-        vy = MV.jumpVel * this.stats.jump * this.jumpScale;
+        vy = MV.jumpVel * this.stats.jump * this.jumpScale * (this.gumTimer > 0 ? this.gumDef.jump : 1);
         this.jumpsLeft = 1;
         this.coyote = 0;
         this.jumpBuffer = 0;
@@ -518,7 +522,7 @@ export class Dweeb {
         this.landSquash = -0.35;
         this.onJump?.(this, false);
       } else if (this.jumpRequested && this.jumpsLeft > 0 && !this.grounded && !this.specialFall) {
-        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale;
+        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * (this.gumTimer > 0 ? this.gumDef.jump : 1);
         this.jumpsLeft = 0;
         this.jumpBuffer = 0;
         this.jumpRising = true;
@@ -620,6 +624,7 @@ export class Dweeb {
     this.skidTimer = Math.max(0, this.skidTimer - dt);
     if (this.magnetTimer > 0) this.magnetTimer = Math.max(0, this.magnetTimer - dt);
     this.sugarTimer = Math.max(0, this.sugarTimer - dt);
+    this.gumTimer = Math.max(0, this.gumTimer - dt);
     this.rollCd = Math.max(0, this.rollCd - dt);
     this.dropGrace = Math.max(0, this.dropGrace - dt);
     this.dropThroughRequested = Math.max(0, this.dropThroughRequested - dt);
@@ -775,6 +780,10 @@ export class Dweeb {
         rx = -Math.PI * 0.9;
         rz = arm.side * 0.2;
       }
+      if (this.gumTimer > 0) {
+        rx = Math.sin(time * 18 + arm.side * 2) * 1.3;
+        rz = arm.side * (1.2 + Math.sin(time * 13 + arm.side) * 0.35);
+      }
       if (this.ragdolling || this.hitstun > 0) {
         rx = Math.sin(this.wobblePhase * 3 + arm.side) * 1.4;
         rz = arm.side * 1.6;
@@ -801,6 +810,23 @@ export class Dweeb {
     if (frozen) {
       this.freezeMesh.rotation.y += dt * 0.6;
       this.freezeMesh.scale.setScalar(1 + Math.sin(time * 8) * 0.03);
+    }
+    if (this.gumTimer > 0 && !this.gumMesh) {
+      this.gumMesh = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.32, 1),
+        toonMat({ color: 0xff7ac8 })
+      );
+      this.gumMesh.position.set(0, 0.92, 0);
+      noOutline(this.gumMesh);
+      this.rig.add(this.gumMesh);
+    }
+    if (this.gumMesh) {
+      this.gumMesh.visible = this.gumTimer > 0;
+      if (this.gumMesh.visible) {
+        const wob = 1 + Math.sin(time * 14) * 0.06;
+        this.gumMesh.scale.set(wob, 1 / wob, wob);
+        this.gumMesh.rotation.y = Math.sin(time * 9) * 0.16;
+      }
     }
     this.parryMesh.visible = this.parryTimer > 0;
     if (this.parryTimer > 0) {
@@ -1000,6 +1026,7 @@ export class Dweeb {
     this.airTime = 0;
     this.parryTimer = 0;
     this.freezeTimer = 0;
+    this.gumTimer = 0;
     this.magnetTimer = 0;
     this.slamActive = false;
     this.dropkickTimer = 0;
@@ -1054,6 +1081,7 @@ export class Dweeb {
     this.parryTimer = 0;
     this.parryCd = 0;
     this.freezeTimer = 0;
+    this.gumTimer = 0;
     this.magnetTimer = 0;
     this.slamActive = false;
     this.dropkickTimer = 0;
