@@ -225,6 +225,7 @@ export const BALANCE = {
   gadgets: {
     freezeRay: { range: 7.5, cone: 0.55, cooldown: 0.85, freeze: 1.5, style: 7 },
     magnet: { range: 8, cooldown: 1.15, pull: 16, style: 5 },
+    grappleGlove: { range: 22, cooldown: 1.2, spring: 60, maxSpeed: 18, detachDist: 1.5, maxTime: 2.5, yankSpeed: 14, yankUp: 4, hitstun: 0.3, style: 8 },
   },
 
   // Style meter (Spec: gains, tiers, decay). Single source of truth — CombatSystem.STYLE,

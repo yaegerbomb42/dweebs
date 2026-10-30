@@ -295,6 +295,62 @@ export class CombatSystem {
       if (pulled) this.addStyle(d, G.style, 'MAGNET');
       return true;
     }
+
+    if (kind === 'grappleGlove') {
+      const range = G.range * (0.85 + charge * 0.3);
+      const pos = d.getPosition();
+      const f = d.forward;
+      // Raycast from hand position (slightly in front and above)
+      const origin = { x: pos.x + f.x * 1.0, y: pos.y + 1.1, z: pos.z + f.z * 1.0 }; // clear of the held glove
+      // Aim slightly upward so the hook can catch ledges and walls above, not just the floor at your feet
+      // Try a few pitches (up first, then level, then down) so the hook catches ledges, walls or the floor ahead
+      let hit = null;
+      for (const up of [0.34, 0.08, -0.3]) {
+        const n = Math.hypot(1, up);
+        hit = this.physics.raycast(origin, { x: f.x / n, y: up / n, z: f.z / n }, range, d.collider);
+        if (hit && hit.distance > 2.2) break;
+        hit = null;
+      }
+      if (!hit) {
+        this.fx.gadget?.(d, 'grappleGlove', false);
+        this.fx.whiff?.(d, 'grappleGlove');
+        return false;
+      }
+      const anchor = hit.point;
+      // Determine if hit is fixed geometry (stage/walls) or a dynamic target (dweeb/prop)
+      const body = hit.collider?.parent?.();
+      const hitDweeb = this.dweebs.some(t => t !== d && t.collider === hit.collider);
+      const ref = hitDweeb ? null : (this.arena.objects || []).find(o => o.collider === hit.collider || (body && o.body === body));
+      const hitObj = !!ref;
+      const isFixed = !hitDweeb && !hitObj && (!body || body.isFixed());
+      if (!hitDweeb && !hitObj && !isFixed) { this.fx.whiff?.(d, 'grappleGlove'); return false; }
+      d.grapple = {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        isFixed,
+        hitDweeb,
+        hitObj: hitObj ? ref : null,
+        timer: 0,
+        maxTime: G.maxTime,
+        detachDist: G.detachDist,
+        spring: G.spring,
+        maxSpeed: G.maxSpeed,
+        yankSpeed: G.yankSpeed,
+        yankUp: G.yankUp,
+        hitstun: G.hitstun,
+        holder: d,
+      };
+      // Visual: add cable line
+      if (this.fx && this.fx.addGrappleCable) this.fx.addGrappleCable(d, anchor);
+      // Audio: throw/zip sound
+      if (this.fx && this.fx.audio?.playThrow) this.fx.audio.playThrow();
+      else if (this.fx && this.fx.audio?.playWhoosh) this.fx.audio.playWhoosh();
+      this.fx.gadget?.(d, 'grappleGlove', true);
+      d.attackCooldown = G.cooldown * (d.sugarTimer > 0 ? BALANCE.powerups.sugar.cooldown : 1);
+      d.attackAnim = 0.22;
+      d.swingT = 0.3;
+      this.addStyle(d, G.style, 'GRAPPLE');
+      return true;
+    }
     return false;
   }
 
@@ -415,6 +471,86 @@ export class CombatSystem {
       const op = obj.getPosition();
       const m = Math.sqrt(obj.body.mass()) * P.force * 0.05 * dt;
       this.physics.applyImpulse(obj.body, { x: (pos.x - op.x) * m, y: (pos.y + 0.4 - op.y) * m, z: (pos.z - op.z) * m });
+    }
+  }
+
+  /** Grapple glove: spring toward fixed anchor, or yank dynamic target. */
+  _updateGrapple(d, dt) {
+    const g = d.grapple;
+    if (!g || !g.holder || !g.holder.active) {
+      this._detachGrapple(d);
+      return;
+    }
+    const holder = g.holder;
+    const pos = holder.getPosition();
+    g.timer += dt;
+    const anchor = g.anchor;
+    const dx = anchor.x - pos.x, dy = anchor.y - pos.y, dz = anchor.z - pos.z;
+    const dist = Math.hypot(dx, dy, dz);
+    // Detach conditions
+    if (g.timer >= g.maxTime || dist <= g.detachDist || holder.jumpRequested || holder.hitstun > 0 || holder.ragdolling || !holder.active) {
+      this._detachGrapple(d);
+      return;
+    }
+    // Update cable visual
+    if (this.fx && this.fx.updateGrappleCable) this.fx.updateGrappleCable(d, anchor);
+    if (g.isFixed) {
+      // Spring toward anchor
+      const dirLen = dist || 1;
+      const dirX = dx / dirLen, dirY = dy / dirLen, dirZ = dz / dirLen;
+      const v = holder.body.linvel();
+      const towardX = dirX * g.spring * dt;
+      const towardY = dirY * g.spring * dt;
+      const towardZ = dirZ * g.spring * dt;
+      // Cap the added velocity toward anchor
+      const curToward = v.x * dirX + v.y * dirY + v.z * dirZ;
+      const addSpeed = Math.min(g.maxSpeed - curToward, Math.hypot(towardX, towardY, towardZ));
+      if (addSpeed > 0) {
+        const addX = dirX * addSpeed, addY = dirY * addSpeed, addZ = dirZ * addSpeed;
+        holder.body.setLinvel({ x: v.x + addX, y: v.y + addY, z: v.z + addZ }, true);
+      }
+      // Never plummet while reeling in
+      const nv = holder.body.linvel();
+      if (nv.y < -5) holder.body.setLinvel({ x: nv.x, y: -5, z: nv.z }, true);
+    } else {
+      // Yank dynamic target (dweeb or prop) toward holder - use stored reference
+      if (g.hitDweeb) {
+        // Find the dweeb that was hit (could have moved)
+        for (const t of this.dweebs) {
+          if (t === holder || !t.active) continue;
+          const tp = t.getPosition();
+          const tdx = tp.x - anchor.x, tdy = tp.y - anchor.y, tdz = tp.z - anchor.z;
+          if (Math.hypot(tdx, tdy, tdz) < 1.5) {
+            // Yank dweeb toward holder
+            const hpos = holder.getPosition();
+            const tpos = t.getPosition();
+            const tdx2 = hpos.x - tpos.x, tdy2 = hpos.y - tpos.y, tdz2 = hpos.z - tpos.z;
+            const tdist = Math.hypot(tdx2, tdy2, tdz2) || 1;
+            if (t.invulnTimer > 0 || t.bubble) break;
+            t.body.setLinvel({ x: (tdx2 / tdist) * g.yankSpeed, y: g.yankUp, z: (tdz2 / tdist) * g.yankSpeed }, true);
+            t.hitstun = Math.max(t.hitstun || 0, g.hitstun);
+            t.lastHitBy = holder; t.lastHitTime = this.time;
+            this.fx.hud?.popup?.('YOINK!', tpos, 'small', 0xffd23f);
+            break;
+          }
+        }
+      } else if (g.hitObj && g.hitObj.body) {
+        // Yank object toward holder
+        const m = Math.sqrt(g.hitObj.body.mass()) * 2;
+        const hpos = holder.getPosition();
+        const opos = g.hitObj.getPosition();
+        const odx = hpos.x - opos.x, ody = hpos.y + 0.5 - opos.y, odz = hpos.z - opos.z;
+        const odist = Math.hypot(odx, ody, odz) || 1;
+        this.physics.applyImpulse(g.hitObj.body, { x: (odx / odist) * m * 12, y: (ody / odist) * m * 12, z: (odz / odist) * m * 12 });
+      }
+      this._detachGrapple(d);
+    }
+  }
+
+  _detachGrapple(d) {
+    if (d.grapple) {
+      if (this.fx && this.fx.removeGrappleCable) this.fx.removeGrappleCable(d);
+      d.grapple = null;
     }
   }
 
@@ -1043,6 +1179,7 @@ export class CombatSystem {
       if (d.slamActive && d.grounded) this._resolveSlam(d);
       if (d.dropkickTimer > 0) this._checkDropkick(d);
       if (d.magnetTimer > 0) this._magnetPull(d, dt);
+      if (d.grapple) this._updateGrapple(d, dt);
       this._checkLedge(d);
       this._updateStyle(d, dt);
     }

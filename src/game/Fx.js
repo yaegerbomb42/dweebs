@@ -581,6 +581,42 @@ export class Fx {
     if (!hit && d.isPlayer) this.hud.popup('WHIFF!', pos, 'small', 0xbff4ff);
   }
 
+  /** Grapple cable: add a THREE.Line from hand to anchor. */
+  addGrappleCable(d, anchor) {
+    const scene = d.scene; if (!scene) return;
+    this.removeGrappleCable(d);
+    const material = new THREE.LineBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8, linewidth: 3 });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
+    const line = new THREE.Line(geometry, material);
+    line.userData.grappleOwner = d;
+    scene.add(line);
+    d.grappleCable = line;
+    this.updateGrappleCable(d, anchor);
+  }
+
+  /** Update cable endpoints each frame. */
+  updateGrappleCable(d, anchor) {
+    if (!d.grappleCable) return;
+    const pos = d.getPosition();
+    const f = d.forward;
+    const handPos = { x: pos.x + f.x * 0.5, y: pos.y + 1.1, z: pos.z + f.z * 0.5 };
+    const positions = d.grappleCable.geometry.attributes.position.array;
+    positions[0] = handPos.x; positions[1] = handPos.y; positions[2] = handPos.z;
+    positions[3] = anchor.x; positions[4] = anchor.y; positions[5] = anchor.z;
+    d.grappleCable.geometry.attributes.position.needsUpdate = true;
+  }
+
+  /** Remove grapple cable from scene. */
+  removeGrappleCable(d) {
+    if (d.grappleCable) {
+      d.grappleCable.parent?.remove(d.grappleCable);
+      d.grappleCable.geometry.dispose();
+      d.grappleCable.material.dispose();
+      d.grappleCable = null;
+    }
+  }
+
   /** Volcano lava splash when someone dips into the lagoon. */
   lavaHit(d, launch) {
     const pos = d.getPosition();
