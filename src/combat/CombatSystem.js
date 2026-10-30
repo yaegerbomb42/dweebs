@@ -1049,8 +1049,79 @@ export class CombatSystem {
 
     this._updateFuses(dt);
     this._updateProjectiles(dt);
+    this._updateJackInBoxes(dt);
     this._updateHazards();
     this._updatePickups();
+  }
+
+  /** Jack-in-the-Box pop: check for wound-up boxes and trigger their pop shockwave. */
+  _updateJackInBoxes(dt) {
+    for (const obj of [...this.arena.objects]) {
+      if (obj.isDebris || obj.broken || obj.key !== 'jackInBox') continue;
+      if (!obj.jackPop || obj.jackHandled) continue;
+      obj.jackHandled = true; // pop once
+
+      const pos = obj.getPosition();
+      const jack = obj.def.jack || { radius: 2.5, launch: 18, damage: 8 };
+      const radius = jack.radius;
+      const launch = jack.launch;
+      const damage = jack.damage;
+
+      // If held, the pop rockets the holder straight up instead (funniest outcome)
+      if (obj.isGrabbed && obj.grabber) {
+        const holder = obj.grabber;
+        if (holder.held?.ref === obj) holder.held = null;
+        obj.release?.();
+        if (holder.active) {
+          const hp = holder.getPosition();
+          holder.receiveHit({ dir: new THREE.Vector3(0, 1, 0), damage, base: launch, growth: 0, attacker: obj.thrownBy, time: this.time });
+          this.fx.hit(holder, obj.thrownBy, launch, 'boom');
+          this.fx.popup('POW!', hp, 'big', 0xffd23f);
+        }
+        this.arena.spawnDebris(pos, obj.def.color ?? 0xd4a86a, 8, obj.def.material, obj.def.breakColors);
+        this.arena.removeObject(obj);
+        continue;
+      }
+
+      // Shockwave: find Dweebs in radius and launch them upward
+      let hitAny = false;
+      for (const d of this.dweebs) {
+        if (!d.active || d.grabbedBy) continue;
+        const dp = d.getPosition();
+        const dx = dp.x - pos.x, dy = dp.y - pos.y, dz = dp.z - pos.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist > radius) continue;
+
+        // Upward-biased direction
+        const dir = new THREE.Vector3(dx, radius * 0.5, dz);
+        if (dir.lengthSq() < 1e-4) dir.set(0, 1, 0);
+        dir.normalize();
+
+        const atk = { damage, base: launch, growth: 0 };
+        const l = d.receiveHit({ dir, ...atk, attacker: obj.thrownBy, time: this.time });
+        if (l > 0) {
+          hitAny = true;
+          this.fx.hit(d, obj.thrownBy, l, 'boom');
+          this.fx.popup('BOING!', { x: dp.x, y: dp.y + 0.8, z: dp.z }, 'big', 0xffd23f);
+          if (obj.thrownBy && obj.thrownBy !== d) this.addStyle(obj.thrownBy, 6 + l * 0.4);
+        }
+      }
+
+      // Debris and loose props get thrown out
+      for (const { obj: o } of this.arena.getObjectsNear(pos, radius)) {
+        if (o === obj || o.isGrabbed || o.broken) continue;
+        const op = o.getPosition();
+        const dir = new THREE.Vector3(op.x - pos.x, 0.8, op.z - pos.z).normalize();
+        const m = Math.sqrt(o.body.mass());
+        this.physics.applyImpulse(o.body, { x: dir.x * 8 * m, y: 6 * m, z: dir.z * 8 * m });
+      }
+
+      // FX and cleanup
+      this.fx.explosion(pos); // reuse explosion FX for the pop
+      this.fx.popup('POW!', { x: pos.x, y: pos.y + 0.6, z: pos.z }, 'big', 0xffd23f);
+      this.arena.spawnDebris(pos, obj.def.color ?? 0xd4a86a, 10, obj.def.material, obj.def.breakColors);
+      this.arena.removeObject(obj);
+    }
   }
 
   _updateHeld(d, dt) {

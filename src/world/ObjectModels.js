@@ -781,6 +781,51 @@ const BUILDERS = {
     k.eye([-0.07, 0.08, 0.22], [-0.3, 0.2, 1], 0.04);
     k.eye([0.07, 0.08, 0.22], [0.3, 0.2, 1], 0.04);
   },
+
+  jackInBox(k) {
+    const wood = 0xc98a4b, dark = 0x8a5a2e, red = 0xff3355, cream = 0xfff8ee, gold = 0xffd23f;
+    // Box base
+    k.add(B(0.44, 0.5, 0.44, 0.03), wood);
+    // Moving parts are built as their own merged sub-kits so InteractiveObject can find them
+    // by name on each clone (userData refs don't survive Object3D.clone).
+    // Lid (separate so it can rattle/pop)
+    const lidK = new Kit();
+    lidK.add(B(0.48, 0.06, 0.48, 0.02), wood, { p: [0, 0, 0] });
+    lidK.add(B(0.38, 0.03, 0.38, 0.015), dark, { p: [0, 0.03, 0] });
+    const lid = lidK.build();
+    lid.position.y = 0.28;
+    lid.name = 'jackLid';
+    k.root.add(lid);
+    // Crank handle on the side (spins about its own X axle)
+    const crankK = new Kit();
+    crankK.add(Cyl(0.018, 0.018, 0.12, 6), CHROME, { p: [0.06, 0, 0], r: [0, 0, PI / 2] });
+    crankK.add(B(0.03, 0.12, 0.03, 0.01), CHROME, { p: [0.12, 0.05, 0] });
+    crankK.add(Cyl(0.025, 0.025, 0.06, 6), red, { p: [0.15, 0.1, 0], r: [0, 0, PI / 2] });
+    const crank = crankK.build();
+    crank.position.set(0.22, 0.05, 0);
+    crank.name = 'jackCrank';
+    k.root.add(crank);
+    // Spring-loaded boxing glove inside (hidden until pop)
+    const gloveK = new Kit();
+    gloveK.add(B(0.22, 0.2, 0.35, 0.08), red, { p: [0, -0.05, 0.15] });
+    gloveK.add(B(0.14, 0.12, 0.18, 0.06), red, { p: [0.02, -0.13, 0.22] });
+    gloveK.add(B(0.07, 0.06, 0.1, 0.04), red, { p: [-0.18, -0.08, 0.12] }); // thumb
+    gloveK.add(Cyl(0.12, 0.13, 0.15, 10), cream, { p: [0, -0.18, -0.12], r: [PI / 2, 0, 0] }); // cuff
+    const glove = gloveK.build();
+    // Spring coil (visual, stretches on pop)
+    const springK = new Kit();
+    for (let i = 0; i < 6; i++) springK.add(Tor(0.09, 0.012, 6, 10), CHROME, { p: [0, -0.25 + i * 0.06, -0.22], r: [PI / 2, 0, 0] });
+    const spring = springK.build();
+    spring.name = 'jackSpring';
+    glove.add(spring);
+    glove.name = 'jackGlove';
+    glove.visible = false;
+    k.root.add(glove);
+    // Decorative sticker
+    k.sticker(S.textSticker('JACK\nIN\nTHE\nBOX', { bg: '#ff4d5e', fg: '#fff8ee', w: 256, h: 220, tilt: -0.04 }), 0.28, 0.24, { p: [0, 0.05, 0.23] });
+    k.eye([-0.07, 0.18, 0.2], [-0.3, 0.2, 1], 0.045);
+    k.eye([0.07, 0.18, 0.2], [0.3, 0.2, 1], 0.045);
+  },
 };
 
 // ─── Public API ───

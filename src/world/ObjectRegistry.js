@@ -382,6 +382,14 @@ export const OBJECT_DEFS = {
     breakable: true, breakForce: 900, damage: 1.0, color: 0xff8fc0,
     breakWord: 'CHA-CHING!', breakColors: [0xffd23f, 0xffc21f, 0xff8fc0],
   },
+  jackInBox: {
+    name: 'Jack-in-the-Box',
+    shape: 'box', dims: { hx: 0.22, hy: 0.25, hz: 0.22 },
+    visualScale: [0.44, 0.5, 0.44],
+    material: 'wood', mass: 1.2, grabbable: true, throwable: true,
+    breakable: true, breakForce: 800, damage: 0.8, color: 0xd4a86a,
+    jack: { radius: 2.5, launch: 18, damage: 8 },
+  },
 };
 
 /** Get a random set of objects for arena spawning */

@@ -39,6 +39,10 @@ export class InteractiveObject {
     this.popS = 0; this.popV = 0;
     this.face = 'happy'; this.faceTimer = 0;
     this.trail = null;
+    // Jack-in-the-Box state
+    this.jackWindup = 0;       // wind-up timer (0 = inactive, >0 = winding)
+    this.jackPop = false;      // has popped
+    this.jackParts = null;     // { lid, crank, glove, spring } refs from model
 
     // Create visual mesh
     this.mesh = this._createMesh();
@@ -94,6 +98,12 @@ export class InteractiveObject {
         this.screen = o;
       }
     });
+    // Jack-in-the-Box moving parts (named sub-groups built in ObjectModels.jackInBox)
+    if (this.key === 'jackInBox') {
+      const lid = model.getObjectByName('jackLid'), crank = model.getObjectByName('jackCrank');
+      const glove = model.getObjectByName('jackGlove'), spring = model.getObjectByName('jackSpring');
+      if (lid && crank && glove) this.jackParts = { lid, crank, glove, spring, lidY: lid.position.y };
+    }
     return root;
   }
 
@@ -113,6 +123,10 @@ export class InteractiveObject {
       e.vy += (Math.random() - 0.5) * speed * 0.03;
     }
     if (this.screen && speed > 6) this._setFace('hurt', 1.1);
+    // Start jack-in-the-box windup on impact
+    if (this.key === 'jackInBox' && !this.jackPop && this.jackWindup <= 0) {
+      this.jackWindup = 3.0; // 3 second wind-up
+    }
   }
 
   /** Uniform scale overshoot (grab, throw). */
@@ -198,6 +212,60 @@ export class InteractiveObject {
         }
       } else if (this.isGrabbed && this.face !== 'dizzy') this._setFace('dizzy', 0.5);
     }
+
+    // Jack-in-the-Box wind-up and pop
+    if (this.key === 'jackInBox' && this.jackParts && !this.jackPop) {
+      if (this.jackWindup > 0) {
+        this.jackWindup -= dt;
+        const progress = 1 - this.jackWindup / 3.0; // 0 to 1 over 3 seconds
+        const { lid, crank, glove, spring } = this.jackParts;
+
+        // Crank rotation speeds up
+        const crankSpeed = 4 + progress * 12;
+        crank.rotation.x += crankSpeed * dt;
+
+        // Lid rattle (rotation + position jitter)
+        const rattle = Math.sin(this.jackWindup * 40) * progress * 0.08;
+        lid.rotation.z = rattle;
+        lid.rotation.x = Math.sin(this.jackWindup * 50) * progress * 0.04;
+
+        // Spring compression visual
+        if (spring) {
+          spring.scale.y = 1 - progress * 0.5;
+        }
+
+        // Wind-up sound tick (every ~0.3s, faster near the end)
+        if (this.jackWindup < 0.5 && Math.floor(this.jackWindup * 10) !== Math.floor((this.jackWindup + dt) * 10)) {
+          this.pop(0.05); // little pop vibration
+        }
+
+        // Pop!
+        if (this.jackWindup <= 0) {
+          this._jackPop();
+        }
+      }
+    }
+  }
+
+  /** Jack-in-the-Box pop: launch the glove, deal damage to nearby Dweebs. */
+  _jackPop() {
+    this.jackPop = true;
+    const { lid, glove, spring } = this.jackParts;
+    if (lid) {
+      // Lid flies open
+      lid.rotation.x = -Math.PI / 2;
+      lid.position.y = this.jackParts.lidY + 0.15;
+    }
+    if (glove) {
+      glove.visible = true;
+      // Glove springs out
+      glove.position.set(0, 0.55, 0.1);
+    }
+    if (spring) {
+      spring.scale.y = 2.5; // spring extends
+    }
+    this.pop(1.5); // big pop squash
+    // The actual damage/shockwave is handled by CombatSystem when it sees jackPop flag
   }
 
   /** Get world position */
@@ -222,6 +290,10 @@ export class InteractiveObject {
     this.isGrabbed = true;
     this.grabber = grabberId;
     this.pop(0.28);
+    // Start jack-in-the-box windup when grabbed
+    if (this.key === 'jackInBox' && !this.jackPop && this.jackWindup <= 0) {
+      this.jackWindup = 3.0;
+    }
   }
 
   /** Release from grab */
@@ -229,6 +301,10 @@ export class InteractiveObject {
     this.isGrabbed = false;
     this.grabber = null;
     this.pop(0.18);
+    // Start jack-in-the-box windup when thrown/released
+    if (this.key === 'jackInBox' && !this.jackPop && this.jackWindup <= 0) {
+      this.jackWindup = 3.0;
+    }
   }
 
   /** Clean up */
