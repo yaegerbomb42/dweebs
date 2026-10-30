@@ -662,6 +662,23 @@ export class Fx {
     }
   }
 
+  /** A ragdolling dweeb slams into the floor or a prop: thud, dust, scuff mark, a tiny jolt. */
+  ragdollContact(d, speed, pos) {
+    const p = pos ?? d.getPosition();
+    const near = this._near(p, 30);
+    if (near <= 0 && !d.isPlayer) return;
+    this.audio.playRagdollHit?.(speed * speed * 18, this._pan(p));
+    this.particles.dust({ x: p.x, y: p.y - 0.3, z: p.z }, Math.min(10, 2 + Math.floor(speed / 2.5)));
+    if (speed > 9) this.decals.spawnOnGround?.('crack', p, 0.7 + speed * 0.04, 0x1b1030, 0.3, 4);
+    if (d.isPlayer || near > 0.5) this.cam.shake(Math.min(0.12, speed * 0.006) * (d.isPlayer ? 1 : 0.5));
+    if (d.isPlayer) this.haptics?.pulse(Math.min(0.3, speed * 0.02), 40, 0.2);
+    // A rubbery bounce: take a bit of the impact back up so bodies skip instead of sticking
+    if (speed > 7 && d.body) {
+      const v = d.body.linvel();
+      if (Math.abs(v.y) < 3) d.body.setLinvel({ x: v.x * 0.85, y: Math.min(6, speed * 0.28), z: v.z * 0.85 }, true);
+    }
+  }
+
   // ─── Match ───
 
   splash(pos, big = true) {

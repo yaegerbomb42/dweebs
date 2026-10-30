@@ -776,8 +776,13 @@ export class Dweeb {
         rz = arm.side * 0.2;
       }
       if (this.ragdolling || this.hitstun > 0) {
-        rx = Math.sin(this.wobblePhase * 3 + arm.side) * 1.4;
-        rz = arm.side * 1.6;
+        // Limbs splay with how hard the body is flying/spinning: limp at rest, flailing at speed
+        const av = this.ragdolling ? this.body.angvel() : null;
+        const spinMag = av ? Math.min(1, Math.hypot(av.x, av.y, av.z) / 10) : 0.6;
+        const flyMag = Math.min(1, Math.hypot(this.velocity.x, this.velocity.y, this.velocity.z) / 16);
+        const energy = Math.max(spinMag, flyMag, 0.25);
+        rx = Math.sin(this.wobblePhase * (2 + energy * 3) + arm.side) * (0.4 + energy * 1.3) - this.velocity.y * 0.04;
+        rz = arm.side * (0.8 + energy * 1.1);
       }
       arm.pivot.rotation.x = THREE.MathUtils.lerp(arm.pivot.rotation.x, rx, 1 - Math.exp(-22 * dt));
       arm.pivot.rotation.z = THREE.MathUtils.lerp(arm.pivot.rotation.z, rz, 1 - Math.exp(-22 * dt));
@@ -906,7 +911,7 @@ export class Dweeb {
       this.lastHitTime = time;
       attacker.damageDealt += damage * dmgArmor;
     }
-    if (launch > KB.ragdollAt) this.startRagdoll(this.hitstun + 0.2, launch);
+    if (launch > KB.ragdollAt) this.startRagdoll(this.hitstun + 0.2, launch, dir);
     this.onHit?.(this, launch);
     return launch;
   }
@@ -936,17 +941,30 @@ export class Dweeb {
     return 0.01;
   }
 
-  startRagdoll(duration = 1.2, spin = 8) {
+  startRagdoll(duration = 1.2, spin = 8, dir = null) {
     if (!this.ragdolling) {
       this.ragdolling = true;
       this.body.lockRotations(false, true);
       this.body.setLinearDamping(0.15);
       this.body.setAngularDamping(KB.ragdollAngDamp); // readable tumble, not a blender
       this.collider.setFriction(0.7); // tumble and skid instead of skating
+      this._ragContactCd = 0;
     }
     this.ragdollTimer = Math.max(this.ragdollTimer, duration);
     const s = Math.min(spin, KB.ragdollSpinMax);
-    this.body.setAngvel({ x: (Math.random() - 0.5) * s, y: (Math.random() - 0.5) * s, z: (Math.random() - 0.5) * s }, true);
+    // Tumble head-over-heels along the launch: axis = up × dir, plus a little random yaw/wobble
+    const dx = dir?.x ?? 0, dz = dir?.z ?? 0, hl = Math.hypot(dx, dz);
+    if (hl > 0.05) {
+      const ax = dz / hl, az = -dx / hl;
+      const j = 0.25 * s;
+      this.body.setAngvel({
+        x: ax * s + (Math.random() - 0.5) * j,
+        y: (Math.random() - 0.5) * s * 0.35,
+        z: az * s + (Math.random() - 0.5) * j,
+      }, true);
+    } else {
+      this.body.setAngvel({ x: (Math.random() - 0.5) * s, y: (Math.random() - 0.5) * s, z: (Math.random() - 0.5) * s }, true);
+    }
   }
 
   recoverFromRagdoll() {
