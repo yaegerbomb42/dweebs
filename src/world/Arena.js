@@ -101,6 +101,7 @@ const POWERUPS = {
   magnet: { color: 0xff9a3c, icon: '◎', label: 'MAGNET' },
   sugar: { color: 0xff8fc0, icon: '🍬', label: 'SUGAR RUSH' },
   shield: { color: 0xffd23f, icon: '🛡', label: 'SHIELD' },
+  swap: { color: 0xb07cff, icon: '⇄', label: 'SWAP' },
 };
 
 /**
@@ -1454,8 +1455,22 @@ export class Arena {
 
   spawnPowerUp(kind = null) {
     if (this.powerups.length >= 2) return null;
-    const keys = Object.keys(POWERUPS);
-    kind = kind || keys[Math.floor(Math.random() * keys.length)];
+    if (!kind) {
+      // Weighted: common powerups appear often, swap is rare (weight 0.5 vs 2-3 for others)
+      const pool = [
+        { key: 'mega', w: 2 }, { key: 'zoom', w: 2 }, { key: 'bubble', w: 2 },
+        { key: 'freeze', w: 1.5 }, { key: 'magnet', w: 1.5 }, { key: 'sugar', w: 2 },
+        { key: 'shield', w: 1.5 }, { key: 'swap', w: 0.5 }, // rare
+      ];
+      let total = 0;
+      for (const it of pool) total += it.w;
+      const r = Math.random() * total;
+      let acc = 0;
+      for (const it of pool) {
+        acc += it.w;
+        if (r < acc) { kind = it.key; break; }
+      }
+    }
     const def = POWERUPS[kind];
     const g = new THREE.Group();
     const gem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), toonMat({ color: def.color, emissive: def.color, emissiveIntensity: 0.25 }));

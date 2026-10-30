@@ -1288,12 +1288,57 @@ export class CombatSystem {
           else if (pu.kind === 'magnet') {
             d.applyPowerUp('magnet');
             this.fx.magnet?.(d);
+          } else if (pu.kind === 'swap') {
+            this._doSwap(d);
           } else d.applyPowerUp(pu.kind);
           this.fx.pickup(d, pu);
           this.arena.removePowerUp(pu);
           break;
         }
       }
+    }
+  }
+
+  /** SWAP powerup: find nearest active non-eliminated non-grabbed rival within 18m; swap positions (+0.3y) and velocities; give both invulnTimer = max(current, 0.7); fx + audio. If no rival, give 3s sugar-like speed boost. */
+  _doSwap(d) {
+    const pos = d.getPosition();
+    let best = null, bestDist = 18;
+    for (const t of this.dweebs) {
+      if (t === d || !t.active || t.grabbedBy) continue;
+      const tp = t.getPosition();
+      const dist = Math.hypot(tp.x - pos.x, tp.y - pos.y, tp.z - pos.z);
+      if (dist < bestDist) { bestDist = dist; best = t; }
+    }
+    const swapColor = 0xb07cff;
+    if (best) {
+      const tp = best.getPosition();
+      const dpos = { x: pos.x, y: pos.y + 0.3, z: pos.z };
+      const tpos = { x: tp.x, y: tp.y + 0.3, z: tp.z };
+      const dvel = d.body.linvel();
+      const tvel = best.body.linvel();
+      d.body.setTranslation(tpos, true);
+      best.body.setTranslation(dpos, true);
+      d.body.setLinvel(tvel, true);
+      best.body.setLinvel(dvel, true);
+      d.invulnTimer = Math.max(d.invulnTimer, 0.7);
+      best.invulnTimer = Math.max(best.invulnTimer, 0.7);
+      this.fx.particles.confetti(pos, 24);
+      this.fx.particles.confetti(tp, 24);
+      this.fx.particles.ring(pos, { color: swapColor, size: 3, life: 0.4 });
+      this.fx.particles.ring(tp, { color: swapColor, size: 3, life: 0.4 });
+      this.fx.hud.popup('SWAP!', pos, 'big', swapColor);
+      this.fx.hud.popup('SWAP!', tp, 'big', swapColor);
+      this.fx.audio.playWhoosh(this.fx._pan(pos), 0.7);
+      this.fx.audio.playWhoosh(this.fx._pan(tp), 0.7);
+    } else {
+      // No rival: sugar-like speed boost for 3s
+      if (BALANCE.powerups.sugar) {
+        d.sugarTimer = Math.max(d.sugarTimer, 3);
+      }
+      this.fx.particles.confetti(pos, 16);
+      this.fx.particles.ring(pos, { color: swapColor, size: 2.5, life: 0.3 });
+      this.fx.hud.popup('SWAP!', pos, 'big', swapColor);
+      this.fx.audio.playWhoosh(this.fx._pan(pos), 0.7);
     }
   }
 }
