@@ -158,6 +158,19 @@ export const GAME_MODES = {
     arenas: ['colosseum', 'stadium', 'megastadium'],
     arena: 'colosseum',
   },
+  dweebball: {
+    id: 'dweebball',
+    name: 'Dweebball',
+    tagline: '2v2 sport! Kick the big orange ball into the opponent goal. First to 3 wins!',
+    stocks: 999,
+    hasWeapons: false,
+    hasWallDrop: false,
+    hasContraptions: false,
+    hasEscapePuzzles: false,
+    isDweebball: true,
+    arenas: ['stadium', 'colosseum', 'megastadium'],
+    arena: 'stadium',
+  },
 };
 
 export const DEFAULT_MODE = 'derby';
