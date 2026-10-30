@@ -40,6 +40,7 @@ const START_ITEMS = [
   ['freezeRay', 3.5, 1, 4.5],
   ['magnet', -3.5, 1, -4.5],
   ['boxingGlove', 2.1, 1, -2.2],
+  ['grappleGlove', -2.1, 1, 2.2],
 ];
 // Sky drops, weighted: comedy props are common, KO-power items are rare (and capped, see RARE)
 export const DROP_ITEMS = [
@@ -54,7 +55,7 @@ export const DROP_ITEMS = [
   // rare: the KO makers
   { key: 'giantHammer', w: 1.5 }, { key: 'toyRocket', w: 1.5 }, { key: 'explosiveBarrel', w: 1.5 }, { key: 'anvil', w: 1 },
   // gadget weapons: uncommon, capped by the live-item guard rather than RARE
-  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 },
+  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'grappleGlove', w: 2 },
   // fast hands: low launch, huge cadence
   { key: 'boxingGlove', w: 3 },
   // element props: combine them (water + tesla = shock, oil + pepper = inferno, snow twice = frozen)

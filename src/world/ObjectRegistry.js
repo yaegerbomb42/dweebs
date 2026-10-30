@@ -271,6 +271,14 @@ export const OBJECT_DEFS = {
     breakable: false, breakForce: 50000, damage: 0.8, color: 0xff9a3c,
     gadget: 'magnet',
   },
+  grappleGlove: {
+    name: 'Grapple Glove',
+    shape: 'box', dims: { hx: 0.22, hy: 0.18, hz: 0.22 },
+    visualScale: [0.44, 0.36, 0.44],
+    material: 'metal', mass: 1.6, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.7, color: 0xff4d5e,
+    gadget: 'grappleGlove',
+  },
   spikyBall: {
     name: 'Spiky Bouncy Blob',
     shape: 'sphere', dims: { radius: 0.35 },

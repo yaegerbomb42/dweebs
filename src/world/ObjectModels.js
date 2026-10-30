@@ -568,6 +568,33 @@ const BUILDERS = {
     k.eye([0.06, 0.0, 0.12], [0.4, 0.2, 1], 0.035);
   },
 
+  grappleGlove(k) {
+    const red = 0xff4d5e, metal = 0xc9d3e6, dark = 0x1b1030, yellow = 0xffd23f;
+    // Fist-sized glove with a coiled spring launcher on the back
+    k.add(B(0.44, 0.36, 0.4, 0.1), red, { p: [0, -0.02, 0.08] }); // fist
+    k.add(B(0.3, 0.22, 0.28, 0.08), red, { p: [0, -0.02, -0.12] }); // forearm cuff
+    k.add(Cyl(0.07, 0.07, 0.14, 8), yellow, { p: [0, 0.06, -0.18], r: [PI / 2, 0, 0] }); // spring barrel
+    k.add(Tor(0.075, 0.012, 4, 12), dark, { p: [0, 0.06, -0.11], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.075, 0.012, 4, 12), dark, { p: [0, 0.06, -0.25], r: [PI / 2, 0, 0] });
+    // Coil visual
+    for (let i = 0; i < 5; i++) {
+      const t = i / 5;
+      k.add(Tor(0.06, 0.01, 3, 8), yellow, {
+        p: [0, 0.06, -0.11 - t * 0.14],
+        r: [PI / 2, 0, 0]
+      });
+    }
+    // Trigger
+    k.add(B(0.08, 0.06, 0.12, 0.02), metal, { p: [0.2, -0.08, 0.02] });
+    // Hook muzzle
+    k.add(Cyl(0.035, 0.035, 0.06, 8), metal, { p: [0, 0.02, 0.28], r: [PI / 2, 0, 0] });
+    k.add(Cone(0.04, 0.07, 6), metal, { p: [0, 0.02, 0.31], r: [PI / 2, 0, 0] });
+    // Knuckle accents
+    for (const x of [-0.12, 0, 0.12]) k.add(Cyl(0.02, 0.02, 0.03, 6), dark, { p: [x, 0.13, 0.2] });
+    k.eye([-0.05, 0.08, 0.2], [-0.3, 0.2, 1], 0.03);
+    k.eye([0.05, 0.08, 0.2], [0.3, 0.2, 1], 0.03);
+  },
+
   toolbox(k) {
     k.add(B(0.4, 0.2, 0.24, 0.02), 0xff4d5e, { p: [0, -0.05, 0] });
     k.add(B(0.42, 0.07, 0.26, 0.02), 0xd92a3a, { p: [0, 0.085, 0] });
