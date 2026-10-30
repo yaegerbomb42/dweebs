@@ -37,7 +37,7 @@ describe('warfare units', () => {
 
 describe('warfare balance (real equal-cost duels)', () => {
   it.each([
-    ['shield', 'rocket'], ['rocket', 'stealer'], ['stealer', 'kami'], ['kami', 'shield'],
+    ['shield', 'rocket'], ['rocket', 'stealer'], ['stealer', 'kami'], ['kami', 'shield'], ['sapper', 'rocket'],
   ])('%s beats %s cost-for-cost', (a, b) => {
     expect(wins(a, b)).toBeGreaterThanOrEqual(4);
     expect(SEEDS.filter(seed => duel(b, a, { seed }).winner === 'red').length).toBeGreaterThanOrEqual(4);

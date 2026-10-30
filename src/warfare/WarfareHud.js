@@ -104,7 +104,7 @@ body.warfare-active canvas{touch-action:none}
 @media (max-width:640px){.wf-card{width:84px}.wf-card .h{display:none}.wf-title{font-size:40px}.wf-hints{grid-template-columns:1fr}.wf-fort{width:120px}}
 `;
 
-const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣' };
+const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣', sapper: '⛏️' };
 
 /** localStorage key for the best defense wave; normal keeps the original key. */
 export const bestKey = d => (d && d !== 'normal' ? `dweebs-warfare-best-${d}` : 'dweebs-warfare-best');
@@ -124,8 +124,8 @@ export class WarfareHud {
           <p class="wf-sub">Command a toy-box army. Hold your brass fort for ${FINAL_WAVE} waves.</p>
           <ul class="wf-hints">
             <li><b>Click the board</b> to plant your rally flag. Your army holds there.</li>
-            <li><b>Keys 1–4</b> (or tap a card) recruit units at your fort with coins.</li>
-            <li><b>Counters:</b> Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield.</li>
+            <li><b>Keys 1–5</b> (or tap a card) recruit units at your fort with coins.</li>
+            <li><b>Counters:</b> Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield, and Sapper ▶ Rocket (burrows under walls).</li>
             <li><b>Stealers</b> drag enemies home to convert them, and flip kami fuses.</li>
             <li><b>Space</b> starts the next wave early. Kills and clears pay coins.</li>
             <li><b>Boss every 5 waves.</b> Kamis hit the Brass Bully hardest.</li>
@@ -208,7 +208,7 @@ export class WarfareHud {
       <div class="wf-screen wf-hidden" data-s="pause">
         <div class="wf-panel">
           <h1 class="wf-title">PAUSED</h1>
-          <p class="wf-sub">Counters: Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield</p>
+          <p class="wf-sub">Counters: Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield, Sapper ▶ Rocket (burrows)</p>
           <div class="wf-modes"><button data-a="resume">RESUME</button><button class="alt" data-a="restart">RESTART</button><button class="alt" data-a="quit">QUIT TO MENU</button></div>
         </div>
       </div>

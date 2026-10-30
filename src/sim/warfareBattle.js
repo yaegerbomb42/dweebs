@@ -14,6 +14,14 @@ import { computeDamage, splashFalloff, knockback, COVER_RADIUS } from './warfare
 import { pickTarget, shouldRetreat, flankGoal, REJOIN_AT } from './warfareAI.js';
 import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward, DIFFICULTY } from './warfareWaves.js';
 
+// Sapper tunnelling: underground for SAPPER_BURROW_TICKS (untargetable, ignores barricades),
+// then pops up SAPPER_SURFACE_BEHIND past its target. One dig per SAPPER_BURROW_CD ticks.
+export const SAPPER_BURROW_MIN = 4;
+export const SAPPER_BURROW_TICKS = 36;
+export const SAPPER_BURROW_CD = 210;
+export const SAPPER_SURFACE_BEHIND = 1.5;
+export const SAPPER_DIG_SPEED = 1.6;
+
 export const WF_HZ = 30;
 export const WF_DT = 1 / WF_HZ;
 export const FIELD = Object.freeze({ halfX: 40, halfZ: 22 });
@@ -136,6 +144,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
     dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), cdMul: 1,
+    burrow: 0, burrowCd: 0,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -289,7 +298,7 @@ function isCovered(st, t) {
 function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, ax, az } = {}) {
   const hg = groundMult(st, ax ?? x, az ?? z);
   for (const e of st.units) {
-    if (!e.alive || e.team === attTeam) continue;
+    if (!e.alive || e.burrow > 0 || e.team === attTeam) continue;
     const dx = e.x - x, dz = e.z - z;
     const d = Math.sqrt(dx * dx + dz * dz);
     const f = splashFalloff(d, radius + e.radius * 0.5);
@@ -452,11 +461,45 @@ function updateUnit(st, u, enemies) {
     return;
   }
 
+  // Sapper burrow movement: move toward burrow target while burrowing
+  if (u.burrow > 0) {
+    u.burrow--;
+    if (u.burrowTarget) {
+      seek(u, u.burrowTarget.x, u.burrowTarget.z, speed * SAPPER_DIG_SPEED);
+      // Small dust/tunnel event every few ticks
+      if (u.burrow % 4 === 0) {
+        st.events.push({ type: 'tunnel', team: u.team, x: u.x, z: u.z });
+      }
+    }
+    if (u.burrow === 0) {
+      // Surface: brief cooldown before attacking
+      u.cd = 20;
+      u.burrowTarget = null;
+      st.events.push({ type: 'surface', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
+    return;
+  }
+
   // Target selection (staggered so 120 units don't all think on the same tick)
   let t = u.targetId ? st.byId.get(u.targetId) : null;
-  if (!t || !t.alive || t.carriedBy || t.team === u.team || (st.tick + u.id) % 6 === 0) {
+  if (!t || !t.alive || t.carriedBy || t.burrow > 0 || t.team === u.team || (st.tick + u.id) % 6 === 0) {
     t = pickTarget(u, enemies) || fortAlarm(st, u, enemies);
     u.targetId = t ? t.id : 0;
+  }
+
+  // Sapper burrow: when targeting a rocket/stealer > 4 units away, dig under everything and
+  // surface just past the target (on the far side, so the back line has to turn around).
+  if (u.burrowCd > 0) u.burrowCd--;
+  if (t && u.type === 'sapper' && (t.type === 'rocket' || t.type === 'stealer') && !u.burrow && u.burrowCd <= 0) {
+    const dx = t.x - u.x, dz = t.z - u.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d > SAPPER_BURROW_MIN) {
+      u.burrow = SAPPER_BURROW_TICKS;
+      u.burrowCd = SAPPER_BURROW_CD;
+      u.vx = 0; u.vz = 0;
+      u.burrowTarget = { x: t.x + (dx / d) * SAPPER_SURFACE_BEHIND, z: t.z + (dz / d) * SAPPER_SURFACE_BEHIND };
+      st.events.push({ type: 'burrow', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
   }
 
   if (t) {
@@ -599,7 +642,10 @@ function integrate(st) {
   }
   for (const u of units) {
     if (!u.alive || u.carriedBy) continue;
-    for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
+    // Burrowing sappers ignore barricades (tunnel under them)
+    if (!u.burrow) {
+      for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
+    }
     for (const team of ['blue', 'red']) { const f = st.forts[team]; pushOut(u, f.x, f.z, f.r); }
     u.x = clamp(u.x, -FIELD.halfX, FIELD.halfX);
     u.z = clamp(u.z, -FIELD.halfZ, FIELD.halfZ);
@@ -718,7 +764,7 @@ export function battleHash(st) {
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
-    mix(u.carrying); mix(u.carriedBy);
+    mix(u.carrying); mix(u.carriedBy); mix(u.burrow || 0); mix(u.burrowCd || 0);
   }
   return h >>> 0;
 }
