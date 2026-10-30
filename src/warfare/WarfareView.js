@@ -239,6 +239,19 @@ export class WarfareView {
       const vy = h * 4 * (1 - 2 * p);
       m.rotation.set(0, Math.atan2(-dz, dx), Math.atan2(vy, d || 1));
     }
+    // Animate mud ripple: subtle scale pulsing on each mud patch
+    for (const mud of this.board.mud || []) {
+      const ud = mud.userData;
+      if (ud && ud.mudTimeOffset !== undefined) {
+        const phase = t * 1.8 + ud.mudTimeOffset;
+        const pulse = 1 + Math.sin(phase) * 0.03 + Math.sin(phase * 2.3) * 0.015;
+        mud.scale.setScalar(pulse);
+        // Subtle opacity shimmer
+        if (mud.material && mud.material.opacity !== undefined) {
+          mud.material.opacity = 0.92 + Math.sin(phase * 1.7) * 0.04;
+        }
+      }
+    }
     for (const team of ['blue', 'red']) {
       const r = this.rally[team];
       r.pulse = Math.max(0, (r.pulse || 0) - dt);

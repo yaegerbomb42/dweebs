@@ -52,6 +52,20 @@ function groundMult(st, x, z) {
   return 1;
 }
 
+/** True if (x,z) is inside any mud circle. */
+function inMud(st, x, z) {
+  for (const m of st.mud || []) {
+    const dx = x - m.x, dz = z - m.z;
+    if (dx * dx + dz * dz <= m.r * m.r) return true;
+  }
+  return false;
+}
+
+/** Speed multiplier for a unit at (x,z): applies mud slow if in mud. */
+function terrainSpeedMul(st, x, z) {
+  return inMud(st, x, z) ? MUD_SPEED_MUL : 1;
+}
+
 /**
  * Chew through destructible barricades ({hp}) caught in a blast. Deterministic: fixed array
  * order, no rng, so both lockstep peers break the same bundles on the same tick.
@@ -80,6 +94,10 @@ export const ENRAGE_KAMIS = 2;
 export const BACKSTAB = 1.6;
 /** Rockets stay this far behind their side's most advanced shield. */
 export const ROCKET_BEHIND_SHIELD = 3;
+/** Mud terrain: units inside a mud circle move at this fraction of their speed. */
+export const MUD_SPEED_MUL = 0.55;
+/** Mud terrain: rockets inside mud reload this fraction slower (multiply cooldown). */
+export const MUD_ROCKET_RELOAD_MUL = 1.25;
 const KNOCK_DECAY = 0.86;
 
 function teamStats() {
@@ -93,8 +111,9 @@ function teamStats() {
  * @param {boolean} [o.army] spawn the starting armies (tests turn this off for duels)
  * @param {Array} [o.barricades] battleground barricade circles (default: the meadow ring)
  * @param {Array} [o.highGround] battleground high-ground rects {x,z,w,h}
+ * @param {Array} [o.mud] battleground mud circles {x,z,r}
  */
-export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround } = {}) {
+export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround, mud } = {}) {
   const versus = mode === 'versus';
   const dkey = !versus && Object.hasOwn(DIFFICULTY, difficulty) ? difficulty : 'normal';
   const diff = DIFFICULTY[dkey];
@@ -109,6 +128,7 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins, d
     rally: { blue: { x: -22, z: 0 }, red: { x: 22, z: 0 } },
     barricades: (barricades ?? BARRICADES).map(b => ({ ...b })),
     highGround: (highGround ?? []).map(r => ({ ...r })),
+    mud: (mud ?? []).map(m => ({ ...m })),
     coins: { blue: coins ?? (versus ? 150 : diff.coins), red: versus ? (coins ?? 150) : 0 },
     wave: 0,
     phase: versus ? 'battle' : 'prep',
@@ -404,7 +424,7 @@ function updateUnit(st, u, enemies) {
       spawnUnit(st, u.team, 'kami', { x: u.x + dirOf(u.team) * -1.5, z: u.z + (i - 1) * 2.2, hpMul: st.scaling.hpMul, dmgMul: st.scaling.dmgMul });
     }
   }
-  const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
+  const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1) * terrainSpeedMul(st, u.x, u.z);
   const home = st.forts[u.team];
   const enemyTeam = otherTeam(u.team);
   const efort = st.forts[enemyTeam];
@@ -414,7 +434,8 @@ function updateUnit(st, u, enemies) {
     const v = st.byId.get(u.carrying);
     if (!v || !v.alive) { u.carrying = 0; }
     else {
-      seek(u, home.x, home.z, s.carrySpeed);
+      const carrySpeed = s.carrySpeed * terrainSpeedMul(st, u.x, u.z);
+      seek(u, home.x, home.z, carrySpeed);
       const dx = home.x - u.x, dz = home.z - u.z;
       if (dx * dx + dz * dz <= (home.r + PEN_REACH) * (home.r + PEN_REACH)) {
         const from = v.team;
@@ -467,7 +488,8 @@ function updateUnit(st, u, enemies) {
       if (d < s.minRange) seek(u, u.x - dx, u.z - dz, speed);
       else if (d <= s.range) {
         halt(u);
-        if (u.cd <= 0) { u.cd = Math.round(s.cooldown * u.cdMul); fireShell(st, u, t.x, t.z, t.vx, t.vz); }
+        const rocketCdMul = inMud(st, u.x, u.z) ? MUD_ROCKET_RELOAD_MUL : 1;
+        if (u.cd <= 0) { u.cd = Math.round(s.cooldown * u.cdMul * rocketCdMul); fireShell(st, u, t.x, t.z, t.vx, t.vz); }
       } else {
         // hold formation behind our own shield wall instead of walking out in front of it
         const front = st.front && st.front[u.team];
@@ -711,6 +733,8 @@ export function battleHash(st) {
   // or two peers could silently disagree about the board after a reconnect.
   mix(st.barricades.length);
   for (const b of st.barricades) if (b.hp > 0) mix(Math.round(b.hp * 10));
+  mix(st.mud.length);
+  for (const m of st.mud) { mix(Math.round(m.x * 100)); mix(Math.round(m.z * 100)); mix(Math.round(m.r * 100)); }
   mix(st.stance?.blue === 'defense' ? 2 : st.stance?.blue === 'charge' ? 3 : 1);
   mix(st.stance?.red === 'defense' ? 2 : st.stance?.red === 'charge' ? 3 : 1);
   mix(Math.round(st.rally.blue.x * 100)); mix(Math.round(st.rally.blue.z * 100));

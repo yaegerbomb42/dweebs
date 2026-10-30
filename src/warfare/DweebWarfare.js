@@ -140,7 +140,7 @@ export class DweebWarfare {
     this.team = team;
     const bg = getBattleground(mapId || this.mapId || 'meadow');
     this.mapId = bg.id;
-    this.st = createBattle({ seed, mode, difficulty, barricades: bg.barricades, highGround: bg.highGround });
+    this.st = createBattle({ seed, mode, difficulty, barricades: bg.barricades, highGround: bg.highGround, mud: bg.mud });
     this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
     this.pending = [];
     this.outbox = [];
