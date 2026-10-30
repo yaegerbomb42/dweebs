@@ -20,7 +20,7 @@ import {
 import { TournamentBracket } from './Tournament.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
-const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+export const TOURNAMENT_KEY = 'dweebs-tournament-v1';
 
 export class BuildADweebLab {
   constructor(scene, camera, renderer) {

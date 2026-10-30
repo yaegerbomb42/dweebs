@@ -41,8 +41,9 @@ import { saveVillage, loadVillage, applySave } from './adventure/persistence.js'
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
-import { BuildADweebLab } from './builder/BuildADweebLab.js';
+import { BuildADweebLab, TOURNAMENT_KEY } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
+import { TournamentBracket } from './builder/Tournament.js';
 import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebModel.js';
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
@@ -53,6 +54,9 @@ const hex = c => '#' + c.toString(16).padStart(6, '0');
 
 let lastBuilderPlayerConfig = null;
 let lastBuilderOppType = 'random';
+let lastBuilderOppConfig = null;
+let tournamentBracket = null;
+let pendingTournamentFight = null;
 
 let currentMeadowlands = null;
 let colony = null;
@@ -399,7 +403,7 @@ function setupMenu() {
     audio.playUIClick();
     $('results-screen')?.classList.add('hidden');
     if (lastBuilderPlayerConfig) {
-      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType);
+      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType, lastBuilderOppConfig);
     } else {
       startBuildLab();
     }
@@ -670,7 +674,30 @@ function generateOpponentConfig(playerConfig, oppType = 'random') {
   return cfg;
 }
 
+function adoptTournamentBracket() {
+  if (!tournamentBracket && currentBuildLab?.tournament) {
+    tournamentBracket = currentBuildLab.tournament;
+  }
+  return tournamentBracket;
+}
+
+function persistTournamentBracket() {
+  const inProgress = !!tournamentBracket && tournamentBracket.status === 'in';
+  try {
+    if (inProgress) localStorage.setItem(TOURNAMENT_KEY, JSON.stringify(tournamentBracket.toJSON()));
+    else localStorage.removeItem(TOURNAMENT_KEY);
+  } catch { /* private mode */ }
+  if (currentBuildLab) {
+    currentBuildLab.tournament = inProgress ? tournamentBracket : null;
+  }
+}
+
+function pushTournamentState(state) {
+  currentBuildHud?.renderTournament?.(state);
+}
+
 function startBuildLab() {
+  pendingTournamentFight = null;
   hideSpectatorOverlay();
   clearRematch();
   clearDweebs();
@@ -714,6 +741,46 @@ function startBuildLab() {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
     },
+    onTournamentState: () => adoptTournamentBracket()?.state?.() ?? null,
+    onTournamentStart: () => {
+      if (currentBuildLab) {
+        const state = currentBuildLab.startTournament();
+        tournamentBracket = currentBuildLab.tournament;
+        return state;
+      }
+      const playerConfig = lastBuilderPlayerConfig || tournamentBracket?.player;
+      if (!playerConfig) return null;
+      tournamentBracket = new TournamentBracket(playerConfig);
+      persistTournamentBracket();
+      return tournamentBracket.state();
+    },
+    onTournamentFight: () => adoptTournamentBracket()?.opponentForPlayer?.() ?? null,
+    onTournamentResult: playerWon => {
+      if (!adoptTournamentBracket()) return null;
+      const state = tournamentBracket.recordPlayerResult(!!playerWon);
+      persistTournamentBracket();
+      pushTournamentState(state);
+      return state;
+    },
+    onTournamentAbandon: () => {
+      tournamentBracket = null;
+      if (currentBuildLab) currentBuildLab.abandonTournament?.();
+      else {
+        try { localStorage.removeItem(TOURNAMENT_KEY); } catch { /* private mode */ }
+      }
+      pushTournamentState(null);
+    },
+    onLaunchTournament: (opponent, meta) => {
+      if (!opponent || !adoptTournamentBracket()) return;
+      const playerConfig = currentBuildLab?.config || tournamentBracket?.player || lastBuilderPlayerConfig;
+      if (!playerConfig) return;
+      pendingTournamentFight = {
+        roundIndex: tournamentBracket.currentRoundIndex,
+        opponentId: opponent.entrantId || opponent.id || null,
+        tournament: !!meta?.tournament,
+      };
+      launchBuilderArena(playerConfig, 'tournament', opponent);
+    },
   });
 
   currentBuildHud.syncForm(currentBuildLab.config);
@@ -738,9 +805,10 @@ function exitBuildLab() {
   setTimeout(() => { location.hash = '#/'; }, 0);
 }
 
-function launchBuilderArena(playerConfig, oppType = 'random') {
+function launchBuilderArena(playerConfig, oppType = 'random', oppConfigOverride = null) {
   lastBuilderPlayerConfig = playerConfig;
   lastBuilderOppType = oppType;
+  lastBuilderOppConfig = oppConfigOverride || null;
 
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
@@ -772,7 +840,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   wireDweeb(player);
   applyCustomDweebToBrawler(player, playerConfig);
 
-  const oppConfig = generateOpponentConfig(playerConfig, oppType);
+  const oppConfig = oppConfigOverride || generateOpponentConfig(playerConfig, oppType);
   const spawn1 = arena.getSpawnPoint(1, 2);
   const oppDweeb = new Dweeb(scene, physics, {
     isPlayer: false,
@@ -1157,14 +1225,26 @@ const matchEvents = {
     spectateTarget = null;
     hud.setSpectator('');
     const you = winner.isPlayer;
+    let tournamentChampion = false;
+    if (pendingTournamentFight) {
+      pendingTournamentFight = null;
+      if (tournamentBracket) {
+        const state = tournamentBracket.recordPlayerResult(you);
+        tournamentChampion = state?.status === 'champion';
+        persistTournamentBracket();
+        pushTournamentState(state);
+      }
+    }
     if (currentMode === 'build_arena') {
-      $('result-title').textContent = `${winner.name.toUpperCase()} WINS!`;
+      $('result-title').textContent = tournamentChampion ? '🏆 CHAMPION! 🏆' : `${winner.name.toUpperCase()} WINS!`;
     } else {
       $('result-title').textContent = you ? 'YOU WIN!' : `${winner.name.toUpperCase()} WINS!`;
     }
     $('results-podium').innerHTML = podium(standings.slice(0, 3), d => `${plural(match.roundWins.get(d), 'round')} · ${plural(d.totalKos || 0, 'KO')}`,
       d => `${statsFor(d.type).label} · style peak ${Math.round(d.stylePeak)} · ${d.trickshots || 0} trickshots`);
-    $('result-banners').innerHTML = bannersHtml(winBanners({ winner, match, isMatch: true }));
+    $('result-banners').innerHTML = (tournamentChampion
+      ? '<div class="banner">COLOSSEUM CHAMPION<small>You cleared every round of the Build-A-Dweeb ladder!</small></div>'
+      : '') + bannersHtml(winBanners({ winner, match, isMatch: true }));
     $('result-reel').innerHTML = highlightReel();
     const a = arenaById(arena.arenaId);
     $('result-arena').textContent = `${a.icon} ${a.name}`;
@@ -1187,7 +1267,7 @@ const matchEvents = {
     }
 
     $('results-screen').classList.remove('hidden');
-    hud.confetti();
+    hud.confetti(tournamentChampion ? 120 : undefined);
     audio.playBanner(you);
     if (you) audio.playVictory(); else audio.playDefeat();
   },
