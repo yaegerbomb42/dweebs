@@ -94,7 +94,7 @@ export class Colony {
    * (first with room); whatever is left over is lost to the meadow.
    * Returns { added, overflowStored, overflowLost }.
    */
-  addResource(res, n, silos = []) {
+  addResource(res, n, silos = [], pile = null) {
     if (n <= 0) return { added: 0, overflowStored: 0, overflowLost: 0 };
     const cap = this.storageCap[res] ?? Infinity;
     const room = Math.max(0, cap - (this.resources[res] || 0));
@@ -108,6 +108,11 @@ export class Colony {
       const moved = silo.deposit(res, overflow);
       overflow -= moved;
       overflowStored += moved;
+    }
+    // Only the amount that actually entered stores/silos is consumed from a
+    // physical supply pile; overflow stays visible on the ground.
+    if (pile && typeof pile.consume === 'function') {
+      try { pile.consume(added + overflowStored); } catch { /* cosmetic only */ }
     }
     return { added, overflowStored, overflowLost: overflow };
   }
