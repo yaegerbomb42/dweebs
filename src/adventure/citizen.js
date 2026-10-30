@@ -63,7 +63,37 @@ export const CITIZEN_STATES = {
   GUARD: 'GUARD',
   SING: 'SING',
   REPAIR: 'REPAIR',
+  TRY_STUNT: 'TRY_STUNT',
 };
+
+/** Copyable stunt types, with the verb learned on success and the comedy lines. */
+const COPYCAT_STUNTS = {
+  bounce: {
+    verb: 'bounce',
+    win: 'I bounced! Did everyone see that?! 🤩',
+    fail: 'I bounced straight onto my face. Worth it! 😵',
+  },
+  launch: {
+    verb: 'launch',
+    win: 'Launch successful! I am a flying Dweeb! 🚀',
+    fail: 'The launchpad laughed at me. Ouch. 😵',
+  },
+  zipline: {
+    verb: 'zipline',
+    win: 'Wheee! I rode the zipline all by myself! 🎉',
+    fail: 'I ran at the zipline and hugged the pole instead. 😵',
+  },
+  vault: {
+    verb: 'vault',
+    win: 'I found the vault trick! Treasure, here I come! 🤩',
+    fail: 'I tripped over my own feet at the vault door. 😵',
+  },
+};
+
+/** Seconds a citizen remembers a stunt and keeps trying to copy it. */
+const COPYCAT_MEMORY = 9;
+/** Seconds before a citizen can be inspired by another stunt. */
+const COPYCAT_COOLDOWN = 22;
 
 export class Citizen {
   constructor(dweeb, config = {}) {
@@ -123,6 +153,10 @@ export class Citizen {
     // citizen ping-ponging between picked-clean bushes forever.
     this._emptyBushStreak = 0;
     this._forageCooldown = 0;
+
+    // Village copycat: a fresh stunt this citizen wants to imitate.
+    this.copycat = null;         // { type, x, z, until, verb, stunt, attempted }
+    this._copycatCooldown = 0;   // seconds before another imitation
 
     // Toy-hammer repair duty (landmarks from the ToyTown district).
     this._repairSwing = 0;
@@ -417,7 +451,8 @@ export class Citizen {
   }
 
   /** React to a nearby physics stunt (bounce, zipline, vault). */
-  reactToStunt(stunt) {
+  reactToStunt(stunt, otherCitizens = []) {
+    if (!stunt) return;
     const lines = {
       bounce: { text: 'Whoa! Did you SEE that bounce?!', icon: '🤩' },
       zipline: { text: 'Wheee! The zipline! Again! Again!', icon: '🤩' },
@@ -429,11 +464,48 @@ export class Citizen {
     this.mood = 'excited';
     this.say(line.text, line.icon, 3);
     this.activityText = line.text;
+
+    // One nearby citizen gets the idea to imitate the stunt. The shared stunt
+    // object acts as the claim, so the first inspired villager wins and the
+    // rest only cheer.
+    this._tryRememberStunt(stunt, otherCitizens);
+  }
+
+  /** Remember a stunt to imitate, if this citizen is free and not on cooldown. */
+  _tryRememberStunt(stunt, otherCitizens = []) {
+    if (!stunt || stunt.copycatClaimed) return false;
+    const spec = COPYCAT_STUNTS[stunt.type];
+    if (!spec) return false;
+    if (!Number.isFinite(stunt.x) || !Number.isFinite(stunt.z)) return false;
+    if (this.copycat || this._copycatCooldown > 0) return false;
+    if (!this.dweeb || !this.dweeb.body) return false;
+
+    this.copycat = {
+      type: stunt.type,
+      x: stunt.x,
+      z: stunt.z,
+      until: this.clock + COPYCAT_MEMORY,
+      verb: spec.verb,
+      stunt,
+      attempted: false,
+    };
+    stunt.copycatClaimed = true;
+    stunt.copycatName = this.name;
+
+    // A little extra flavour: tinkerers are usually first to volunteer.
+    if (this.role === 'tinkerer' && otherCitizens.length > 1) {
+      this.activityText = `Ooh! A ${stunt.type} trick? I can build that!`;
+    } else {
+      this.activityText = `Ooh! I want to try that ${stunt.type} too!`;
+    }
+    this.stateTimer = 0; // decide on the copy attempt right away
+    return true;
   }
 
   update(dt, world, otherCitizens = [], colony = null) {
     if (!this.dweeb || !this.dweeb.body) return;
     this.clock += dt;
+    if (this._copycatCooldown > 0) this._copycatCooldown = Math.max(0, this._copycatCooldown - dt);
 
     // 1. Update internal needs
     this.hunger = Math.min(100, this.hunger + dt * 0.8);
@@ -483,7 +555,7 @@ export class Citizen {
         if (this.clock - stunt.at > 2) continue;
         if (Math.hypot(stunt.x - pos.x, stunt.z - pos.z) > 14) continue;
         this._lastStuntAt = stunt.at;
-        this.reactToStunt(stunt);
+        this.reactToStunt(stunt, otherCitizens);
       }
     }
 
@@ -531,6 +603,21 @@ export class Citizen {
   }
 
   _selectNextGoal(world, otherCitizens, colony = null) {
+    // Priority 0: A fresh stunt memory outranks chores — the village is watching!
+    if (this.copycat) {
+      if (this.copycat.attempted || this.clock >= this.copycat.until) {
+        if (!this.copycat.attempted) this._copycatCooldown = Math.max(this._copycatCooldown, 6);
+        this.copycat = null;
+      } else {
+        this.state = CITIZEN_STATES.TRY_STUNT;
+        this.targetEntity = null;
+        this.targetPos.set(this.copycat.x, 0.5, this.copycat.z);
+        this.stateTimer = COPYCAT_MEMORY + 2;
+        this.activityText = `Running over to copy that ${this.copycat.type} trick!`;
+        return;
+      }
+    }
+
     // Priority 0: A loaded basket must reach a supply pile before anything else.
     if (this.carrying && this.carrying.amount > 0) {
       if (this._startHaulTrip(world)) return;
@@ -772,6 +859,98 @@ export class Citizen {
     this.activityText = 'Wandering peacefully around New Dweebtopia';
   }
 
+  /** Chance that this citizen pulls off the copied stunt, from role + personality. */
+  _copycatSuccessChance(type) {
+    let chance = 0.45;
+    if (this.role === 'tinkerer') chance += 0.3;
+    else if (this.role === 'defender') chance += 0.18;
+    else if (this.role === 'builder') chance += 0.08;
+    else if (this.role === 'forager') chance += 0.02;
+
+    const bravery = Number(this.personality && this.personality.bravery) || 1;
+    chance += (bravery - 1) * 0.28;
+    const pid = this.personality && this.personality.id;
+    if (pid === 'adventurer') chance += 0.06;
+    else if (pid === 'inventor') chance += 0.09;
+    else if (pid === 'cozy') chance -= 0.12;
+
+    if (this.energy < 30) chance -= 0.12;
+    if (type === 'zipline') chance -= 0.1;
+    else if (type === 'vault') chance += 0.08;
+    return Math.max(0.12, Math.min(0.92, chance));
+  }
+
+  /** Nearby villagers cheer a success or groan at a wipeout. */
+  _copycatCrowd(otherCitizens, text, icon) {
+    if (!Array.isArray(otherCitizens) || !this.dweeb || !this.dweeb.body) return;
+    const here = this.dweeb.body.translation();
+    if (!here) return;
+    for (const peer of otherCitizens) {
+      if (!peer || peer === this || !peer.dweeb || !peer.dweeb.body) continue;
+      let pp;
+      try { pp = peer.dweeb.body.translation(); } catch { continue; }
+      if (!pp) continue;
+      if (Math.hypot(pp.x - here.x, pp.z - here.z) > 16) continue;
+      peer.moodTimer = Math.max(peer.moodTimer || 0, 2);
+      peer.mood = 'excited';
+      if (Math.random() < 0.55 && typeof peer.say === 'function') {
+        peer.say(text, icon, 2);
+      }
+    }
+  }
+
+  /** Perform the remembered stunt. Success teaches the verb; failure is comedy. */
+  _performCopycat(cc, otherCitizens, colony = null) {
+    if (!cc || !this.dweeb || !this.dweeb.body) return;
+    cc.attempted = true;
+    const spec = COPYCAT_STUNTS[cc.type] || COPYCAT_STUNTS.bounce;
+    const success = Math.random() < this._copycatSuccessChance(cc.type);
+
+    if (success) {
+      const learned = this.learnVerb(cc.verb);
+      this.mood = 'excited';
+      this.moodTimer = 4;
+      this.say(spec.win, '🤩', 3);
+      this.activityText = `Nailed the ${cc.type} trick all by myself!`;
+
+      // Re-enact it physically: bounces and launches send them sky-high, the rest is a proud hop
+      if (this.dweeb.body && this.dweeb.body.setLinvel) {
+        const v = this.dweeb.body.linvel ? this.dweeb.body.linvel() : { x: 0, z: 0 };
+        const up = cc.type === 'launch' ? 14 : cc.type === 'bounce' ? 11 : cc.type === 'zipline' ? 7 : 5;
+        const fwd = cc.type === 'launch' ? 6 : cc.type === 'zipline' ? 4 : 0;
+        const yaw = Number(this.dweeb.yaw) || 0;
+        this.dweeb.body.setLinvel({ x: (v.x || 0) * 0.3 + Math.sin(yaw) * fwd, y: up, z: (v.z || 0) * 0.3 + Math.cos(yaw) * fwd }, true);
+        if (this.dweeb.body.setAngvel && up > 8) this.dweeb.body.setAngvel({ x: 0, y: 9, z: 0 }, true);
+      }
+
+      this._copycatCrowd(otherCitizens, `Yay! ${this.name} copied the ${cc.type}!`, '🎉');
+      if (learned && colony && typeof colony._addLog === 'function') {
+        colony._addLog(`🌟 ${this.name} copied the player's ${cc.type} stunt and learned ${cc.verb.toUpperCase()}!`);
+      }
+    } else {
+      // Comedic failure: a ragdoll tumble (or a plain stumble if unavailable).
+      this.energy = Math.max(0, this.energy - 4);
+      this.say(spec.fail, '😵', 3);
+      this.activityText = `Face-planted trying to copy the ${cc.type} trick 😵`;
+      if (this.dweeb.body && this.dweeb.body.setLinvel) {
+        const v = this.dweeb.body.linvel ? this.dweeb.body.linvel() : { x: 0, z: 0 };
+        this.dweeb.body.setLinvel({
+          x: (v.x || 0) * 0.2 + (Math.random() - 0.5) * 2.5,
+          y: 2.2,
+          z: (v.z || 0) * 0.2 + (Math.random() - 0.5) * 2.5,
+        }, true);
+      }
+      if (typeof this.dweeb.startRagdoll === 'function') {
+        this.dweeb.startRagdoll(0.9, 5);
+      }
+      this._copycatCrowd(otherCitizens, `Ooooh! ${this.name} wiped out!`, '😂');
+    }
+
+    this.copycat = null;
+    this._copycatCooldown = COPYCAT_COOLDOWN + Math.random() * 8;
+    this.stateTimer = 1.5 + Math.random() * 1.5;
+  }
+
   _executeGoal(dt, world, otherCitizens, colony = null) {
     const pos = this.dweeb.body.translation();
     const distToTarget = Math.hypot(this.targetPos.x - pos.x, this.targetPos.z - pos.z);
@@ -806,6 +985,34 @@ export class Citizen {
         return;
       }
       this.repairHammer.rotation.z = -0.35;
+    }
+
+    // Copycat attempt: walk to the stunt origin, then try the matching action.
+    if (this.state === CITIZEN_STATES.TRY_STUNT) {
+      const cc = this.copycat;
+      if (!cc) {
+        this.stateTimer = 0;
+        this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+        if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
+        return;
+      }
+      if (!cc.attempted && this.clock >= cc.until) {
+        // Too slow — the moment passed and the crowd moved on.
+        this.copycat = null;
+        this._copycatCooldown = Math.max(this._copycatCooldown, 6);
+        this.stateTimer = 0;
+        this.say('Aww, I missed my turn to try it…', '😔', 2);
+        this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+        if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
+        return;
+      }
+      if (distToTarget <= this.arrivalDist + 0.6) {
+        this._performCopycat(cc, otherCitizens, colony);
+        this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+        if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
+        return;
+      }
+      // Still walking: fall through to the shared movement code at the bottom.
     }
 
     // If resting, replenish energy and sit still (night rest is twice as fast).
