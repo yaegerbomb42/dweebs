@@ -611,8 +611,11 @@ export class BuildADweebHud {
     // wave-2 wires the lab event bridge (config/history/dojo/slots) + undo-redo shortcuts.
     // If a tournament is already in progress (restored from storage by the
     // lab), render its bracket immediately.
-    const existing = this.handlers.onTournamentState?.();
-    if (existing) this.renderTournament(existing);
+    const existingTournament = this.handlers.onTournamentState?.();
+    if (existingTournament) this.renderTournament(existingTournament);
+    // If a gauntlet is already in progress, render its wave card immediately.
+    const existingGauntlet = this.handlers.onGauntletState?.();
+    if (existingGauntlet) this.renderGauntlet(existingGauntlet);
     // Initial stable render
     this.renderStable();
 
@@ -1060,6 +1063,14 @@ export class BuildADweebHud {
             </div>
           </div>
 
+          <div class="bd-card" id="bd-gauntlet-card" style="margin-top:10px;">
+            <h4>🌊 ENDLESS GAUNTLET</h4>
+            <div id="bd-gauntlet-body">
+              <div style="font-size:12px; opacity:0.85; margin-bottom:8px;">Wave survival: every champion you beat comes back heavier, tougher and smarter. How far can your build go?</div>
+              <button class="bd-tourney-btn" id="bd-btn-gauntlet" data-gact="start">🌊 START GAUNTLET</button>
+            </div>
+          </div>
+
           <div class="bd-card" id="bd-telemetry-card" style="margin-top:10px;">
             <h4>📊 COMBAT TELEMETRY</h4>
             <div class="bd-tele-row"><span>DPS (live)</span><span class="bd-tele-dps" id="bd-t-dps">—</span></div>
@@ -1415,6 +1426,26 @@ export class BuildADweebHud {
       });
     }
 
+    // Gauntlet card (delegated — the body re-renders as waves advance)
+    const gBody = this.root?.querySelector('#bd-gauntlet-body');
+    if (gBody) {
+      gBody.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-gact]');
+        if (!btn) return;
+        const act = btn.dataset.gact;
+        if (act === 'start') {
+          const state = this.handlers.onGauntletStart?.();
+          if (state) this.renderGauntlet(state);
+        } else if (act === 'fight') {
+          // The bout result is recorded automatically by main.js when the arena match ends.
+          if (this.handlers.onGauntletFight?.()) this.handlers.onLaunchGauntlet?.();
+        } else if (act === 'abandon') {
+          this.handlers.onGauntletAbandon?.();
+          this.renderGauntlet(null);
+        }
+      });
+    }
+
     // Stable row — slot strip + SAVE/CLEAR buttons
     const stableSlots = $('#bd-stable-slots');
     if (stableSlots) {
@@ -1642,6 +1673,44 @@ export class BuildADweebHud {
           </div>`;
         }).join('')}
       </div>`).join('')}</div>`;
+  }
+
+  // ─── Endless Gauntlet UI ────────────────────────────────────────────────────
+
+  /** Render the gauntlet wave card from a gauntlet state object. */
+  renderGauntlet(state) {
+    const body = this.root?.querySelector('#bd-gauntlet-body');
+    if (!body) return;
+    const best = state?.best ? `<div style="font-size:12px; font-weight:800; color:#ffd23f; margin-bottom:6px;">🏆 BEST: ${state.best} WAVE${state.best === 1 ? '' : 'S'} CLEARED</div>` : '';
+    if (!state) {
+      body.innerHTML = `
+        <div style="font-size:12px; opacity:0.85; margin-bottom:8px;">Wave survival: every champion you beat comes back heavier, tougher and smarter. How far can your build go?</div>
+        <button class="bd-tourney-btn" data-gact="start">🌊 START GAUNTLET</button>`;
+      return;
+    }
+    if (!state.alive) {
+      body.innerHTML = `
+        <div style="font-size:14px; font-weight:800; color:#ff4d5e; margin-bottom:6px;">💀 KNOCKED OUT ON WAVE ${state.wave}</div>
+        ${best}
+        <button class="bd-tourney-btn small" data-gact="start">🔄 RUN IT BACK</button>
+        <button class="bd-tourney-btn small" data-gact="abandon" style="background:#332357;color:#fff8ee;">DISMISS</button>`;
+      return;
+    }
+    const opp = state.opponent;
+    body.innerHTML = `
+      <div style="font-size:14px; font-weight:800; color:#00f5d4; margin-bottom:4px;">
+        ${state.lastCleared ? `✓ WAVE ${state.lastCleared} CLEARED · ` : ''}🌊 WAVE ${state.wave}
+      </div>
+      ${best}
+      ${opp ? `
+        <div class="bd-bout" style="font-size:13px; margin-bottom:6px;">
+          <span class="you">YOU</span><span style="opacity:0.7;">vs</span>
+          <span><b>${opp.name || 'Champion'}</b> <span style="opacity:0.7;">${opp.badge || ''}</span></span>
+        </div>` : ''}
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;">
+        <button class="bd-tourney-btn fight" data-gact="fight">⚔️ FIGHT WAVE ${state.wave}</button>
+      </div>
+      <button class="bd-tourney-btn small" data-gact="abandon" style="background:#332357;color:#fff8ee;">ABANDON RUN</button>`;
   }
 
   // ─── Combat telemetry UI ───────────────────────────────────────────────────

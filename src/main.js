@@ -58,7 +58,7 @@ let hillZone = null;
 import { MimicLab } from './mimic/MimicLab.js';
 import { assignTeams, teamById, TeamRings } from './game/Teams.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
-import { BuildADweebLab, TOURNAMENT_KEY } from './builder/BuildADweebLab.js';
+import { BuildADweebLab, recordGauntletBout, loadGauntletState, TOURNAMENT_KEY } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
 import { TournamentBracket } from './builder/Tournament.js';
 import { CombatTelemetry } from './builder/CombatTelemetry.js';
@@ -638,7 +638,14 @@ function setupMenu() {
   $('btn-build-rematch')?.addEventListener('click', () => {
     audio.playUIClick();
     $('results-screen')?.classList.add('hidden');
-    if (lastBuilderPlayerConfig) {
+    if (lastBuilderPlayerConfig && lastBuilderOppType === 'gauntlet') {
+      let g = loadGauntletState();
+      if (!g?.alive) {   // lost: start a fresh run straight away
+        startBuildLab();
+        g = currentBuildLab?.startGauntlet();
+      }
+      if (g?.alive && g.opponent) launchGauntletArena(lastBuilderPlayerConfig, g);
+    } else if (lastBuilderPlayerConfig) {
       launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType, lastBuilderOppConfig);
     } else {
       startBuildLab();
@@ -1005,6 +1012,14 @@ function startBuildLab() {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
     },
+    onGauntletStart: () => currentBuildLab?.startGauntlet(),
+    onGauntletFight: () => currentBuildLab?.gauntletOpponent(),
+    onGauntletAbandon: () => currentBuildLab?.abandonGauntlet(),
+    onGauntletState: () => currentBuildLab?.gauntletState(),
+    onLaunchGauntlet: () => {
+      const state = currentBuildLab?.gauntletState();
+      if (state?.alive && state.opponent) launchGauntletArena(currentBuildLab.config, state);
+    },
     // Stable handlers
     onStableGet: () => currentBuildLab?.stableSlots ?? [],
     onStableSave: idx => {
@@ -1187,6 +1202,82 @@ function launchBuilderArena(playerConfig, oppType = 'random', oppConfigOverride 
   cam.unlock();
   cam.snapTo(0, 2, 9);
   hud.setSuddenDeath('🤖 100% AUTONOMOUS AI ARENA DUEL 🤖');
+  setTimeout(() => { if (match.running) hud.setSuddenDeath(''); }, 3500);
+
+  showSpectatorOverlay(playerConfig, oppConfig);
+
+  audio.init();
+  audio.resume();
+  applyAudioSettings();
+}
+
+function launchGauntletArena(playerConfig, gauntletState) {
+  lastBuilderPlayerConfig = playerConfig;
+  lastBuilderOppType = 'gauntlet';
+
+  if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
+  if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+
+  clearRematch();
+  clearDweebs();
+
+  arena.setArena('stadium');
+  arena.reset();
+  if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = true;
+  arena.hazardsActive = true;
+  spectateTarget = null;
+  currentMode = 'build_arena';
+
+  for (const id of ['game-switcher-modal', 'pause-screen', 'main-menu', 'results-screen']) $(id)?.classList.add('hidden');
+  $('hud').classList.remove('hidden');
+
+  const spawn0 = arena.getSpawnPoint(0, 2);
+  player = new Dweeb(scene, physics, {
+    isPlayer: true,
+    name: playerConfig.name || 'Your Dweeb',
+    type: playerConfig.shape || 'blob',
+    color: 0xffffff,
+    index: 0,
+    position: spawn0,
+  });
+  dweebs.push(player);
+  wireDweeb(player);
+  applyCustomDweebToBrawler(player, playerConfig);
+
+  const oppConfig = gauntletState.opponent;
+  const spawn1 = arena.getSpawnPoint(1, 2);
+  const oppDweeb = new Dweeb(scene, physics, {
+    isPlayer: false,
+    name: oppConfig.name || 'Rival Bot',
+    type: oppConfig.shape || 'cube',
+    color: 0xffffff,
+    index: 1,
+    position: spawn1,
+  });
+  dweebs.push(oppDweeb);
+  wireDweeb(oppDweeb);
+  applyCustomDweebToBrawler(oppDweeb, oppConfig);
+
+  builderBots = [
+    new BuilderBot(player, arena, combat, playerConfig.dna),
+    new BuilderBot(oppDweeb, arena, combat, oppConfig.dna),
+  ];
+
+  controller = new Controller(player, cam, combat);
+  controller.enabled = false;
+
+  combat.setDweebs(dweebs);
+  arena.dweebs = dweebs;
+  hud.setup(dweebs);
+
+  match.settings.stocks = 3;
+  match.settings.mode = 'build_arena';
+  match.startMatch(dweebs);
+
+  cam.unlock();
+  cam.snapTo(0, 2, 9);
+  hud.setSuddenDeath(`🌊 GAUNTLET · WAVE ${gauntletState.wave} · ${oppConfig.name || 'Champion'}`);
   setTimeout(() => { if (match.running) hud.setSuddenDeath(''); }, 3500);
 
   showSpectatorOverlay(playerConfig, oppConfig);
@@ -1799,6 +1890,13 @@ const matchEvents = {
     spectateTarget = null;
     hud.setSpectator('');
     const you = winner.isPlayer;
+    // Endless Gauntlet: bank the wave (or end the run) and tell the player where they stand.
+    let gauntletNote = '';
+    if (currentMode === 'build_arena' && lastBuilderOppType === 'gauntlet') {
+      const g = recordGauntletBout(you);
+      if (g) gauntletNote = g.alive ? `🌊 WAVE ${g.lastCleared} CLEARED · NEXT: ${g.opponent?.name || 'WAVE ' + g.wave}` : `💀 GAUNTLET OVER ON WAVE ${g.wave} · BEST ${g.best}`;
+    }
+
     let tournamentChampion = false;
     if (pendingTournamentFight) {
       pendingTournamentFight = null;
@@ -1825,6 +1923,12 @@ const matchEvents = {
     $('result-reel').innerHTML = highlightReel();
     const a = arenaById(arena.arenaId);
     $('result-arena').textContent = `${a.icon} ${a.name}`;
+    if (gauntletNote) $('result-banners').insertAdjacentHTML('afterbegin', bannersHtml([{ title: gauntletNote, sub: you ? 'Your build lives on. The next champion is tougher.' : 'Back to the workshop to tune your build.' }]));
+    const rematchBtn = $('btn-build-rematch');
+    if (rematchBtn) {
+      rematchBtn.dataset.label ??= rematchBtn.textContent;
+      rematchBtn.textContent = gauntletNote ? (you ? '🌊 NEXT WAVE' : '🔄 NEW GAUNTLET') : rematchBtn.dataset.label;
+    }
     try {
       const me = standings.find(d => d.isPlayer);
       if (me && currentMode !== 'build_arena') {

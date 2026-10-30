@@ -369,6 +369,15 @@ export const BALANCE = {
     blastTop: 30,
     sdBlastScale: 0.88,    // sudden death pulls the side blast line in (34 → 30)
   },
+
+  // Endless Gauntlet (Build-A-Dweeb): per-wave growth of the champion, each with a cap.
+  gauntlet: {
+    massPerWave: 0.06, massCap: 1.8,
+    armorPerWave: 0.08, armorCap: 2.2,
+    speedPerWave: 0.025, speedCap: 1.35,
+    jumpPerWave: 0.02, jumpCap: 1.3,
+    dnaMax: 0.95, dnaWaves: 12,   // AI accuracy/confidence ramp toward dnaMax by wave 13
+  },
 };
 
 // Archetypes: same collider, different feel.
