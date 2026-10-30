@@ -1099,6 +1099,7 @@ export class BuildADweebHud {
             </select>
           </div>
           <button class="bd-launch-btn" id="bd-btn-launch">⚔️ SEND TO ARENA</button>
+          <button class="bd-launch-btn green" id="bd-btn-mutation" style="animation:none; background:#5ee06a; box-shadow:0 8px 0 #14101c, 0 0 24px rgba(94,224,106,0.4);">🎲 MUTATION ROULETTE</button>
           <span style="font-size:12px; font-weight:800; background:rgba(20,16,28,0.8); border-radius:8px; padding:3px 10px;">100% AUTONOMOUS AI BATTLE · ZERO USER INPUT</span>
           <!-- Merge: milestone #4 tournament card + combat telemetry card -->
 
@@ -1492,6 +1493,12 @@ export class BuildADweebHud {
     $('#bd-btn-launch').addEventListener('click', () => {
       const oppType = $('#bd-select-opp').value;
       this.handlers.onLaunchArena?.(oppType);
+    });
+
+    // Mutation Roulette
+    $('#bd-btn-mutation').addEventListener('click', () => {
+      const oppType = $('#bd-select-opp').value;
+      this.handlers.onLaunchMutationArena?.(oppType);
     });
 
     // Elemental palette
