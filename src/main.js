@@ -59,6 +59,7 @@ import { assignTeams, teamById, TeamRings } from './game/Teams.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
 import { BuildADweebLab } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
+import { CombatTelemetry } from './builder/CombatTelemetry.js';
 import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebModel.js';
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
@@ -84,6 +85,7 @@ let currentMimicLab = null;
 let currentWarfare = null;
 let currentBuildLab = null;
 let currentBuildHud = null;
+let currentBuildTelemetry = null;
 let builderBots = [];
 let activeCitizenIdx = 0;
 let isBuildToolbarOpen = false;
@@ -723,6 +725,7 @@ function toMenu() {
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+  currentBuildTelemetry = null;
   if (currentDweebball) { currentDweebball.dispose(); currentDweebball = null; }
   match.phase = Phase.MENU;
   teamRings?.dispose();
@@ -1067,6 +1070,10 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   fx.reactions?.setDweebs(dweebs);
   arena.dweebs = dweebs;
   hud.setup(dweebs);
+
+  // Combat telemetry for Build-A-Dweeb arena
+  currentBuildTelemetry = new CombatTelemetry();
+  currentBuildHud?.attachTelemetry(currentBuildTelemetry);
 
   match.settings.stocks = 3;
   match.settings.mode = 'build_arena';
@@ -1510,6 +1517,13 @@ const matchEvents = {
     emotes?.onKO(d, credited);
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
+    // Record KO for build_arena telemetry
+    currentBuildTelemetry?.recordKO?.({
+      dweebId: d.index,
+      name: d.name,
+      byId: credited?.index,
+      time: match.time,
+    });
     comboDirector?.registerKO?.(d, credited, performance.now() / 1000);
     if (deathCinema) {
       let cause = 'VAPORIZED IN THE VOID';
@@ -1654,6 +1668,9 @@ const matchEvents = {
     const you = winner.isPlayer;
     if (currentMode === 'build_arena') {
       $('result-title').textContent = `${winner.name.toUpperCase()} WINS!`;
+      // Render combat telemetry recap
+      const recap = currentBuildTelemetry?.recap?.();
+      if (recap) currentBuildHud?.renderMatchRecap?.(recap);
     } else {
       $('result-title').textContent = you ? 'YOU WIN!' : `${winner.name.toUpperCase()} WINS!`;
     }
@@ -1918,13 +1935,35 @@ function wireDweeb(d) {
     hud.popup('SHIELD!', dw.getPosition(), 'small', 0xffd23f);
   };
   d.onBubblePop = dw => fx.bubblePop(dw);
-  d.onTech = dw => fx.tech(dw);
-  d.onHit = (dw, launch) => match.noteLaunch(dw, launch);
-  d.onFlailJump = dw => fx.flailJump(dw);
+  d.onTech = dw => {
+    fx.tech(dw);
+    currentBuildTelemetry?.recordEvasion?.({ dweebId: dw.index, name: dw.name, time: match.time });
+  };
+  d.onHit = (dw, launch) => {
+    match.noteLaunch(dw, launch);
+    // Record damage dealt by the attacker (lastHitBy)
+    if (dw.lastHitBy && currentBuildTelemetry) {
+      const dmg = Math.max(1, Math.round(launch * 10)); // approximate damage from launch
+      currentBuildTelemetry.recordDamage({
+        attackerId: dw.lastHitBy.index,
+        attackerName: dw.lastHitBy.name,
+        targetId: dw.index,
+        targetName: dw.name,
+        damage: dmg,
+        time: match.time,
+        kind: 'hit',
+      });
+    }
+  };
+  d.onFlailJump = dw => {
+    fx.flailJump(dw);
+    currentBuildTelemetry?.recordRecoveryJump?.({ dweebId: dw.index, name: dw.name, time: match.time });
+  };
   d.onParryStart = dw => fx.parryStart(dw);
   d.onParry = (dw, attacker) => {
     fx.parry(dw, attacker);
     combat.addStyle(dw, BALANCE.parry.style, 'PARRY');
+    currentBuildTelemetry?.recordEvasion?.({ dweebId: dw.index, name: dw.name, time: match.time });
   };
 }
 
@@ -2032,6 +2071,8 @@ function loop() {
       deathCinema.update(dt, cam);
     } else {
       hud.update(rawDt, match, camera, player);
+      // Update build_arena telemetry HUD (live DPS/impact gauges)
+      if (currentMode === 'build_arena') currentBuildHud?.updateTelemetry?.();
       const charging = player.active && controller.live ? player.charging : 0;
       audio.setCharge(player.charging > 0 ? charging : 0);
       haptics?.charge(charging);
@@ -2331,6 +2372,13 @@ function handleImpacts() {
         else combat.damageObject(obj, imp.speed * imp.speed * side.mass * 12, obj.thrownBy, { speed: imp.speed });
       }
     }
+    // Record kinetic impact force for build_arena telemetry (dweeb-vs-dweeb impacts)
+    if (currentBuildTelemetry && imp.a.kind === 'dweeb' && imp.b.kind === 'dweeb') {
+      const force = imp.speed * (imp.a.mass + imp.b.mass) * 0.5;
+      currentBuildTelemetry.recordImpact({ dweebId: imp.a.ref.index, name: imp.a.ref.name, force, time: match.time });
+      currentBuildTelemetry.recordImpact({ dweebId: imp.b.ref.index, name: imp.b.ref.name, force, time: match.time });
+    }
+
     // Tumbling dweebs thud, puff and bounce when they smack the ground or a prop
     for (const side of [imp.a, imp.b]) {
       const d = side.kind === 'dweeb' ? side.ref : null;
