@@ -647,6 +647,24 @@ const BUILDERS = {
     k.eye([0.06, 0.0, 0.12], [0.4, 0.2, 1], 0.035);
   },
 
+  leafBlower(k) {
+    const orange = 0xff8a1f, dark = 0x2d2a3a, green = 0x5ee06a;
+    // Chunky motor housing, a fat blower tube with a flared nozzle, a pull-cord and a big trigger.
+    k.add(B(0.3, 0.26, 0.3, 0.06), orange, { p: [0, 0.02, -0.12] });
+    k.add(Cyl(0.15, 0.15, 0.06, 14), dark, { p: [0.16, 0.02, -0.12], r: [0, 0, PI / 2] });
+    for (let i = 0; i < 6; i++) k.add(B(0.02, 0.2, 0.03, 0.008), 0x4a4560, { p: [0.19, 0.02, -0.12], r: [i * PI / 6, 0, 0] });
+    k.add(Cyl(0.075, 0.09, 0.46, 12), green, { p: [0, 0.0, 0.24], r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.13, 0.08, 0.12, 12), green, { p: [0, 0.0, 0.5], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.12, 0.022, 5, 16), dark, { p: [0, 0.0, 0.56] });
+    k.add(Tor(0.1, 0.018, 5, 14), W, { p: [0, 0.0, 0.3] });
+    k.add(B(0.06, 0.18, 0.06, 0.02), dark, { p: [0, 0.22, -0.12] });
+    k.add(B(0.18, 0.05, 0.06, 0.02), dark, { p: [0, 0.31, -0.12] });
+    k.add(B(0.05, 0.08, 0.06, 0.02), 0xff4d5e, { p: [0, 0.2, -0.02] });
+    k.add(Ico(0.03, 0), 0xffd23f, { p: [-0.17, 0.08, -0.22] });
+    k.eye([-0.07, 0.1, 0.035], [-0.3, 0.2, 1], 0.045);
+    k.eye([0.07, 0.1, 0.035], [0.3, 0.2, 1], 0.045);
+    k.sticker(S.textSticker('TURBO', { bg: '#ffd23f', w: 256, h: 96 }), 0.2, 0.075, { p: [-0.152, 0.0, -0.12], r: [0, -PI / 2, 0] });
+  },
   grappleGlove(k) {
     const red = 0xff4d5e, metal = 0xc9d3e6, dark = 0x1b1030, yellow = 0xffd23f;
     // Fist-sized glove with a coiled spring launcher on the back
