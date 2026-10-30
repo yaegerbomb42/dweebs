@@ -288,6 +288,20 @@ const BUILDERS = {
     k.add(Cyl(0.06, 0.06, 0.18, 6), 0xffd23f);
   },
 
+  trampoline(k) {
+    const blue = 0x3fa9ff, darkBlue = 0x2f7fd6, mat = 0x2d2a3a, star = 0xffd23f;
+    k.add(Tor(0.62, 0.09, 6, 20), blue, { r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.58, 0.58, 0.03, 16), mat, { p: [0, 0.09, 0] });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * PI * 2 + PI / 6;
+      k.add(Cyl(0.07, 0.08, 0.1, 6), darkBlue, { p: [Math.cos(a) * 0.48, -0.08, Math.sin(a) * 0.48] });
+    }
+    k.add(Cyl(0.17, 0.17, 0.012, 5), star, { p: [0, 0.11, 0], r: [0, PI / 2, 0] });
+    k.add(Cyl(0.1, 0.1, 0.014, 5), 0xfff3a0, { p: [0, 0.11, 0], r: [0, PI / 2 + PI / 5, 0] });
+    k.eye([-0.2, 0.13, 0.5], [-0.3, 0.35, 1], 0.065);
+    k.eye([0.2, 0.13, 0.5], [0.3, 0.35, 1], 0.065);
+  },
+
   trafficCone(k) {
     const o = 0xff7a1a, r = y => 0.13 - (y + 0.25) / 0.54 * 0.105;
     k.add(B(0.3, 0.05, 0.3, 0.015), o, { p: [0, -0.275, 0] });
@@ -354,10 +368,64 @@ const BUILDERS = {
     k.eye([0.065, 0.05, 0.17], [0.35, 0.2, 1], 0.048);
   },
 
+  whoopeeCushion(k) {
+    const pink = 0xff5fa2, dark = 0xd93d82;
+    k.add(Ico(0.26, 2), pink, { p: [0, 0.01, -0.02], s: [1, 0.26, 1] });
+    k.add(Cyl(0.05, 0.065, 0.12, 8), dark, { p: [0, 0.0, 0.27], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.055, 0.018, 5, 10), dark, { p: [0, 0.0, 0.335] });
+    k.eye([-0.07, 0.065, 0.06], [-0.2, 1, 0.35], 0.04);
+    k.eye([0.07, 0.065, 0.06], [0.2, 1, 0.35], 0.04);
+  },
+  bananaPeel(k) {
+    const skin = 0xffd93b, flesh = 0xfff1b8, tip = 0x6a4a2a;
+    const flap = (a, len, lift, r) => {
+      const pts = [
+        new THREE.Vector3(0, 0.02, 0),
+        new THREE.Vector3(Math.cos(a) * len * 0.35, lift, Math.sin(a) * len * 0.35),
+        new THREE.Vector3(Math.cos(a) * len * 0.72, lift * 0.85, Math.sin(a) * len * 0.72),
+        new THREE.Vector3(Math.cos(a) * len, lift * 0.25, Math.sin(a) * len),
+      ];
+      return paint(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, r, 5, false),
+        c => (c.y > lift * 0.55 ? flesh : skin),
+      );
+    };
+    const flaps = [
+      [0.35, 0.25, 0.075, 0.054],
+      [PI * 0.78, 0.23, 0.065, 0.05],
+      [PI * 1.28, 0.255, 0.08, 0.055],
+      [PI * 1.74, 0.19, 0.05, 0.043],
+    ];
+    for (const [a, len, lift, r] of flaps) k.add(flap(a, len, lift, r), 'vc');
+    k.add(Ico(0.095, 1), flesh, { p: [0, 0.045, 0], s: [1.25, 0.5, 1.1] });
+    for (const [a, len, lift] of [[0.35, 0.25, 0.075], [PI * 1.28, 0.255, 0.08]]) {
+      k.add(Ico(0.035, 0), tip, { p: [Math.cos(a) * len, lift * 0.25, Math.sin(a) * len], s: [1, 0.7, 1] });
+    }
+    k.eye([-0.042, 0.095, 0.072], [-0.25, 0.35, 1], 0.038);
+    k.eye([0.042, 0.095, 0.072], [0.25, 0.35, 1], 0.038);
+  },
+
   beachBall(k) {
     const cols = [0xff4d5e, W, 0x3fa9ff, W, 0xffd23f, W];
     k.add(paint(new THREE.SphereGeometry(0.3, 12, 9), c => Math.abs(c.y) > 0.25 ? W : cols[Math.floor(((Math.atan2(c.z, c.x) + PI) / (PI * 2)) * 6 + 0.001) % 6]), 'vc');
     k.add(Cyl(0.025, 0.025, 0.03, 6), W, { p: [0, 0.3, 0] });
+  },
+
+  partyBalloon(k) {
+    const pink = 0xff4d8d, dark = 0xc21b38;
+    // Balloon body floats above the grab point; the string curls down below it.
+    k.add(new THREE.SphereGeometry(0.3, 16, 12), pink, { p: [0, 0.48, 0], s: [1, 1.08, 1] });
+    k.add(Ico(0.07, 1), 0xffb3d9, { p: [-0.1, 0.63, 0.16], s: [1, 0.55, 0.45] });
+    k.add(Cone(0.05, 0.07, 6), dark, { p: [0, 0.17, 0], r: [PI, 0, 0] });
+    for (let i = 0; i < 6; i++) {
+      const y = 0.12 - i * 0.075;
+      k.add(Cyl(0.008, 0.008, 0.085, 4), W, {
+        p: [Math.sin(i * 1.35) * 0.035, y, Math.cos(i * 1.1) * 0.03],
+        r: [Math.sin(i * 1.7) * 0.4, 0, Math.cos(i * 1.3) * 0.5],
+      });
+    }
+    k.eye([-0.09, 0.53, 0.27], [-0.32, 0.12, 1], 0.055);
+    k.eye([0.09, 0.53, 0.27], [0.32, 0.12, 1], 0.055);
   },
 
   bowlingBall(k) {
@@ -381,6 +449,28 @@ const BUILDERS = {
       k.add(Box(0.09, 0.05, 0.12), INK, { p: [x, -0.88, 0] });
     }
     for (let i = 0; i < 6; i++) k.add(Cyl(0.028, 0.028, 0.42, 6), 0xffd23f, { p: [0, -0.75 + i * 0.3, 0], r: [0, 0, PI / 2] });
+  },
+
+  pogoStick(k) {
+    const pole = 0xff8a1f, grip = 0x2d2a3a, spring = 0xc9d3e6, rubber = 0x333333;
+    k.add(Cyl(0.045, 0.055, 1.0, 8), pole);
+    // T-handle bar
+    k.add(Cyl(0.04, 0.04, 0.34, 8), grip, { p: [0, 0.48, 0], r: [0, 0, PI / 2] });
+    for (const x of [-0.16, 0.16]) k.add(Cyl(0.055, 0.055, 0.08, 8), 0xffd23f, { p: [x, 0.48, 0], r: [0, 0, PI / 2] });
+    // Chunky coil spring above the foot
+    for (let i = 0; i < 5; i++) {
+      k.add(Tor(0.085, 0.022, 4, 12), spring, { p: [0, -0.3 + i * 0.06, 0], r: [PI / 2, 0, 0] });
+    }
+    // Foot pegs
+    for (const x of [-0.1, 0.1]) {
+      k.add(Cyl(0.026, 0.026, 0.14, 6), grip, { p: [x, -0.28, 0], r: [0, 0, PI / 2] });
+    }
+    // Rubber foot tip
+    k.add(Cyl(0.07, 0.09, 0.09, 10), rubber, { p: [0, -0.46, 0] });
+    k.add(Ico(0.07, 0), rubber, { p: [0, -0.5, 0], s: [1, 0.45, 1] });
+    // Googly eyes on the handle
+    k.eye([-0.07, 0.5, 0.05], [-0.25, 0.15, 1], 0.045);
+    k.eye([0.07, 0.5, 0.05], [0.25, 0.15, 1], 0.045);
   },
 
   couch(k) {
@@ -516,6 +606,17 @@ const BUILDERS = {
     k.sticker(S.textSticker('★', { bg: '#3fa9ff', fg: '#fff8ee', w: 128, h: 128, shape: 'circle' }), 0.2, 0.2, { p: [-0.27, 0.05, 0.05], r: [0, -PI / 2, 0] });
   },
 
+  boomerangBass(k) {
+    // A bigmouth bass bent into a boomerang: two fishy wings, a gaping mouth at the elbow.
+    const blue = 0x3fa9ff, belly = 0xfff1c7;
+    for (const s of [-1, 1]) {
+      k.add(Box(0.42, 0.09, 0.15), blue, { p: [s * 0.19, 0, -s * 0.0 + 0.05], r: [0, s * 0.45, 0] });
+      k.add(Box(0.34, 0.03, 0.08), belly, { p: [s * 0.19, -0.05, 0.05], r: [0, s * 0.45, 0] });
+    }
+    k.add(Tor(0.07, 0.025, 6, 10), 0xff4d6d, { p: [0, 0, -0.13], r: [0, 0, 0] });
+    k.add(Box(0.08, 0.06, 0.04), INK, { p: [-0.36, 0.06, -0.06] });
+    k.add(Box(0.08, 0.06, 0.04), INK, { p: [0.36, 0.06, -0.06] });
+  },
   spikyBall(k) {
     // Reference: images/Spiky_blob_bouncing_off_walls — red blob, bendy tentacle spikes, big googly eyes.
     const red = 0xff4d5e;
@@ -568,6 +669,79 @@ const BUILDERS = {
     k.eye([0.06, 0.0, 0.12], [0.4, 0.2, 1], 0.035);
   },
 
+  extinguisher(k) {
+    const red = 0xe8242f, dark = 0x1b1030, silver = 0xc9d3e6;
+    // Red tank with a rounded shoulder, black base ring and a white label band.
+    k.add(Cyl(0.11, 0.115, 0.44, 12), red, { p: [0, -0.04, 0] });
+    k.add(Ico(0.11, 1), red, { p: [0, 0.18, 0], s: [1, 0.5, 1] });
+    k.add(Cyl(0.118, 0.12, 0.035, 12), dark, { p: [0, -0.26, 0] });
+    k.add(Cyl(0.114, 0.114, 0.14, 12), W, { p: [0, -0.05, 0] });
+    // Silver valve and squeeze handle on top.
+    k.add(Cyl(0.045, 0.055, 0.08, 8), silver, { p: [0, 0.24, 0] });
+    k.add(Cyl(0.032, 0.032, 0.06, 8), silver, { p: [0, 0.29, 0] });
+    k.add(B(0.2, 0.028, 0.05, 0.01), silver, { p: [0, 0.32, 0] });
+    k.add(B(0.16, 0.024, 0.04, 0.01), dark, { p: [0.02, 0.345, 0], r: [0, 0, 0.08] });
+    // Black hose curling down the side to a forward-facing nozzle.
+    const hose = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.09, 0.23, 0),
+      new THREE.Vector3(0.19, 0.16, 0.02),
+      new THREE.Vector3(0.21, 0.0, 0.06),
+      new THREE.Vector3(0.18, -0.18, 0.1),
+      new THREE.Vector3(0.09, -0.22, 0.18),
+      new THREE.Vector3(0.02, -0.12, 0.24),
+      new THREE.Vector3(0, 0.02, 0.27),
+    ]);
+    k.add(new THREE.TubeGeometry(hose, 18, 0.022, 6), dark);
+    k.add(Cyl(0.028, 0.04, 0.1, 8), dark, { p: [0, 0.02, 0.31], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.04, 0.012, 3, 10), silver, { p: [0, 0.02, 0.355] });
+    k.eye([-0.045, 0.1, 0.1], [-0.25, 0.15, 1], 0.03);
+    k.eye([0.045, 0.1, 0.1], [0.25, 0.15, 1], 0.03);
+  },
+  leafBlower(k) {
+    const orange = 0xff8a1f, dark = 0x2d2a3a, green = 0x5ee06a;
+    // Chunky motor housing, a fat blower tube with a flared nozzle, a pull-cord and a big trigger.
+    k.add(B(0.3, 0.26, 0.3, 0.06), orange, { p: [0, 0.02, -0.12] });
+    k.add(Cyl(0.15, 0.15, 0.06, 14), dark, { p: [0.16, 0.02, -0.12], r: [0, 0, PI / 2] });
+    for (let i = 0; i < 6; i++) k.add(B(0.02, 0.2, 0.03, 0.008), 0x4a4560, { p: [0.19, 0.02, -0.12], r: [i * PI / 6, 0, 0] });
+    k.add(Cyl(0.075, 0.09, 0.46, 12), green, { p: [0, 0.0, 0.24], r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.13, 0.08, 0.12, 12), green, { p: [0, 0.0, 0.5], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.12, 0.022, 5, 16), dark, { p: [0, 0.0, 0.56] });
+    k.add(Tor(0.1, 0.018, 5, 14), W, { p: [0, 0.0, 0.3] });
+    k.add(B(0.06, 0.18, 0.06, 0.02), dark, { p: [0, 0.22, -0.12] });
+    k.add(B(0.18, 0.05, 0.06, 0.02), dark, { p: [0, 0.31, -0.12] });
+    k.add(B(0.05, 0.08, 0.06, 0.02), 0xff4d5e, { p: [0, 0.2, -0.02] });
+    k.add(Ico(0.03, 0), 0xffd23f, { p: [-0.17, 0.08, -0.22] });
+    k.eye([-0.07, 0.1, 0.035], [-0.3, 0.2, 1], 0.045);
+    k.eye([0.07, 0.1, 0.035], [0.3, 0.2, 1], 0.045);
+    k.sticker(S.textSticker('TURBO', { bg: '#ffd23f', w: 256, h: 96 }), 0.2, 0.075, { p: [-0.152, 0.0, -0.12], r: [0, -PI / 2, 0] });
+  },
+  grappleGlove(k) {
+    const red = 0xff4d5e, metal = 0xc9d3e6, dark = 0x1b1030, yellow = 0xffd23f;
+    // Fist-sized glove with a coiled spring launcher on the back
+    k.add(B(0.44, 0.36, 0.4, 0.1), red, { p: [0, -0.02, 0.08] }); // fist
+    k.add(B(0.3, 0.22, 0.28, 0.08), red, { p: [0, -0.02, -0.12] }); // forearm cuff
+    k.add(Cyl(0.07, 0.07, 0.14, 8), yellow, { p: [0, 0.06, -0.18], r: [PI / 2, 0, 0] }); // spring barrel
+    k.add(Tor(0.075, 0.012, 4, 12), dark, { p: [0, 0.06, -0.11], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.075, 0.012, 4, 12), dark, { p: [0, 0.06, -0.25], r: [PI / 2, 0, 0] });
+    // Coil visual
+    for (let i = 0; i < 5; i++) {
+      const t = i / 5;
+      k.add(Tor(0.06, 0.01, 3, 8), yellow, {
+        p: [0, 0.06, -0.11 - t * 0.14],
+        r: [PI / 2, 0, 0]
+      });
+    }
+    // Trigger
+    k.add(B(0.08, 0.06, 0.12, 0.02), metal, { p: [0.2, -0.08, 0.02] });
+    // Hook muzzle
+    k.add(Cyl(0.035, 0.035, 0.06, 8), metal, { p: [0, 0.02, 0.28], r: [PI / 2, 0, 0] });
+    k.add(Cone(0.04, 0.07, 6), metal, { p: [0, 0.02, 0.31], r: [PI / 2, 0, 0] });
+    // Knuckle accents
+    for (const x of [-0.12, 0, 0.12]) k.add(Cyl(0.02, 0.02, 0.03, 6), dark, { p: [x, 0.13, 0.2] });
+    k.eye([-0.05, 0.08, 0.2], [-0.3, 0.2, 1], 0.03);
+    k.eye([0.05, 0.08, 0.2], [0.3, 0.2, 1], 0.03);
+  },
+
   toolbox(k) {
     k.add(B(0.4, 0.2, 0.24, 0.02), 0xff4d5e, { p: [0, -0.05, 0] });
     k.add(B(0.42, 0.07, 0.26, 0.02), 0xd92a3a, { p: [0, 0.085, 0] });
@@ -594,6 +768,19 @@ const BUILDERS = {
     k.add(Cone(0.08, 0.12, 5), 0xfff3a0, { p: [0, 0.03, -0.28], r: [-2.1, 0, 0] }); // tail fluff
     k.eye([-0.045, 0.16, 0.245], [-0.8, 0.3, 0.6], 0.03);
     k.eye([0.045, 0.16, 0.245], [0.8, 0.3, 0.6], 0.03);
+  },
+
+  bubbleGum(k) {
+    const pinks = [0xff7ac8, 0xff9ad6, 0xff6bbd, 0xffb3e0, 0xff5fb3];
+    const lumps = [
+      [0, 0, 0, 0.2], [0.12, 0.06, 0.03, 0.13], [-0.11, 0.05, -0.04, 0.12],
+      [0.02, 0.14, -0.06, 0.11], [-0.03, -0.11, 0.05, 0.12], [0.09, -0.09, -0.1, 0.1],
+    ];
+    lumps.forEach(([x, y, z, r], i) => k.add(Ico(r, 1), pinks[i % pinks.length], { p: [x, y, z] }));
+    k.add(Ico(0.15, 1), 0xffd6ee, { p: [0.17, 0.08, 0.08], s: [1, 1, 0.9] });
+    k.add(Ico(0.05, 0), 0xffffff, { p: [0.24, 0.13, 0.16], s: [1, 1, 0.6] });
+    k.eye([-0.085, 0.06, 0.17], [-0.35, 0.2, 1], 0.05);
+    k.eye([0.055, 0.07, 0.19], [0.35, 0.2, 1], 0.048);
   },
 
   giantDie(k) {
@@ -644,6 +831,54 @@ const BUILDERS = {
     k.sticker(S.textSticker('MIX\nTAPE', { bg: '#ffd23f', w: 160, h: 128 }), 0.11, 0.085, { p: [0, -0.06, 0.112] });
     [0xff4d5e, 0xffd23f, 0x5ee06a, 0x3fa9ff].forEach((c, i) => k.add(B(0.05, 0.03, 0.05, 0.01), c, { p: [-0.1 + i * 0.066, 0.1, 0.03] }));
     k.add(Cyl(0.008, 0.008, 0.3, 4), CHROME, { p: [0.27, 0.19, -0.05], r: [0, 0, -0.5] });
+  },
+
+  // ─── Element props ───
+  oilDrum(k) {
+    k.add(Cyl(0.3, 0.3, 0.8, 14), 0x2d2a3a);
+    for (const y of [-0.26, 0, 0.26]) k.add(Tor(0.302, 0.02, 4, 16), 0x4a4660, { p: [0, y, 0], r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.06, 0.06, 0.04, 8), CHROME, { p: [0.14, 0.41, 0.05] });
+    k.sticker(S.textSticker('OIL', { bg: '#ffd23f', w: 160, h: 96 }), 0.3, 0.18, { p: [0, 0.08, 0.305] });
+    k.add(Ico(0.07, 1), 0x1b140c, { p: [-0.12, 0.4, -0.08], s: [1.6, 0.25, 1.2] }); // drip on the lid
+  },
+
+  waterBalloon(k) {
+    k.add(Ico(0.24, 2), 0x3fa9ff, { s: [1, 1.08, 1] }, { transparent: true, opacity: 0.85 });
+    k.add(Cone(0.05, 0.07, 6), 0x2f8ae0, { p: [0, 0.27, 0], r: [PI, 0, 0] });
+    k.add(Tor(0.03, 0.012, 4, 8), 0x2f8ae0, { p: [0, 0.3, 0], r: [PI / 2, 0, 0] });
+    k.add(Ico(0.05, 1), 0xffffff, { p: [-0.09, 0.1, 0.17], s: [1, 1.4, 0.4] }, { transparent: true, opacity: 0.6 }); // shine
+  },
+
+  honeyJar(k) {
+    k.add(Lathe([[0, -0.22], [0.16, -0.22], [0.2, -0.1], [0.2, 0.08], [0.14, 0.17], [0.15, 0.2], [0, 0.2]], 12), 0xffb02e);
+    k.add(Cyl(0.16, 0.16, 0.05, 12), 0xd4a86a, { p: [0, 0.22, 0] });
+    for (let i = 0; i < 3; i++) k.add(Ico(0.035, 1), 0xffb02e, { p: [Math.cos(i * 2.1) * 0.15, 0.17 - i * 0.05, Math.sin(i * 2.1) * 0.15], s: [0.8, 1.6, 0.8] }); // drips
+    k.sticker(S.textSticker('HUNNY', { bg: '#f3e6cf', w: 192, h: 96 }), 0.24, 0.12, { p: [0, -0.04, 0.2] });
+  },
+
+  snowGlobe(k) {
+    k.add(Cyl(0.2, 0.24, 0.12, 12), 0xb56cff, { p: [0, -0.22, 0] });
+    k.add(Ico(0.24, 2), 0xcff6ff, { p: [0, 0.05, 0] }, { transparent: true, opacity: 0.35 });
+    k.add(Cone(0.09, 0.2, 6), 0x2f8f3a, { p: [0, 0.0, 0] }); // tiny tree
+    k.add(Ico(0.05, 1), 0xffffff, { p: [0.08, -0.08, 0.05] }); // snowman
+    k.add(Ico(0.035, 1), 0xffffff, { p: [0.08, -0.01, 0.05] });
+    for (let i = 0; i < 9; i++) k.add(Ico(0.012, 0), 0xffffff, { p: [Math.cos(i * 1.9) * 0.15, 0.05 + Math.sin(i * 3.1) * 0.12, Math.sin(i * 1.9) * 0.15] });
+  },
+
+  pepperBomb(k) {
+    k.add(Ico(0.13, 2), 0xff3b2f, { p: [0, -0.02, 0], s: [1, 1.9, 1] });
+    k.add(Cyl(0.03, 0.04, 0.1, 6), 0x2f8f3a, { p: [0, 0.27, 0], r: [0, 0, 0.4] });
+    k.add(Cone(0.08, 0.05, 6), 0x2f8f3a, { p: [0, 0.22, 0], r: [PI, 0, 0] });
+    k.eye([0.05, 0.05, 0.1], [0.4, 0.1, 1], 0.025);
+    k.eye([-0.05, 0.05, 0.1], [-0.4, 0.1, 1], 0.025);
+  },
+
+  staticCoil(k) {
+    k.add(Cyl(0.18, 0.2, 0.1, 12), 0x2d2a3a, { p: [0, -0.25, 0] });
+    k.add(Cyl(0.05, 0.05, 0.4, 8), CHROME, { p: [0, 0, 0] });
+    for (let i = 0; i < 5; i++) k.add(Tor(0.09, 0.015, 4, 12), 0xd98b3a, { p: [0, -0.14 + i * 0.07, 0], r: [PI / 2, 0, 0] }); // copper coil
+    k.add(Ico(0.1, 1), CHROME, { p: [0, 0.25, 0] });
+    k.add(Ico(0.05, 1), 0xfff35a, { p: [0, 0.25, 0] }, { transparent: true, opacity: 0.9 });
   },
 
   fishBowl(k) {
@@ -801,6 +1036,136 @@ const BUILDERS = {
     k.add(Tor(0.03, 0.01, 3, 8, PI * 1.5), d, { p: [0, 0.05, -0.28], r: [0, PI / 2, 0] });
     k.eye([-0.07, 0.08, 0.22], [-0.3, 0.2, 1], 0.04);
     k.eye([0.07, 0.08, 0.22], [0.3, 0.2, 1], 0.04);
+  },
+
+  jackInBox(k) {
+    const wood = 0xc98a4b, dark = 0x8a5a2e, red = 0xff3355, cream = 0xfff8ee, gold = 0xffd23f;
+    // Box base
+    k.add(B(0.44, 0.5, 0.44, 0.03), wood);
+    // Moving parts are built as their own merged sub-kits so InteractiveObject can find them
+    // by name on each clone (userData refs don't survive Object3D.clone).
+    // Lid (separate so it can rattle/pop)
+    const lidK = new Kit();
+    lidK.add(B(0.48, 0.06, 0.48, 0.02), wood, { p: [0, 0, 0] });
+    lidK.add(B(0.38, 0.03, 0.38, 0.015), dark, { p: [0, 0.03, 0] });
+    const lid = lidK.build();
+    lid.position.y = 0.28;
+    lid.name = 'jackLid';
+    k.root.add(lid);
+    // Crank handle on the side (spins about its own X axle)
+    const crankK = new Kit();
+    crankK.add(Cyl(0.018, 0.018, 0.12, 6), CHROME, { p: [0.06, 0, 0], r: [0, 0, PI / 2] });
+    crankK.add(B(0.03, 0.12, 0.03, 0.01), CHROME, { p: [0.12, 0.05, 0] });
+    crankK.add(Cyl(0.025, 0.025, 0.06, 6), red, { p: [0.15, 0.1, 0], r: [0, 0, PI / 2] });
+    const crank = crankK.build();
+    crank.position.set(0.22, 0.05, 0);
+    crank.name = 'jackCrank';
+    k.root.add(crank);
+    // Spring-loaded boxing glove inside (hidden until pop)
+    const gloveK = new Kit();
+    gloveK.add(B(0.22, 0.2, 0.35, 0.08), red, { p: [0, -0.05, 0.15] });
+    gloveK.add(B(0.14, 0.12, 0.18, 0.06), red, { p: [0.02, -0.13, 0.22] });
+    gloveK.add(B(0.07, 0.06, 0.1, 0.04), red, { p: [-0.18, -0.08, 0.12] }); // thumb
+    gloveK.add(Cyl(0.12, 0.13, 0.15, 10), cream, { p: [0, -0.18, -0.12], r: [PI / 2, 0, 0] }); // cuff
+    const glove = gloveK.build();
+    // Spring coil (visual, stretches on pop)
+    const springK = new Kit();
+    for (let i = 0; i < 6; i++) springK.add(Tor(0.09, 0.012, 6, 10), CHROME, { p: [0, -0.25 + i * 0.06, -0.22], r: [PI / 2, 0, 0] });
+    const spring = springK.build();
+    spring.name = 'jackSpring';
+    glove.add(spring);
+    glove.name = 'jackGlove';
+    glove.visible = false;
+    k.root.add(glove);
+    // Decorative sticker
+    k.sticker(S.textSticker('JACK\nIN\nTHE\nBOX', { bg: '#ff4d5e', fg: '#fff8ee', w: 256, h: 220, tilt: -0.04 }), 0.28, 0.24, { p: [0, 0.05, 0.23] });
+    k.eye([-0.07, 0.18, 0.2], [-0.3, 0.2, 1], 0.045);
+    k.eye([0.07, 0.18, 0.2], [0.3, 0.2, 1], 0.045);
+  },
+  hoverboard(k) {
+    // Sleek low-profile board with glowing underside
+    const deck = 0x1b1030;
+    const glow = 0x3fa9ff;
+    const accent = 0xffd23f;
+    const chrome = 0xc9d3e6;
+
+    // Main deck - thin rounded box
+    k.add(B(1.3, 0.08, 0.44, 0.04), deck, { p: [0, 0, 0] });
+
+    // Glowing underside strip (center channel)
+    k.add(B(1.1, 0.02, 0.12, 0.01), glow, { p: [0, -0.05, 0] }, { emissive: glow, emissiveIntensity: 0.8 });
+
+    // Side glow strips
+    for (const x of [-0.35, 0.35]) {
+      k.add(B(0.1, 0.03, 0.38, 0.02), glow, { p: [x, -0.04, 0] }, { emissive: glow, emissiveIntensity: 0.6 });
+    }
+
+    // Front nose light
+    k.add(Cyl(0.06, 0.04, 0.02, 8), glow, { p: [0, -0.03, 0.21], r: [PI / 2, 0, 0] }, { emissive: glow, emissiveIntensity: 1 });
+    k.add(B(0.12, 0.02, 0.04, 0.01), accent, { p: [0, 0.03, 0.2] });
+
+    // Rear thrust vents
+    for (const x of [-0.15, 0, 0.15]) {
+      k.add(Cyl(0.03, 0.03, 0.02, 6), chrome, { p: [x, -0.04, -0.2], r: [PI / 2, 0, 0] });
+    }
+
+    // Top grip tape pattern
+    k.add(B(1.2, 0.008, 0.38, 0.01), 0x0a0812, { p: [0, 0.045, 0] });
+    for (const z of [-0.15, -0.05, 0.05, 0.15]) {
+      k.add(B(1.0, 0.004, 0.02, 0.005), 0x2a2442, { p: [0, 0.047, z] });
+    }
+
+    // Center logo strip
+    k.add(B(0.4, 0.01, 0.08, 0.01), accent, { p: [0, 0.049, 0] });
+    k.add(B(0.08, 0.01, 0.3, 0.005), accent, { p: [0, 0.049, 0] });
+
+    // Googly eyes on the nose
+    k.eye([-0.08, 0.07, 0.18], [0, 0.1, 1], 0.04);
+    k.eye([0.08, 0.07, 0.18], [0, 0.1, 1], 0.04);
+  },
+  chatteringTeeth(k) {
+    const W = 0xfff8ee, gum = 0xd94a5a, tongue = 0xff7a9a, key = 0xc9d3e6;
+    // Upper jaw, teeth and little skittering feet
+    k.add(B(0.4, 0.1, 0.3, 0.045), gum, { p: [0, 0.05, 0] });
+    for (let i = -2; i <= 2; i++) {
+      k.add(B(0.062, 0.075, 0.065, 0.012), W, { p: [i * 0.074, 0, 0.145] });
+    }
+    for (const x of [-0.185, 0.185]) for (let i = -1; i <= 1; i++) {
+      k.add(B(0.06, 0.065, 0.07, 0.012), W, { p: [x, 0, i * 0.085] });
+    }
+    for (const x of [-0.13, 0.13]) k.add(B(0.09, 0.045, 0.13, 0.018), W, { p: [x, -0.115, 0.01] });
+    // Googly eyes make it read as a tiny angry pet
+    k.eye([-0.11, 0.13, 0.1], [-0.25, 0.5, 1], 0.045);
+    k.eye([0.11, 0.13, 0.1], [0.25, 0.5, 1], 0.045);
+    // Wind-up key
+    k.add(Cyl(0.012, 0.012, 0.07, 6), key, { p: [0, 0.14, -0.11] });
+    for (const x of [-0.038, 0.038]) {
+      k.add(Tor(0.038, 0.011, 3, 10), key, { p: [x, 0.185, -0.11], r: [PI / 2, 0, 0], s: [1, 1, 0.55] });
+    }
+    // Lower jaw is its own pivot so the runtime can snap it open and shut
+    const jaw = new Kit();
+    jaw.add(B(0.36, 0.08, 0.26, 0.04), gum, { p: [0, 0, 0.13] });
+    for (let i = -2; i <= 2; i++) {
+      jaw.add(B(0.058, 0.07, 0.06, 0.012), W, { p: [i * 0.07, 0.055, 0.265] });
+    }
+    for (const x of [-0.165, 0.165]) for (let i = -1; i <= 1; i++) {
+      jaw.add(B(0.055, 0.06, 0.065, 0.012), W, { p: [x, 0.055, 0.13 + i * 0.075] });
+    }
+    jaw.add(Ico(0.08, 1), tongue, { p: [0, 0.025, 0.2], s: [1.3, 0.32, 1.5] });
+    const jawModel = jaw.build();
+    jawModel.name = 'jaw';
+    jawModel.userData.jaw = true;
+    jawModel.position.set(0, -0.06, -0.13);
+    k.root.add(jawModel);
+  },
+  // ─── Piñata Loot Burst ───
+  candy(k) {
+    const wrapper = 0xfff8ee, twist = 0xff4d5e;
+    k.add(Ico(0.1, 0), 0xff4d5e); // candy core
+    k.add(Tor(0.12, 0.025, 6, 10), twist, { p: [0, -0.11, 0], r: [PI / 2, 0, 0] }); // bottom twist
+    k.add(Tor(0.12, 0.025, 6, 10), twist, { p: [0, 0.11, 0], r: [PI / 2, 0, 0] }); // top twist
+    k.add(B(0.24, 0.04, 0.24, 0.02), wrapper, { p: [0, -0.12, 0] }); // bottom wrapper
+    k.add(B(0.24, 0.04, 0.24, 0.02), wrapper, { p: [0, 0.12, 0] }); // top wrapper
   },
 };
 
