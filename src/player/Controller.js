@@ -18,6 +18,7 @@
 import * as THREE from 'three';
 import { DEFAULT_LOFT } from '../combat/CombatSystem.js';
 import { findGamepad, stickVector, lookVector, BUTTONS } from '../app/gamepad.js';
+import { loadSettings, onSettingsChange, DEFAULT_BINDINGS } from '../app/settings.js';
 
 const _dir = new THREE.Vector2();
 
@@ -34,6 +35,9 @@ export class Controller {
     this.attackBuffer = 0;      // press that came in during cooldown/hitstun; fires as soon as possible
     this.attackHeld = false;
 
+    // Key bindings (action → array of KeyboardEvent.code)
+    this.bindings = { ...DEFAULT_BINDINGS };
+
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp = this._onKeyUp.bind(this);
     this._onMouseDown = this._onMouseDown.bind(this);
@@ -44,6 +48,24 @@ export class Controller {
     window.addEventListener('mousedown', this._onMouseDown);
     window.addEventListener('mouseup', this._onMouseUp);
     window.addEventListener('contextmenu', this._onContext);
+
+    // Live settings sync
+    this._settingsOff = onSettingsChange(s => this._applySettings(s));
+    this._applySettings(loadSettings());
+  }
+
+  _applySettings(s) {
+    if (s.bindings) this.bindings = { ...DEFAULT_BINDINGS, ...s.bindings };
+  }
+
+  /** Check if a key code matches any binding for the given action. */
+  _isBound(action, code) {
+    return this.bindings[action]?.includes(code) ?? false;
+  }
+
+  /** Check if any key for an action is currently held. */
+  _isHeld(action) {
+    return this.bindings[action]?.some(code => this.keys[code]) ?? false;
   }
 
   get live() {
@@ -126,38 +148,29 @@ export class Controller {
     if (e.isTrusted) this.padActive = false;
     if (!this.live || e.repeat) return;
     const d = this.dweeb;
-    switch (e.code) {
-      case 'Space':
-        // Down + jump on a floating platform slips you through it instead of hopping.
-        if (d.grounded && (this.keys.KeyS || this.keys.ArrowDown)) d.requestDropThrough();
-        else d.requestJump();
-        e.preventDefault();
-        break;
-      case 'KeyE':
-        this._startGrabOrThrow();
-        break;
-      case 'KeyQ':
-        this.combat.drop(d);
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight': {
-        const m = this._moveDir();
-        if (d.grounded) this._faceCamera(true);
-        this.combat.dodgeOrDive(d, m.x, m.y, !!this.keys.Space);
-        break;
-      }
-      case 'KeyF':
-        this.combat.armSuper(d);
-        break;
-      case 'KeyC':
-        this.combat.startParry(d);
-        break;
+    if (this._isBound('jump', e.code)) {
+      // Down + jump on a floating platform slips you through it instead of hopping.
+      if (d.grounded && this._isHeld('back')) d.requestDropThrough();
+      else d.requestJump();
+      e.preventDefault();
+    } else if (this._isBound('grab', e.code)) {
+      this._startGrabOrThrow();
+    } else if (this._isBound('drop', e.code)) {
+      this.combat.drop(d);
+    } else if (this._isBound('dodge', e.code)) {
+      const m = this._moveDir();
+      if (d.grounded) this._faceCamera(true);
+      this.combat.dodgeOrDive(d, m.x, m.y, this._isHeld('jump'));
+    } else if (this._isBound('style', e.code)) {
+      this.combat.armSuper(d);
+    } else if (this._isBound('parry', e.code)) {
+      this.combat.startParry(d);
     }
   }
 
   _onKeyUp(e) {
     this.keys[e.code] = false;
-    if (e.code === 'KeyE') this._releaseThrow();
+    if (this._isBound('grab', e.code)) this._releaseThrow();
   }
 
   _onMouseDown(e) {
@@ -167,7 +180,7 @@ export class Controller {
       // In the air with empty hands, LMB is an aerial: S+LMB slams straight down,
       // otherwise you commit to a drop-kick.
       if (!d.grounded && !d.held) {
-        const down = this.keys.KeyS || this.keys.ArrowDown;
+        const down = this._isHeld('back');
         this._faceCamera();
         if (down) this.combat.groundSlam(d);
         else this.combat.airKick(d);
@@ -222,10 +235,10 @@ export class Controller {
     const forward = this.camera.getForward();
     const right = this.camera.getRight();
     let x = 0, z = 0;
-    if (this.keys.KeyW || this.keys.ArrowUp) { x += forward.x; z += forward.z; }
-    if (this.keys.KeyS || this.keys.ArrowDown) { x -= forward.x; z -= forward.z; }
-    if (this.keys.KeyA || this.keys.ArrowLeft) { x -= right.x; z -= right.z; }
-    if (this.keys.KeyD || this.keys.ArrowRight) { x += right.x; z += right.z; }
+    if (this._isHeld('forward')) { x += forward.x; z += forward.z; }
+    if (this._isHeld('back')) { x -= forward.x; z -= forward.z; }
+    if (this._isHeld('left')) { x -= right.x; z -= right.z; }
+    if (this._isHeld('right')) { x += right.x; z += right.z; }
     const len = Math.hypot(x, z);
     if (len === 0 && this.padMove) return _dir.set(this.padMove.x, this.padMove.z);
     return len > 0 ? _dir.set(x / len, z / len) : _dir.set(0, 0);
@@ -252,6 +265,8 @@ export class Controller {
 
     d.jumpHeld = !!this.keys.Space || !!this.padJump;
     d.fastFallInput = !!(this.keys.KeyS || this.keys.ArrowDown) || !!this.padFastFall;
+    d.jumpHeld = this._isHeld('jump');
+    d.fastFallInput = this._isHeld('back');
     d.moveInput.copy(this._moveDir());
 
     // Buffered attack: a click during cooldown still lands (as a jab if the button's already up)
@@ -294,5 +309,6 @@ export class Controller {
     window.removeEventListener('mousedown', this._onMouseDown);
     window.removeEventListener('mouseup', this._onMouseUp);
     window.removeEventListener('contextmenu', this._onContext);
+    if (this._settingsOff) this._settingsOff();
   }
 }

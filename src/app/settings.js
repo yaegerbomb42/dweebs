@@ -49,6 +49,7 @@ export const DEFAULT_BINDINGS = {
   dodge: ['ShiftLeft', 'ShiftRight'],
   style: ['KeyF'],
   drop: ['KeyQ'],
+  parry: ['KeyC'],
 };
 
 export const BINDING_LABELS = {
@@ -61,6 +62,7 @@ export const BINDING_LABELS = {
   dodge: 'Dive / air-dodge',
   style: 'Cash in style',
   drop: 'Drop item',
+  parry: 'Parry',
 };
 
 /** Gamepad button indices → the same actions, polled by the gamepad adapter. */
