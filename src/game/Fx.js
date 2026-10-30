@@ -575,6 +575,25 @@ export class Fx {
     this.particles.sparkle(to, 0xb56cff);
   }
 
+  /** Turbo Leaf Blower: a cone of leaves and wind streaks, a motor roar, and a WHOOSH word. */
+  leafBlow(d, f, range, blown) {
+    const pos = d.getPosition();
+    const muzzle = { x: pos.x + f.x * 0.7, y: pos.y + 0.1, z: pos.z + f.z * 0.7 };
+    for (let i = 0; i < 4; i++) {
+      const t = 0.25 + i * 0.22;
+      this.particles.emit({ x: pos.x + f.x * range * t, y: pos.y + 0.2, z: pos.z + f.z * range * t }, {
+        count: 4, colors: [0x5ee06a, 0xffb02e, 0xd94a1e, 0xffd23f], speed: 3 + i, up: 1.6, size: 0.12, life: 0.5,
+      });
+    }
+    this.particles.emit(muzzle, { count: 8, colors: [0xffffff, 0xe8f6ff], speed: 7, up: 0.6, size: 0.08, life: 0.25 });
+    if (d.isPlayer || this._near(pos, 12) > 0) {
+      this.audio.playWhoosh(this._pan(pos), 0.9);
+      this.audio.playGadget?.('leafBlower', this._pan(pos), true);
+    }
+    if (blown >= 2 && this._near(pos, 16) > 0) this._toyWord('WHOOSH!', muzzle, 0xbfe6ff, 'small');
+    if (d.isPlayer) this.cam?.shake?.(0.05);
+  }
+
   gadget(d, kind, hit) {
     const pos = d.getPosition();
     this.audio.playGadget(kind, this._pan(pos), hit);

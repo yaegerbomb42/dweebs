@@ -295,6 +295,52 @@ export class CombatSystem {
       if (pulled) this.addStyle(d, G.style, 'MAGNET');
       return true;
     }
+
+    if (kind === 'leafBlower') {
+      // A gust, not a punch: no damage, just a lot of shoving. Charging widens and strengthens it.
+      const power = 1 + charge * 0.6;
+      const range = G.range * (0.9 + charge * 0.3);
+      const cosCone = Math.cos(G.cone);
+      let blown = 0;
+      for (const t of this.dweebs) {
+        if (t === d || !t.active || t.grabbedBy) continue;
+        const tp = t.getPosition();
+        const dx = tp.x - pos.x, dz = tp.z - pos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > range || dist < 0.01 || Math.abs(tp.y - pos.y) > 2.5) continue;
+        if ((dx * f.x + dz * f.z) / dist < cosCone) continue;
+        const k = (1 - dist / range) * 0.7 + 0.3;
+        const v = t.body.linvel();
+        t.body.setLinvel({
+          x: v.x + f.x * G.push * k * power,
+          y: Math.max(v.y, G.lift * k * power),
+          z: v.z + f.z * G.push * k * power,
+        }, true);
+        t.lastHitBy = d; t.lastHitTime = this.time;   // a gust off the edge still credits the KO
+        blown++;
+      }
+      for (const { obj: o } of this.arena.getObjectsNear(pos, range)) {
+        if (o === obj || o.isGrabbed || !o.body) continue;
+        const op = o.getPosition();
+        const dx = op.x - pos.x, dz = op.z - pos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist < 0.01 || (dx * f.x + dz * f.z) / dist < cosCone) continue;
+        const m = o.body.mass();
+        const k = 1 - dist / range;
+        this.physics.applyImpulse(o.body, { x: f.x * G.propPush * m * k * power, y: 1.2 * m * k, z: f.z * G.propPush * m * k * power });
+        blown++;
+      }
+      // Recoil: the blower shoves its owner backwards; airborne, it also props you up a bit.
+      const v = d.body.linvel();
+      d.body.setLinvel({
+        x: v.x - f.x * G.recoil,
+        y: d.grounded ? v.y : Math.max(v.y, G.hover),
+        z: v.z - f.z * G.recoil,
+      }, true);
+      this.fx.leafBlow?.(d, f, range, blown);
+      if (blown) this.addStyle(d, G.style, 'GUST');
+      return true;
+    }
     return false;
   }
 

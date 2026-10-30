@@ -364,9 +364,20 @@ export class AudioManager {
   }
 
   /** Gadget cast: freeze ray / magnet fire, plus a sad little whiff when it misses. */
+  /** Leaf blower: a buzzy two-stroke motor rev under a breathy hiss. */
+  playBlower(pan = 0) {
+    if (!this._ok) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.2);
+    this._toneAt(out, t, 70, 0.28, 0.16, 'sawtooth', 130);
+    this._toneAt(out, t + 0.02, 140, 0.24, 0.07, 'square', 220);
+    this._noiseBurst(out, t, 0.3, 0.22, { type: 'bandpass', freq: 1400, endFreq: 2600 });
+  }
+
   playGadget(kind, pan = 0, hit = true) {
     if (kind === 'freezeRay') this.playFreeze(pan, false);
     else if (kind === 'magnet') this.playMagnet(pan);
+    else if (kind === 'leafBlower') this.playBlower(pan);
     if (!hit) this.playWhoosh(pan, 0.3);
   }
 

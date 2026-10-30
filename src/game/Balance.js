@@ -225,6 +225,9 @@ export const BALANCE = {
   gadgets: {
     freezeRay: { range: 7.5, cone: 0.55, cooldown: 0.85, freeze: 1.5, style: 7 },
     magnet: { range: 8, cooldown: 1.15, pull: 16, style: 5 },
+    // Turbo Leaf Blower: a short, rapid cone of wind. Shoves Dweebs and props, kicks you backwards,
+    // and blowing at the ground mid-air gives a little hover lift (blower-jetpack comedy).
+    leafBlower: { range: 7, cone: 0.62, cooldown: 0.32, push: 9, lift: 2.6, propPush: 5.5, recoil: 4.2, hover: 4.6, style: 3 },
   },
 
   // Style meter (Spec: gains, tiers, decay). Single source of truth — CombatSystem.STYLE,

@@ -271,6 +271,14 @@ export const OBJECT_DEFS = {
     breakable: false, breakForce: 50000, damage: 0.8, color: 0xff9a3c,
     gadget: 'magnet',
   },
+  leafBlower: {
+    name: 'Turbo Leaf Blower',
+    shape: 'box', dims: { hx: 0.2, hy: 0.2, hz: 0.34 },
+    visualScale: [0.4, 0.4, 0.68],
+    material: 'plastic', mass: 1.6, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.7, color: 0xff8a1f,
+    gadget: 'leafBlower',
+  },
   spikyBall: {
     name: 'Spiky Bouncy Blob',
     shape: 'sphere', dims: { radius: 0.35 },
