@@ -151,6 +151,11 @@ export class WarfareAudio {
     [523.3, 659.3, 784, 1046.5].forEach((f, i) => this._tone({ type: 'square', f0: f, dur: 0.16, vol: 0.09, at: i * 0.08, filter: 3000 }));
   }
   enrage() { if (!this.live) return; this._tone({ type: 'sawtooth', f0: 90, f1: 45, dur: 0.9, vol: 0.3, filter: 700 }); this._noise({ dur: 0.6, vol: 0.25, type: 'lowpass', f0: 800, f1: 100 }); }
+  magnet(x) {
+    if (!this.live) return;
+    this._tone({ type: 'sine', f0: 120, f1: 60, dur: 1.2, vol: 0.25, attack: 0.3, filter: 300, x });
+    this._noise({ dur: 0.8, vol: 0.15, type: 'bandpass', f0: 800, f1: 400, q: 3, x });
+  }
   warhorn(x) {
     if (!this.live) return;
     [196, 261.6, 329.6].forEach((f, i) => this._tone({ type: 'sawtooth', f0: f * 0.99, f1: f, dur: 0.5, vol: 0.16, at: i * 0.16, attack: 0.06, filter: 1400, x }));
@@ -195,6 +200,7 @@ export class WarfareAudio {
         case 'waveStart': this.waveStart(ev.boss); break;
         case 'waveClear': this.waveClear(); break;
         case 'enrage': this.enrage(); break;
+        case 'magnet': if (this._take('explode')) this.magnet(ev.x); break;
         case 'warhorn': if (this._take('warhorn')) this.warhorn(ev.x); break;
         case 'repair': if (this._take('repair')) this.mend(ev.x); break;
         case 'trap': if (this._take('trap')) this.trapSnap(ev.x); break;

@@ -231,6 +231,11 @@ export class WarfareHud {
             <i class="wf-cd-sweep" data-cd-sweep="trap"></i>
             <span class="wf-cd-label wf-cd-overlay" data-cd-text="trap"></span>
           </button>
+          <button class="red" data-a="magnet" title="Magnet Crane (H) · Costs 30 Coins">
+            <span class="wf-p-label">🧲 CRANE (H) 🪙30</span>
+            <i class="wf-cd-sweep" data-cd-sweep="magnet"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="magnet"></span>
+          </button>
         </div>
         <div class="wf-cards">${RECRUITABLE.map((t, i) => `
           <div class="wf-card" data-u="${t}"><span class="k">${i + 1}</span>
@@ -448,8 +453,8 @@ export class WarfareHud {
   updatePowers(st, team, powerCooldowns = {}) {
     if (!st) return;
     const coins = st.coins?.[team] ?? 0;
-    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0, decoy: 12.0, warhorn: 18.0, repair: 25.0, trap: 15.0 };
-    const costs = { artillery: 25, supply: 15, stance: 0, decoy: 20, warhorn: 20, repair: 30, trap: 20 };
+    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0, decoy: 12.0, warhorn: 18.0, repair: 25.0, trap: 15.0, magnet: 18.0 };
+    const costs = { artillery: 25, supply: 15, stance: 0, decoy: 20, warhorn: 20, repair: 30, trap: 20, magnet: 30 };
     for (const k of Object.keys(costs)) {
       const cd = Math.max(0, powerCooldowns[k] || 0);
       const cost = costs[k];

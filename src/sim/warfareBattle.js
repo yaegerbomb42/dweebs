@@ -272,6 +272,8 @@ export const MUD_SPEED_MUL = 0.55;
 /** Mud terrain: rockets inside mud reload this fraction slower (multiply cooldown). */
 export const MUD_ROCKET_RELOAD_MUL = 1.25;
 const KNOCK_DECAY = 0.86;
+/** Magnet Crane commander toy: cost, pull radius, ring it drags enemies to, pull fraction, attack stun. */
+export const MAGNET = { cost: 30, radius: 14, ring: 2.5, pull: 0.6, stunTicks: 12 };
 /** Kills needed to reach rank 1/2/3. Ranks carry small deterministic stat bumps. */
 export const RANK_KILLS = Object.freeze([2, 4, 7]);
 export const RANK_MAX = RANK_KILLS.length;
@@ -565,6 +567,32 @@ export function applyCommand(st, c) {
       if (u.alive && u.team === c.team) {
         u.speedMul = mul;
       }
+    }
+    return true;
+  }
+  if (c.type === 'magnet') {
+    // Magnet Crane: yank every light enemy within MAGNET.radius toward a tight ring around our
+    // rally flag. It's a knockback slide (not a teleport), so barricades still block it and the
+    // view shows them skidding in. Bosses and brutes are too heavy to move.
+    if (st.coins[c.team] < MAGNET.cost) return false;
+    const rally = st.rally[c.team];
+    if (!rally) return false;
+    st.coins[c.team] -= MAGNET.cost;
+    const enemyTeam = otherTeam(c.team);
+    const tx = rally.x, tz = rally.z;
+    st.events.push({ type: 'magnet', team: c.team, x: tx, z: tz, radius: MAGNET.radius, ringRadius: MAGNET.ring });
+    const slide = (1 - KNOCK_DECAY) / WF_DT;   // knockback that integrates to the wanted distance
+    for (const u of st.units) {
+      if (!u.alive || u.team !== enemyTeam || u.carriedBy) continue;
+      if (u.type === 'boss' || u.type === 'brute') continue;
+      const dx = u.x - tx, dz = u.z - tz;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist >= MAGNET.radius || dist <= MAGNET.ring) continue;
+      const pull = (dist - MAGNET.ring) * MAGNET.pull;
+      u.kx -= (dx / dist) * pull * slide;
+      u.kz -= (dz / dist) * pull * slide;
+      u.cd = Math.max(u.cd, MAGNET.stunTicks);
+      st.events.push({ type: 'magnetPull', id: u.id, x: u.x, z: u.z });
     }
     return true;
   }

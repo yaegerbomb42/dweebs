@@ -5,7 +5,7 @@
 //   playing→ defense (waves, boss every 5, win after FINAL_WAVE) or versus AI
 //   paused / over → pause menu, win/lose screen with stats and restart
 import * as THREE from 'three';
-import { createBattle, stepBattle, battleHash, WF_DT, FIELD, DECOY_COST } from '../sim/warfareBattle.js';
+import { createBattle, stepBattle, battleHash, WF_DT, FIELD, MAGNET, DECOY_COST } from '../sim/warfareBattle.js';
 import { commanderDecide } from '../sim/warfareAI.js';
 import { commanderTurn, createCommanderBrain, personalityOf } from './WarfareCommander.js';
 import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
@@ -23,6 +23,7 @@ export const POWER_COOLDOWNS = {
   artillery: 10.0,
   supply: 8.0,
   stance: 4.0,
+  magnet: 18.0,
   decoy: 12.0,
   warhorn: 18.0,
   repair: 25.0,
@@ -89,7 +90,7 @@ export class DweebWarfare {
     this.difficulty = 'normal';
     try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, decoy: 0 };
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, decoy: 0, magnet: 0 };
     this.brain = createCommanderBrain();
     this.aiming = null; // { kind: 'artillery'|'trap', team } while the player picks a target
     this.campaignRun = null; // { idx, veterans } while playing the campaign
@@ -448,6 +449,24 @@ export class DweebWarfare {
     this._cmd({ type: 'supply', team });
   }
 
+  callMagnet(team = this.team) {
+    if (this.phase !== 'playing') return;
+    if (this.powerCooldowns.magnet > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Magnet Crane recharging (${this.powerCooldowns.magnet.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < MAGNET.cost) {
+      this.audio?.deny();
+      this.hud.toast('Need 🪙 30 for Magnet Crane', 2.0);
+      return;
+    }
+    this.powerCooldowns.magnet = POWER_COOLDOWNS.magnet;
+    const rally = this.st.rally[team];
+    if (!rally) return;
+    this._cmd({ type: 'magnet', team, x: rally.x, z: rally.z });
+  }
+
   callDecoy(team = this.team) {
     if (this.phase !== 'playing' || !this.st) return;
     if (this.powerCooldowns.decoy > 0) {
@@ -557,6 +576,7 @@ export class DweebWarfare {
     else if (a === 'artillery') this.callArtillery();
     else if (a === 'supply') this.callSupply();
     else if (a === 'stance') this.toggleFormation();
+    else if (a === 'magnet') this.callMagnet();
     else if (a === 'decoy') this.callDecoy();
     else if (a === 'warhorn') this.callWarhorn();
     else if (a === 'repair') this.callRepair();
@@ -627,6 +647,7 @@ export class DweebWarfare {
       else if (k === 't') { this.callWarhorn(); e.preventDefault(); }
       else if (k === 'f') { this.callRepair(); e.preventDefault(); }
       else if (k === 'y') { this.callTrap(); e.preventDefault(); }
+      else if (k === 'h') { this.callMagnet(); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
       // Player 2 local PvP controls (keys 7, 8, 9, 0, -)
       else if (this.isLocalPvp) {
@@ -721,6 +742,8 @@ export class DweebWarfare {
         hud.toast(`📦 Supplies air-dropped! Nearby units healed!`, 2.5);
       } else if (ev.type === 'stance') {
         hud.toast(ev.stance === 'charge' ? `⚔️ CHARGE! Speed boosted!` : `🛡️ DEFENSIVE WALL! Holding ground!`, 2.0);
+      } else if (ev.type === 'magnet') {
+        hud.toast(`🧲 Magnet Crane yanks the enemy line!`, 2.5);
       } else if (ev.type === 'decoy') {
         hud.toast('🎈 Inflatable Decoy planted! The enemy will dump fire into it.', 2.8);
       } else if (ev.type === 'pop') {
