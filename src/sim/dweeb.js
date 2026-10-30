@@ -71,6 +71,8 @@ export class SimDweeb {
     // Combat / movement state
     this.hitstun = 0;
     this.ragdolling = false;
+    this.ragdollTimer = 0;   // counts down while tumbling; stand up when it lapses (live parity)
+    this.techBuffer = 0;     // dodge pressed while tumbling: techs a landing within the window
     this.invuln = 0;
     this.attackCooldown = 0;
     this.isCharging = false;
@@ -103,6 +105,7 @@ export class SimDweeb {
     this.style = 0;
     this.styleTier = 0;
     this.styleTimer = 0;
+    this.stylePeak = 0;       // highest style this match: the showman award
     this.superArmed = false;
     // Super-smash meter: consecutive landed punches build it faster (mirrors the live
     // CombatSystem's streak; see BALANCE.style.streakWindow).
@@ -110,12 +113,16 @@ export class SimDweeb {
     this.punchStreakT = -99;
     // Stage-hazard cooldowns, in seconds.
     this.hazardCd = 0;
-    this.lavaCd = 0;
+    this.lavaCd = 0;          // volcano: grace after a lava spit before a dip dunks
     // pitfall: over a crumbled rim tile — ground collision is off until we're back over floor.
     this.pitfall = false;
     // conveyor belt drift, refreshed by stageHazards every tick (0 when off every belt).
     this.beltVX = 0;
     this.beltVZ = 0;
+    this.team = 0;            // team battle: index into config.teams
+    this.hillScore = 0;       // king of the hill: points this round
+    this.lavaDips = 0;        // consecutive lava spits: the third dip in a row dunks
+    this._gravOverride = null; // set by preStep paths that need a non-arena gravity this tick
 
     // Previous tick's input, for edge detection.
     this.prev = { jump: false, attack: false, grab: false, dodge: false, superYeet: false, drop: false };
@@ -171,6 +178,9 @@ export class SimDweeb {
    *        onReleaseAttack, onReleaseThrow, onDrop, onTech }
    */
   preStep(f, api) {
+    this._gravOverride = null; // Sim applies arena gravity after preStep unless we overrode it
+    this._arenaGrav = api?.arena?.profile?.gravity ?? 1;
+    if (this.grounded) this.lavaDips = 0; // back on stage: the lava forgives
     this.input.moveX = clamp(num(f?.moveX), -1, 1);
     this.input.moveZ = clamp(num(f?.moveZ), -1, 1);
     this.input.aimYaw = Number.isFinite(f?.aimYaw) ? f.aimYaw : null;
@@ -204,6 +214,7 @@ export class SimDweeb {
     this.landLagT = Math.max(0, this.landLagT - TICK_DT);
     this.swing = Math.max(0, this.swing - TICK_DT);
     this.diveTimer = Math.max(0, this.diveTimer - TICK_DT);
+    this.lavaCd = Math.max(0, this.lavaCd - TICK_DT);
     this.megaT = Math.max(0, this.megaT - TICK_DT);
     this.zoomT = Math.max(0, this.zoomT - TICK_DT);
     this.bubbleT = Math.max(0, this.bubbleT - TICK_DT);
@@ -212,6 +223,29 @@ export class SimDweeb {
     if (this.styleTimer > 0) {
       this.styleTimer -= TICK_DT;
       if (this.styleTimer <= 0) this.style = 0;
+    }
+
+    // The flail clock is not agency: it runs even while grabbed (the live postStep has no
+    // grabbedBy gate either). A frozen flail would make the match rules skip this dweeb's
+    // splash-KO check forever — an immortal dweeb falling out of the world, still "active".
+    if (this.grabbedBy && this.swimFlail > 0) {
+      this.swimFlail -= TICK_DT;
+      if (this.swimFlail <= 0) this._gravOverride = this._arenaGrav;
+    }
+
+    // Ragdoll clock (live postStep parity): without this a tumbled dweeb that lands never
+    // stands back up — canAct stays false forever and the bot idles on the floor. A buffered
+    // dodge techs the landing instead, via the existing recover().
+    this.techBuffer = Math.max(0, this.techBuffer - TICK_DT);
+    if (this.ragdolling) {
+      this.ragdollTimer -= TICK_DT;
+      if (this.techBuffer > 0 && this.grounded) {
+        this.techBuffer = 0;
+        this.recover(api);
+      } else if (this.ragdollTimer <= 0 &&
+          (this.grounded || this.ragdollTimer < -KB.ragdollAirMax)) {
+        this._standUp();
+      }
     }
 
     // Held by someone: no agency at all, and no timers past this point run against us.
@@ -227,6 +261,9 @@ export class SimDweeb {
         this.specialFall = true;
       }
     }
+    // Tumble tech: a dodge pressed while ragdolling buffers a tech for the landing window
+    // (the InputFrame contract promises "tech a hard landing while tumbling").
+    else if (dodgeUp && this.ragdolling) this.techBuffer = BALANCE.tech.buffer;
     if (superUp && this.style >= 100) this.superArmed = true;
     if (dropUp && this.held) api.onDrop?.(this);
     // A press is buffered for 0.2 s, so clicking a hair early (still in cooldown or hitstun)
@@ -268,22 +305,22 @@ export class SimDweeb {
     // ── Air-dodge glide: ignore most gravity, then special-fall ──
     if (this.airDodgeT > 0) {
       this.airDodgeT -= TICK_DT;
-      this.physics.setGravityScale(this.id, 0.15);
+      this._gravOverride = 0.15;
       const k = Math.exp(-5 * TICK_DT);
       this._write(vx * k, vy * k, vz * k);
       this._remember(f);
       return;
     }
-    this.physics.setGravityScale(this.id, 1);
+    this._gravOverride = this._arenaGrav;
 
     // ── Water flail: hang at the waterline; one jump buys a big splash-jump back toward stage ──
     if (this.swimFlail > 0) {
       this.swimFlail -= TICK_DT;
-      this.physics.setGravityScale(this.id, 0);
+      this._gravOverride = 0;
       if (jumpUp) {
         const r = Math.hypot(p.x, p.z) || 1;
         this.swimFlail = 0;
-        this.physics.setGravityScale(this.id, 1);
+        this._gravOverride = this._arenaGrav;
         // Inward speed is timed so the capsule reaches the lip only once it has risen above the
         // tiles; without that it bonks the rim and the comeback dies, which is why the live code
         // divides by flailClearTime here.
@@ -334,8 +371,19 @@ export class SimDweeb {
         speed = MV.speed * 1.5;
       }
 
-      const tx = this.input.moveX * speed + this.beltVX, tz = this.input.moveZ * speed + this.beltVZ;
-      const accel = (this.grounded ? MV.groundAccel : MV.airAccel * this.stats.airAccel) * TICK_DT;
+      // Arena movement modifiers: the iceberg is slick, the moon is floaty. The profile
+      // lives on the arena; api may be a bare stub in unit tests, so default to stadium.
+      const prof = api?.arena?.profile;
+      speed *= (prof?.slide ?? 1);
+      // Conveyor drift (beltVX/beltVZ, refreshed by stageHazards) and stage pushes (wind,
+      // magnet) fold into the movement target: shifting what "standing still" means composes
+      // with input instead of fighting the ground approach, which would zero a post-hoc
+      // push every tick.
+      let tx = this.input.moveX * speed + this.beltVX, tz = this.input.moveZ * speed + this.beltVZ;
+      const push = api?.arena?.stagePush?.(p.x, p.z, this.grounded);
+      if (push) { tx += push.x; tz += push.z; }
+      const traction = this.grounded ? (prof?.traction ?? 1) : 1;
+      const accel = (this.grounded ? MV.groundAccel * traction : MV.airAccel * this.stats.airAccel) * TICK_DT;
       const soft = this.specialFall && !this.grounded ? accel * 0.6 : accel;
       vx = approach(vx, tx, soft);
       vz = approach(vz, tz, soft);
@@ -396,6 +444,9 @@ export class SimDweeb {
     this.hitstun = KB.hitstunBase + KB.hitstunPerLaunch * launch;
     this.ragdolling = launch >= KB.ragdollAt;
     if (this.ragdolling) this.hitstun += KB.ragdollAirMax;
+    // The tumble lasts about as long as the hitstun, like the live startRagdoll(hitstun + 0.2).
+    // A bigger follow-up hit extends it (max), it never shortens it.
+    if (this.ragdolling) this.ragdollTimer = Math.max(this.ragdollTimer, this.hitstun + 0.2);
     this.isCharging = false;
     this.charge = 0;
     this.diBudget = DI.strength * MV.speed;
@@ -427,6 +478,8 @@ export class SimDweeb {
   /** Zero out a launch and stand back up. Used by a tech. */
   recover(api) {
     this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.techBuffer = 0;
     this.hitstun = 0;
     this.diBudget = 0;
     this.specialFall = false;
@@ -437,6 +490,18 @@ export class SimDweeb {
     api?.emit?.('land', { a: this.id, kind: 'tech', mag: 0 });
   }
 
+  /**
+   * The ragdoll clock ran out: stop tumbling and stand. No invuln, no tech credit — the
+   * live recoverFromRagdoll, minus the visuals. (The live adds a short knockdown when the
+   * tech was missed; the sim has no prone state, so it just stands.)
+   */
+  _standUp() {
+    this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.physics.setAngvel(this.id, 0, 0, 0);
+    this.physics.lockRotations(this.id, true);
+  }
+
   /** Put a dweeb back on stage with fresh stocks, at a spawn point the arena chose. */
   respawn(pos) {
     this.out = false;
@@ -444,6 +509,8 @@ export class SimDweeb {
     this.percent = 0;
     this.hitstun = 0;
     this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.techBuffer = 0;
     this.diBudget = 0;
     this.isCharging = false;
     this.charge = 0;
@@ -452,6 +519,7 @@ export class SimDweeb {
     this.grabbedBy = 0;
     this.swimFlail = 0;
     this.flailUsed = false;
+    this.lavaDips = 0;
     this.jumpsLeft = 2;
     this.specialFall = false;
     this.invuln = 0.75;
@@ -459,7 +527,9 @@ export class SimDweeb {
     this.styleTimer = 0;
     this.superArmed = false;
     this.physics.lockRotations(this.id, true);
-    this.physics.setGravityScale(this.id, 1);
+    // Gravity reset rides _gravOverride: Sim applies it per-tick (d._gravOverride ?? grav),
+    // so the respawn gravity survives the next physics step.
+    this._gravOverride = 1;
     this.physics.setCollideGround(this.id, true);
     this.pitfall = false;
     this.beltVX = 0;
@@ -480,10 +550,13 @@ export class SimDweeb {
     this.percent = 0;
     this.hitstun = 0;
     this.ragdolling = false;
+    this.ragdollTimer = 0;
+    this.techBuffer = 0;
     this.held = 0;
     this.heldKind = '';
     this.grabbedBy = 0;
     this.swimFlail = 0;
+    this.flailUsed = false;
     this.isCharging = false;
     this.charge = 0;
     this.physics.setCollideGround(this.id, true);
@@ -509,9 +582,11 @@ export class SimDweeb {
       active: this.active, out: this.out, eliminated: this.eliminated,
       grounded: this.grounded, holding: this.held > 0, held: this.held, heldBy: this.grabbedBy,
       style: this.style, styleTier: this.styleTier, isBot: this.isBot, isLocal,
+      team: this.team, hillScore: this.hillScore,
       // Read by bots; not required by the wire contract.
       canAct: this.canAct, jumpsLeft: this.jumpsLeft, isCharging: this.isCharging,
       charge: this.charge, mega: this.megaT > 0, bubble: this.bubbleT > 0,
+      flail: this.swimFlail > 0, ragdoll: this.ragdolling,
       lastHitBy: this.lastHitBy, botTarget: this.botTarget || 0,
     };
   }
@@ -524,6 +599,7 @@ export class SimDweeb {
       active: this.active, respawnTimer: this.respawnTimer, kos: this.kos, falls: this.falls,
       lastHitBy: this.lastHitBy, lastHitAt: this.lastHitAt, damageDealt: this.damageDealt || 0,
       hitstun: this.hitstun, ragdolling: this.ragdolling, invuln: this.invuln,
+      ragdollTimer: this.ragdollTimer, techBuffer: this.techBuffer,
       attackCooldown: this.attackCooldown, isCharging: this.isCharging, charge: this.charge,
       attackBuffer: this.attackBuffer, throwCharging: this.throwCharging, throwCharge: this.throwCharge,
       swing: this.swing, diveTimer: this.diveTimer, diveCooldown: this.diveCooldown,
@@ -534,9 +610,11 @@ export class SimDweeb {
       swimFlail: this.swimFlail, flailUsed: this.flailUsed,
       megaT: this.megaT, zoomT: this.zoomT, bubbleT: this.bubbleT,
       style: this.style, styleTier: this.styleTier, styleTimer: this.styleTimer,
+      stylePeak: this.stylePeak, team: this.team, hillScore: this.hillScore, lavaCd: this.lavaCd,
+      lavaDips: this.lavaDips,
       superArmed: this.superArmed, prev: { ...this.prev },
       punchStreak: this.punchStreak, punchStreakT: this.punchStreakT,
-      hazardCd: this.hazardCd, lavaCd: this.lavaCd, pitfall: this.pitfall,
+      hazardCd: this.hazardCd, pitfall: this.pitfall,
       beltVX: this.beltVX, beltVZ: this.beltVZ,
     };
   }
@@ -560,6 +638,7 @@ function num(v, dflt = 0) { return Number.isFinite(v) ? v : dflt; }
 function addStyle(d, api, amount) {
   const STYLE = BALANCE.style;
   d.style = Math.min(STYLE.max, d.style + amount);
+  d.stylePeak = Math.max(d.stylePeak || 0, d.style);
   d.styleTimer = STYLE.hold;
   const tier = d.style >= STYLE.tiers[3] ? 3
     : d.style >= STYLE.tiers[2] ? 2

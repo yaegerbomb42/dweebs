@@ -1,11 +1,14 @@
 // tools/soak-real.mjs — T26: real-sim soak. Runs N headless 8-bot matches on src/sim/Sim
 // and asserts: no NaN, no stuck dweebs (>10s unmoving while alive), bounded live items,
 // matches end, plus KO-cause + avg-length report. Replaces tools/soak.mjs scaffolding.
-// Usage: node tools/soak-real.mjs [--matches 3] [--bots 8] [--ticks 18000] [--seed 1]
+// Usage: node tools/soak-real.mjs [--matches 3] [--bots 8] [--ticks 40000] [--seed 1]
+// (Default ticks raised from 18000: a best-of-3 8-bot match legitimately needs up to ~5 rounds
+// x ~7440 ticks ≈ 37000 ticks when rounds run to the timer, so 18000 false-positives on slow
+// but healthy matches.)
 import { Sim } from '../src/sim/Sim.js';
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 && args[i+1] !== undefined ? Number(args[i+1]) : d; };
-const MATCHES = opt('matches', 3), BOTS = opt('bots', 8), MAX_TICKS = opt('ticks', 18000), SEED = opt('seed', 1);
+const MATCHES = opt('matches', 3), BOTS = opt('bots', 8), MAX_TICKS = opt('ticks', 40000), SEED = opt('seed', 1);
 const TYPES = ['cube','blob','spiky'], NAMES = ['Blorp','Squish','Nugget','Wobbles','Toast','Pickle','Gumbo','Brim'];
 let fail = 0;
 const totals = { side: 0, top: 0, splash: 0, ticks: 0, nan: 0, stuck: 0 };

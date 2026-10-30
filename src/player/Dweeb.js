@@ -314,7 +314,7 @@ export class Dweeb {
   /** Jump/dodge pressed while tumbling: tech the next hard landing (or the one that just happened). */
   requestTech() {
     if (this.techGrace > 0) this._tech();
-    else this.techBuffer = BALANCE.tech.window;
+    else this.techBuffer = BALANCE.tech.buffer;
   }
 
   _tech() {
@@ -665,7 +665,7 @@ export class Dweeb {
         if (tumbling && fall > 6) {
           // Hard slam while tumbling: tech it (pressed just before) or eat a longer knockdown
           if (this.techBuffer > 0 || (!this.isPlayer && Math.random() < this.techChance)) this._tech();
-          else { this.techGrace = BALANCE.tech.window; this.missedTech = true; }
+          else { this.techGrace = BALANCE.tech.buffer; this.missedTech = true; }
         } else if (!tumbling && fall >= BALANCE.roll.minFallSpeed && this.rollCd <= 0 && this.moveInput.lengthSq() > 0.04) {
           // Drop in with a direction held and you roll out of it instead of eating the recovery.
           this.startRoll(this.moveInput.x, this.moveInput.y);

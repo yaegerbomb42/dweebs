@@ -1,4 +1,8 @@
 // Match.js — knockout brawl rules: stocks, blast zones, rounds (first to N wins), sudden death.
+// Also hosts the live rules for the newer modes: king of the hill (settings.mode 'hill'),
+// team battle ('teams', no friendly fire — CombatSystem guards land with the main.js pass)
+// and sudden death ('sudden': 1 stock, arena closing at GO). The sim (src/sim/match.js) is
+// the authority; this mirrors it for the legacy local-play path.
 
 import { WATER_LEVEL, STAGE_RADIUS } from '../world/Arena.js';
 import { BALANCE } from './Balance.js';
@@ -20,6 +24,8 @@ export class Match {
   constructor() {
     this.phase = Phase.MENU;
     this.settings = { stocks: 3, roundsToWin: 2, roundTime: 120, suddenDeathAt: 40, mode: 'brawl' };
+    this.hillHolder = null;
+    this.hillMilestone = new Map();
     this.darwinPoints = new Map();
     this.deathReel = [];
     this.dweebs = [];
@@ -64,6 +70,14 @@ export class Match {
       d.stocks = this.settings.stocks;
       d.kos = 0;
       d.falls = 0;
+      d.hillScore = 0;
+    }
+    this.hillHolder = null;
+    this.hillMilestone = new Map();
+    if (this.settings.mode === 'sudden') {
+      this.suddenDeath = true;
+      this.blastSide = BLAST_SIDE * BALANCE.match.sdBlastScale;
+      this.events?.onSuddenDeath?.();
     }
   }
 
@@ -73,6 +87,7 @@ export class Match {
 
   update(dt) {
     this.time += dt;
+    this._lastDt = dt;
 
     if (this.phase === Phase.COUNTDOWN) {
       this.countdown -= dt;
@@ -135,10 +150,16 @@ export class Match {
       if (kind) this._ko(d, kind, p);
     }
 
-    // Round over?
+    if (this.settings.mode === 'hill') this._hillTick();
+
+    // Round over? Teams: the round ends when at most one team still has dweebs standing.
     const standing = this.dweebs.filter(d => !d.eliminated);
+    const teamsAlive = new Set(standing.map(d => d.team ?? 0)).size;
+    const teamWipe = this.settings.mode === 'teams' && this.dweebs.length > 1 && teamsAlive <= 1;
     const player = this.dweebs.find(d => d.isPlayer);
-    if (standing.length === 0 || (this.dweebs.length > 1 && standing.length <= 1) || this.timer <= 0) {
+    if (standing.length === 0 || teamWipe ||
+        (this.settings.mode !== 'teams' && this.dweebs.length > 1 && standing.length <= 1) ||
+        this.timer <= 0) {
       this._endRound();
     } else if (player?.eliminated) {
       // Let the player watch for a moment before wrapping up
@@ -158,16 +179,48 @@ export class Match {
 
   _ko(d, kind, pos) {
     const credited = d.lastHitBy && this.time - d.lastHitTime < KO_CREDIT_WINDOW && d.lastHitBy !== d ? d.lastHitBy : null;
-    d.stocks--;
-    d.falls++;
-    d.totalFalls = (d.totalFalls || 0) + 1;
     if (credited) {
       credited.kos++;
       credited.totalKos = (credited.totalKos || 0) + 1;
     }
+    if (this.settings.mode === 'hill') {
+      // Infinite stocks on the hill: out for the respawn delay, then back in.
+      d.knockOut(RESPAWN_DELAY);
+      this.events?.onKO?.(d, credited, kind, pos);
+      return;
+    }
+    d.stocks--;
+    d.falls++;
+    d.totalFalls = (d.totalFalls || 0) + 1;
     if (d.stocks <= 0) d.eliminate();
     else d.knockOut(RESPAWN_DELAY);
     this.events?.onKO?.(d, credited, kind, pos);
+  }
+
+  /**
+   * King of the hill: the sole dweeb inside the centre zone accrues a point per second;
+   * a contested hill scores nothing. Crossing the target ends the round immediately.
+   */
+  _hillTick() {
+    const R = BALANCE.hill.radius, TARGET = BALANCE.hill.target;
+    const inHill = this.dweebs.filter(d => {
+      if (d.eliminated || d.out) return false;
+      const p = d.getPosition();
+      return p.y < 4 && Math.hypot(p.x, p.z) < R;
+    });
+    const holder = inHill.length === 1 ? inHill[0] : null;
+    if (holder !== this.hillHolder) {
+      this.hillHolder = holder;
+      this.events?.onHillHold?.(holder);
+    }
+    if (!holder) return;
+    holder.hillScore = (holder.hillScore || 0) + this._lastDt;
+    const ms = Math.floor(holder.hillScore / BALANCE.hill.milestone);
+    if (ms > (this.hillMilestone.get(holder) || 0)) {
+      this.hillMilestone.set(holder, ms);
+      this.events?.onHillScore?.(holder, Math.floor(holder.hillScore));
+    }
+    if (holder.hillScore >= TARGET) this._endRound();
   }
 
   _endRound() {
@@ -183,8 +236,12 @@ export class Match {
     this.events?.onRoundEnd?.(winner, ranked);
   }
 
-  /** Order for this round: most stocks, then lowest damage. */
+  /** Order for this round: most stocks, then lowest damage. Hill: most points, then KOs. */
   roundStandings() {
+    if (this.settings.mode === 'hill') {
+      return [...this.dweebs].sort((a, b) =>
+        ((b.hillScore || 0) - (a.hillScore || 0)) || ((b.totalKos || 0) - (a.totalKos || 0)));
+    }
     return [...this.dweebs].sort((a, b) => {
       const sa = a.eliminated ? 0 : a.stocks, sb = b.eliminated ? 0 : b.stocks;
       if (sb !== sa) return sb - sa;

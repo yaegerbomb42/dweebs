@@ -164,18 +164,25 @@ export function isNeutralInput(f) {
  * @property {number}   roundsToWin   Rounds needed to win.
  * @property {number}   roundTime     Round length in seconds.
  * @property {number}   suddenDeathAt Seconds remaining when the arena starts closing in.
- * @property {string}   botDifficulty 'easy' | 'normal' | 'hard' for bot-filled slots.
+ * @property {string}   botDifficulty 'easy' | 'normal' | 'hard' | 'brutal' for bot-filled slots.
  * @property {boolean}  items         Whether the drop table runs at all.
+ * @property {string}   arena         Arena id: a src/sim/arenaProfiles.js id ('stadium',
+ *                                    'colosseum', 'icepeak', 'lavafoundry', 'stormspire',
+ *                                    'quicksand', 'magnetcore', …). Unknown ids play as the
+ *                                    stadium. Defaults to 'stadium'.
+ * @property {string}   mode          'brawl' | 'hill' | 'teams' | 'sudden'.
+ * @property {number[][]|null} teams  Team battle rosters: arrays of slots per team.
+ * @property {number}   hillTarget    King-of-the-hill points to take the round.
+ * @property {number}   hillRate      Hill points per second for the sole holder.
  * @property {number}   tickHz        Must equal TICK_HZ; a mismatch should be loud, not subtle.
  * @property {PlayerId[]} order      Slot order, so spawn positions are reproducible.
- * @property {string}   [arena]       Stage id ('stadium', 'colosseum', 'icepeak', 'lavafoundry').
- *                                    Unknown ids play as the stadium. Defaults to 'stadium'.
  */
 
 /** Defaults matching current offline settings: 3 stocks, best of 3, 120 s rounds. */
 export const DEFAULT_CONFIG = Object.freeze({
   version: 1, seed: 1, stocks: 3, roundsToWin: 2, roundTime: 120, suddenDeathAt: 40,
-  botDifficulty: 'normal', items: true, tickHz: TICK_HZ, order: [0, 1, 2, 3], arena: 'stadium',
+  botDifficulty: 'normal', items: true, tickHz: TICK_HZ, order: [0, 1, 2, 3],
+  arena: 'stadium', mode: 'brawl', teams: null, hillTarget: 60, hillRate: 1,
 });
 
 // ─── Simulation state ──────────────────────────────────────────────────────────
@@ -296,6 +303,8 @@ export const EV = Object.freeze({
   WHIFF: 'whiff',
   /** Dweeb a grabbed dweeb b. */
   GRAB: 'grab',
+  /** Dweeb a wriggled out of dweeb b's grab. b eats a brief hitstun. */
+  ESCAPE: 'escape',
   /** Dweeb a threw. b is the dweeb thrown, or 0 when a held item was thrown instead. */
   THROW: 'throw',
   /** Dweeb a dropped its held item voluntarily. */
@@ -344,6 +353,22 @@ export const EV = Object.freeze({
   LEDGE: 'ledge',
   /** Dweeb a reached style tier (1..3). */
   STYLE_UP: 'styleUp',
+  /** The crowd's hype level changed. mag = new level 0..4, tier = previous level. */
+  HYPE: 'hype',
+  /** A match award at the podium. kind = 'mvp' | 'yeet' | 'showman', a = dweeb, mag = value. */
+  AWARD: 'award',
+  /** A gale gust. kind = 'warn' | 'blow'; mag = wind direction angle in radians. */
+  WIND_GUST: 'windGust',
+  /** A Storm Spire lightning strike. kind = 'warn' | 'strike'; (x, z) is the target. */
+  LIGHTNING: 'lightning',
+  /** A Magnet Core pulse. kind = 'warn' | 'active'. */
+  MAGNET_PULSE: 'magnetPulse',
+  /** Hill control changed hands. a = new holder's dweeb id (0 = contested/empty). */
+  HILL_HOLD: 'hillHold',
+  /** A dweeb's hill score crossed a 10-point milestone. a = dweeb, mag = score. */
+  HILL_SCORE: 'hillScore',
+  /** A dweeb touched volcano lava and got spat back out. mag = launch speed. */
+  LAVA_HIT: 'lavaHit',
 });
 
 /** Every event name, for validation and for QA's exhaustiveness check. */

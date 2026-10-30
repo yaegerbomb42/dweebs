@@ -99,7 +99,7 @@ export const BALANCE = {
 
   // Recovery tools (Spec 6)
   airDodge: { speed: 11, invuln: 0.25, duration: 0.28, cooldown: 1.2 },
-  tech: { window: 0.1, invuln: 0.3, missProne: 0.55 },
+  tech: { buffer: 0.1, invuln: 0.3, missProne: 0.55 },
   ledge: { maxHang: 1.2, reach: 1.1, height: 1.4, jumpVel: 11.5, regrab: 0.6 },
 
   // Timed parry / counter. Press C just before a hit lands: no damage, the attacker
@@ -173,9 +173,46 @@ export const BALANCE = {
     lavaEdgeGrace: 8,        // Lava Foundry: grace before the lava perimeter starts rising
     lavaEdgeRise: 0.55,      // m/s the safe radius shrinks
     lavaEdgeMin: 5.5,        // the lava never closes past this radius
-    lavaDamage: 9, lavaBase: 6, lavaGrowth: 8,
-    lavaCooldown: 1.0,
+    // NOTE: lavaDamage / lavaCooldown belong to the volcano dip (see above); the foundry's
+    // rising edge gets its own keys so the two lava tunings never shadow each other.
+    lavaEdgeDamage: 9, lavaEdgeBase: 6, lavaEdgeGrowth: 8,
+    lavaEdgeCooldown: 1.0,
     respawnMinGap: 2.2,      // simultaneous respawns are separated by at least this (metres)
+    // Storm Spire lightning (telegraphed ground strikes)
+    lightningFirst: 6,      // grace before the first strike
+    lightningEvery: 9,      // seconds between strikes (jittered ±2 by the seeded stream)
+    lightningWarn: 0.8,     // telegraph time before a strike lands
+    lightningRadius: 2.6,
+    lightningDamage: 12,
+    lightningLaunch: 14,
+    // Magnet Core pulse (periodic pull toward the centre)
+    magnetIdle: 10,         // seconds between pulses
+    magnetWarn: 1.2,        // telegraph before the pull starts
+    magnetActive: 2.0,      // how long the pull lasts
+    magnetForce: 16,        // m/s² toward the centre while active
+    // Sinking Sands sticky centre
+    quicksandRadius: 5,
+    quicksandDrag: 0.88,    // horizontal velocity kept per tick, grounded in the zone
+  },
+
+  // King of the Hill.
+  hill: {
+    radius: 3.5,            // control zone radius around the centre
+    rate: 1,                // points per second for the sole holder
+    target: 60,             // points to take the round
+    milestone: 10,          // score milestones that emit an event
+  },
+
+  // The crowd. Hype 0..100; levels at 20/40/60/80.
+  crowd: {
+    decay: 4,               // hype lost per second with nothing happening
+    ko: 12, starKo: 16, selfKo: -6,
+    bigLaunch: 10, solidLaunch: 4,
+    trickShot: 8, explosion: 6, styleUp: 5, suddenDeath: 15,
+    roundEnd: 12, matchEnd: 20, award: 8, eliminated: 6,
+    lightningStrike: 10, lavaHit: 6,
+    levels: [20, 40, 60, 80],
+    names: ['murmur', 'buzz', 'roar', 'frenzy', 'pandemonium'],
   },
 
   // Pickup power-ups (the gems) and the two new gadget weapons.
