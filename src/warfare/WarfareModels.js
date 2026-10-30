@@ -27,6 +27,7 @@ function shared() {
   geo.gear = new THREE.CylinderGeometry(0.7, 0.7, 0.22, 12);
   geo.tooth = new THREE.ConeGeometry(0.16, 0.36, 4);
   geo.shadow = new THREE.CircleGeometry(0.6, 10);
+  geo.pip = new THREE.SphereGeometry(0.075, 6, 4);
   geo.ring = new THREE.RingGeometry(0.75, 0.95, 16);
   mat.blue = toonMat({ color: TEAM_COLORS.blue });
   mat.red = toonMat({ color: TEAM_COLORS.red });
@@ -144,6 +145,18 @@ export function buildUnit(type, team) {
   }
   if (gear) tilt.add(gear);
 
+  // Veteran rank pips: three small gold dots above the body, toggled by the view from u.rank.
+  const rank = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const pip = new THREE.Mesh(geo.pip, mat.brass);
+    pip.position.set((i - 1) * 0.2, 0, 0);
+    pip.visible = false;
+    rank.add(pip);
+  }
+  rank.position.set(0, r * 2 + 0.35, 0);
+  rank.visible = false;
+  tilt.add(rank);
+
   const shadow = new THREE.Mesh(geo.shadow, mat.shadow);
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.02;
@@ -152,7 +165,7 @@ export function buildUnit(type, team) {
   root.add(shadow);
 
   root.scale.setScalar((SCALE[type] || 1) * VIEW_SCALE);
-  return { root, tilt, body, gear, spark, height: r * 2 };
+  return { root, tilt, body, gear, spark, rank, height: r * 2 };
 }
 
 /** Arcing shell: a little brass rocket with a plastic nose. */

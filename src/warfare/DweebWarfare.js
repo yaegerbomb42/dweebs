@@ -507,6 +507,10 @@ export class DweebWarfare {
         hud.banner(ev.boss ? 'BOSS WAVE!' : `WAVE ${ev.wave}`, ev.boss ? 'The Brass Bully rolls in' : `${ev.count} enemies incoming`, ev.boss ? 'boss' : '');
       } else if (ev.type === 'waveClear') {
         hud.banner('WAVE CLEARED', `+🪙 ${ev.reward} · your army patches up`, 'good');
+      } else if (ev.type === 'promote') {
+        const unitName = UNIT_TYPES[ev.unit]?.name || 'Unit';
+        if (ev.rank >= 3 && ev.name) hud.toast(`★ <b>${ev.name}</b> · ${unitName} reached rank 3!`, 3.5);
+        else if (ev.team === this.team && ev.rank >= 2) hud.toast(`▲ ${unitName} promoted to rank ${ev.rank}`, 2.5);
       } else if (ev.type === 'spawn' && ev.team !== this.team && !this.seen.has(ev.unit)) {
         this.seen.add(ev.unit);
         if (ENEMY_HINTS[ev.unit] && (st.wave > 1 || ev.unit !== 'shield')) hud.toast(ENEMY_HINTS[ev.unit], 7);
