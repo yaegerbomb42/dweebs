@@ -1660,6 +1660,13 @@ function handleImpacts() {
         else combat.damageObject(obj, imp.speed * imp.speed * side.mass * 12, obj.thrownBy, { speed: imp.speed });
       }
     }
+    // Tumbling dweebs thud, puff and bounce when they smack the ground or a prop
+    for (const side of [imp.a, imp.b]) {
+      const d = side.kind === 'dweeb' ? side.ref : null;
+      if (!d?.ragdolling || imp.speed < 4.5 || (d._ragContactCd ?? 0) > match.time) continue;
+      d._ragContactCd = match.time + 0.18;
+      fx.ragdollContact?.(d, imp.speed, imp.pos);
+    }
     if (impactBudget-- > 0) fx.impact(imp);
   }
 }
