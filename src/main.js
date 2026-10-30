@@ -23,6 +23,7 @@ import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
+import { StatusSystem } from './game/StatusEffects.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
 import { Sky, Water } from './render/Sky.js';
@@ -184,6 +185,8 @@ async function init() {
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
+  combat.status = new StatusSystem({ particles, decals, hud, audio });
+  combat.status.combat = combat;
   match = new Match();
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
@@ -797,6 +800,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   controller = new Controller(player, cam, combat);
   controller.enabled = false;
 
+  combat.status?.setDweebs(dweebs);
   combat.setDweebs(dweebs);
   fx.reactions?.setDweebs(dweebs);
   arena.dweebs = dweebs;
@@ -865,6 +869,7 @@ function startMatch() {
   for (const d of dweebs) wireDweeb(d);
 
   controller = new Controller(player, cam, combat);
+  combat.status?.setDweebs(dweebs);
   combat.setDweebs(dweebs);
   fx.reactions?.setDweebs(dweebs);
   // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
@@ -992,6 +997,7 @@ function startRound() {
 
   arena.hazardsActive = false;
   arena.reset();
+  combat.status?.clear();
   resetSuddenDeathFx();
   hud.clearTransient();
   trails.clear();
@@ -1406,6 +1412,7 @@ function loop() {
     }
     handleImpacts();
     combat.update(dt, match.time);
+    combat.status?.update(dt);
     updateDrops(dt);
     match.update(dt);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {

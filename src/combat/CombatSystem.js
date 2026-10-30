@@ -145,6 +145,7 @@ export class CombatSystem {
       const launch = t.receiveHit({ dir: _tmp, damage: atk.damage, base: atk.base, growth: atk.growth, attacker: d, time: this.time });
       if (launch > 0) {
         hitAny = true;
+        this.status?.onHit(t, d, d.held?.kind === 'object' ? d.held.ref : null);
         this.fx.hit(t, d, launch, atk.kind);
         if (yeet) this.fx.superYeet(t, d);
         // Super-smash meter: consecutive landed punches bank bonus style; a weapon swing is
@@ -1004,6 +1005,8 @@ export class CombatSystem {
       const launch = t.receiveHit({ dir: _dir, ...A.explosion(k), attacker, time: this.time });
       if (launch > 0) {
         this.fx.hit(t, attacker, launch, 'boom');
+        // Blasts light oily Dweebs (INFERNO) and dry out wet ones a little
+        if (t.statuses?.oily > 0) this.status?.apply(t, 'burn', attacker);
         if (attacker && attacker !== t) this.addStyle(attacker, 8 + launch * 0.4);
       }
     }
@@ -1024,6 +1027,7 @@ export class CombatSystem {
    */
   breakObject(obj, by = null, hit = null) {
     const pos = obj.getPosition();
+    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
     if (by) this.addStyle(by, 5);
     const color = obj.def.color ?? 0xc4a06a;
     const mass = obj.def.mass ?? 1;
@@ -1257,6 +1261,7 @@ export class CombatSystem {
         _dir.y = 0.45;
         const launch = t.receiveHit({ dir: _dir, ...scaled(A.thrown(w, sk), yeet, yeet), attacker: by, time: this.time });
         if (launch > 0) {
+          this.status?.onHit(t, by, obj);
           this.fx.hit(t, by, launch, 'throw');
           // Rare drops land their own hit-effects: a thrown anvil should not read like a cake.
           // (Explosive rares go through explode() instead — the blast is their effect.)
