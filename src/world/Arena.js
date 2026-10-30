@@ -113,6 +113,9 @@ export function ballPitMaterial() {
   return toonMat({ color: 0xffffff });
 }
 
+import { CrowdClaw } from './CrowdClaw.js';
+const CLAW_ARENAS = new Set(['stadium', 'colosseum', 'megastadium']);
+
 export class Arena {
   constructor(scene, physicsWorld) {
     this.scene = scene;
@@ -668,6 +671,7 @@ export class Arena {
   }
 
   _resetArenaHazards() {
+    this.claw?.reset();
     const A = BALANCE.arena;
     this.physicsWorld.setGravityScale?.(this.gravity);
     this.windTimer = A.windFirst;
@@ -1897,6 +1901,10 @@ export class Arena {
       if (this.arenaId === 'pinball') this._updateConveyors(dt);
       if (this.wind) this._updateWind(dt);
       if (this.arenaId === 'megastadium') this._updateMegaStadium(dt);
+      if (this.clawEnabled && CLAW_ARENAS.has(this.arenaId)) {
+        if (!this.claw) { this.claw = new CrowdClaw(this); this.claw.onEvent = (k, d) => this.onClaw?.(k, d); }
+        this.claw.update(dt);
+      }
     }
     this._updatePlatforms();
 

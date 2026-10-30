@@ -189,6 +189,22 @@ async function init() {
   arena.isOccupied = tileOccupied;
   arena.dweebs = dweebs;
   arena.onSegmentWarn = () => { if (match.running) audio.playWarning(); };
+  // Crowd Claw: arcade claw that scoops dweebs (or a prize) from the stadium rafters
+  arena.onClaw = (kind, data) => {
+    if (!match.running) return;
+    const pos = data?.pos;
+    if (kind === 'warn') { audio.playWarning(); hud.feed('🕹️ THE CROWD CLAW DESCENDS!'); }
+    else if (kind === 'grab' && data.d) {
+      const d = data.d;
+      if (d.held) combat.drop?.(d);
+      audio.playGrab(fx._pan(pos));
+      hud.popup(d.isPlayer ? 'CLAWED!' : 'SNATCHED!', d.getPosition(), 'big', 0xff384b);
+      fx.voice?.(d, 'eep');
+      if (d.isPlayer) cam.shake(0.12);
+    } else if (kind === 'miss') { audio.playGrab(fx._pan(pos)); }
+    else if (kind === 'drop' && data.d) { hud.popup('BOMBS AWAY!', pos, 'small', 0xffd23f); fx.voice?.(data.d, 'yeet'); }
+    else if (kind === 'prize') { hud.popup('🎁 PRIZE!', pos, 'big', 0x5ee06a); fx.particles?.confetti?.(pos, 30); }
+  };
   arena.onSegmentFall = seg => audio.playCrumble(fx._pan(seg.mesh.position));
   arena.onContraptionHit = (c, victim, cause) => {
     audio.playHammer?.();
@@ -1047,6 +1063,8 @@ const matchEvents = {
   onGo() {
     const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
     arena.hazardsActive = true;
+    arena.clawEnabled = ['brawl', 'teams', 'sudden', 'hill'].includes(currentMode) && !window.__dweebsMatchOverride;
+    if (!arena.clawEnabled) arena.claw?.reset();
     if (modeDef.hasWallDrop && arena) {
       arena.dropTheWall();
       hud.announce('WALL DROPPED! FIGHT!', 'danger', 1.8);
