@@ -240,8 +240,9 @@ async function init() {
   haptics = new Haptics();
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
+  match = new Match();
+  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics, match });
   tutorial = new TutorialDirector({ hud });
-  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
   arena.fx = fx;
   fx.tutorial = tutorial;
   comboDirector = new ComboDirector({ hud, audio, particles });
@@ -251,7 +252,6 @@ async function init() {
   combat.onExplode = pos => currentEscapeSandbox?.onExplosion(pos);
   combat.status = new StatusSystem({ particles, decals, hud, audio });
   combat.status.combat = combat;
-  match = new Match();
   emotes = new EmoteSystem({ hud, combat, arena, audio });
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
@@ -1679,6 +1679,22 @@ const matchEvents = {
   },
   onFlail(d, pos) {
     fx.flail(d, pos);
+  },
+  onCrowdGasp(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdGasp(pan);
+  },
+  onCrowdAww(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdAww(pan);
+  },
+  onCrowdChant(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdChant(pan);
+  },
+  onCrowdLaugh(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdLaugh(pan);
   },
   onRespawn(d) {
     d.respawn(arena.getRespawnPoint());

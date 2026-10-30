@@ -39,7 +39,12 @@ export class Match {
     this.suddenDeath = false;
     this.roundWinner = null;
     this.matchWinner = null;
-    this.events = null; // { onKO, onRespawn, onCountdown, onGo, onSuddenDeath, onRoundEnd, onMatchEnd }
+    this._firstGrabDone = false;
+    this._lastGaspTime = 0;
+    this._lastAwwTime = 0;
+    this._lastChantTime = 0;
+    this._lastLaughTime = 0;
+    this.events = null; // { onKO, onRespawn, onCountdown, onGo, onSuddenDeath, onRoundEnd, onMatchEnd, onCrowdGasp, onCrowdAww, onCrowdChant, onCrowdLaugh }
   }
 
   startMatch(dweebs) {
@@ -47,6 +52,11 @@ export class Match {
     this.round = 0;
     this.roundWins = new Map(dweebs.map(d => [d, 0]));
     this.matchWinner = null;
+    this._firstGrabDone = false;
+    this._lastGaspTime = 0;
+    this._lastAwwTime = 0;
+    this._lastChantTime = 0;
+    this._lastLaughTime = 0;
     for (const d of dweebs) {
       d.kos = 0; d.falls = 0; d.damageDealt = 0; d.totalKos = 0; d.totalFalls = 0;
       d.trickshots = 0; d.maxAir = 0; d.stylePeak = 0; d.koedBy = null;
@@ -76,6 +86,11 @@ export class Match {
     this.blastSide = BLAST_SIDE;
     this.roundWinner = null;
     this.playerOutAt = null;
+    this._firstGrabDone = false;
+    this._lastGaspTime = 0;
+    this._lastAwwTime = 0;
+    this._lastChantTime = 0;
+    this._lastLaughTime = 0;
     this.phase = Phase.COUNTDOWN;
     for (const d of this.dweebs) {
       d.stocks = this.settings.stocks;
@@ -164,6 +179,22 @@ export class Match {
 
     if (this.settings.mode === 'hill') this._hillTick();
 
+    // Crowd reactions: near-KO (last stock + high %) / comeback chant
+    for (const d of this.dweebs) {
+      if (d.eliminated || d.out) continue;
+      const pct = d.percent || 0;
+      const isLastStock = d.stocks <= 1;
+      if (isLastStock && pct >= BALANCE.crowd.chantComebackPct && this.time - this._lastChantTime > 8) {
+        // Comeback situation: last stock at high percent
+        this._lastChantTime = this.time;
+        this.events?.onCrowdChant?.(d.getPosition());
+      } else if (isLastStock && pct >= 80 && this.time - this._lastGaspTime > 6) {
+        // Near-KO: last stock, high percent
+        this._lastGaspTime = this.time;
+        this.events?.onCrowdGasp?.(d.getPosition());
+      }
+    }
+
     // Round over? Teams: the round ends when at most one team still has dweebs standing.
     const standing = this.dweebs.filter(d => !d.eliminated);
     const teamsAlive = new Set(standing.map(d => d.team ?? 0)).size;
@@ -187,6 +218,11 @@ export class Match {
     h.launch = launch;
     h.launchOn = victim;
     h.launchBy = victim.lastHitBy && this.time - victim.lastHitTime < 0.1 ? victim.lastHitBy : null;
+    // Crowd gasp on huge launch
+    if (launch >= BALANCE.crowd.gaspLaunch && this.time - this._lastGaspTime > 2) {
+      this._lastGaspTime = this.time;
+      this.events?.onCrowdGasp?.(victim.getPosition());
+    }
   }
 
   _ko(d, kind, pos) {
@@ -204,12 +240,51 @@ export class Match {
       this.events?.onKO?.(d, credited, kind, pos);
       return;
     }
+    const wasLastStock = d.stocks <= 1;
     d.stocks--;
     d.falls++;
     d.totalFalls = (d.totalFalls || 0) + 1;
     if (d.stocks <= 0) d.eliminate();
     else d.knockOut(RESPAWN_DELAY);
     this.events?.onKO?.(d, credited, kind, pos);
+
+    // Crowd reactions based on KO context
+    const isSelfKO = !credited;
+    const isLava = kind === 'splash';
+    const isExplosion = kind === 'star' && pos.y > 10; // rough heuristic for explosion KO
+    const victimPct = d.percent || 0;
+
+    if (isSelfKO) {
+      // Self-KO: aww
+      if (this.time - this._lastAwwTime > 3) {
+        this._lastAwwTime = this.time;
+        this.events?.onCrowdAww?.(pos);
+      }
+    } else if (isLava) {
+      // Lava dunk: gasp
+      if (this.time - this._lastGaspTime > 2) {
+        this._lastGaspTime = this.time;
+        this.events?.onCrowdGasp?.(pos);
+      }
+    } else if (wasLastStock) {
+      // Last stock KO: chant
+      if (this.time - this._lastChantTime > 4) {
+        this._lastChantTime = this.time;
+        this.events?.onCrowdChant?.(pos);
+      }
+    } else if (victimPct >= BALANCE.crowd.chantComebackPct) {
+      // High-percent KO (comeback): chant
+      if (this.time - this._lastChantTime > 4) {
+        this._lastChantTime = this.time;
+        this.events?.onCrowdChant?.(pos);
+      }
+    } else {
+      // Normal KO: gasp
+      if (this.time - this._lastGaspTime > 2) {
+        this._lastGaspTime = this.time;
+        this.events?.onCrowdGasp?.(pos);
+      }
+    }
   }
 
   /**
