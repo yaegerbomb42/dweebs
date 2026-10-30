@@ -28,17 +28,23 @@ function worldWithColony() {
 }
 
 describe('toy ruins & vaults', () => {
-  it('the world has two ruin sites, each with three plates and a closed vault', () => {
+  it('the world has four ruin sites: two plate trials, a bounce gauntlet and a sentry vault', () => {
     const { world } = worldWithColony();
-    expect(world.ruins.length).toBe(2);
+    expect(world.ruins.length).toBe(4);
+    const kinds = world.ruins.map(r => r.kind).sort();
+    expect(kinds).toEqual(['bounce', 'guard', 'plates', 'plates']);
     for (const ruin of world.ruins) {
-      expect(ruin.plates.length).toBe(3);
       expect(ruin.opened).toBe(false);
       expect(ruin.vault).toBeDefined();
       expect(HAT_POOL).toContain(ruin.loot.hat);
       expect(TOOL_POOL).toContain(ruin.loot.tool);
       expect(ruin.loot.coins).toBeGreaterThanOrEqual(15);
     }
+    for (const ruin of world.ruins.filter(r => r.kind === 'plates')) {
+      expect(ruin.plates.length).toBe(3);
+    }
+    expect(world.ruins.find(r => r.kind === 'bounce').plates.length).toBe(0);
+    expect(world.ruins.find(r => r.kind === 'guard').plates.length).toBe(0);
   });
 
   it('standing on all three plates at once opens the vault and pays out loot', () => {

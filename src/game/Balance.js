@@ -51,6 +51,25 @@ export const BALANCE = {
     heavyThrowFrom: 4,     // throws at/above this mass get a grunt, dust and a micro hit-stop
   },
 
+  // Thrown-Dweeb bowling (collateral hits). A thrown body becomes a short-lived
+  // projectile that can clip other Dweebs before it lands.
+  dweebThrow: {
+    bowling: {
+      radius: 1.1,         // metres from the flying body to clip another Dweeb
+      damage: 1.6,         // heft input to attacks.thrown (lighter than a direct throw)
+      life: 0.9,           // seconds the flying body stays a projectile
+    },
+  },
+  // Human Shield: a held Dweeb can soak an incoming thrown prop.
+  humanShield: {
+    reach: 0.8,            // metres in front of the holder along facing
+    height: 1.05,          // shield point height above the holder's feet
+    pad: 0.5,              // extra interception radius beyond the projectile's own
+    damageScale: 0.6,      // redirected damage / knockback strength
+    escapeBonus: 0.35,     // seconds added to the victim's escape timer (straining)
+    style: 8,
+  },
+
   // Stage toys (Spec 12)
   bounce: {
     bumperMinSpeed: 9,     // items leave a bumper at least this fast across the floor
@@ -95,6 +114,43 @@ export const BALANCE = {
     minSpeed: 15,          // fall speed that counts as a hard landing (a full jump lands at ~12.6, so no lag)
     min: 0.08,
     max: 0.18,
+  },
+
+  // Whoopee Cushion trap: step (or land) on it and it lets rip
+  whoopee: {
+    radius: 0.62,          // metres from the cushion centre that counts as sitting on it
+    up: 11.5,              // vertical launch for the Dweeb that triggered it
+    gasRadius: 3.2,        // stink cloud shove radius
+    gasPush: 6.5,          // horizontal shove at the cushion, falling off to 0 at gasRadius
+    gasStun: 0.3,
+    refill: 4.5,           // seconds flat before it re-inflates and arms again
+    thrownSpeed: 7,        // a thrown prop or Dweeb landing on it this fast also sets it off
+  },
+  // Signature idle quirks: a small per-type tell while a Dweeb stands still between fights.
+  // Purely cosmetic, so these only control timing and how far each rig part moves.
+  idle: {
+    minWait: 6,
+    maxWait: 10,
+    minDuration: 0.8,
+    maxDuration: 1.5,
+    speedThreshold: 0.2,
+    armAmp: 0.55,
+    legAmp: 0.35,
+    bodyAmp: 0.09,
+    rigAmp: 0.06,
+    bobAmp: 0.035,
+    wiggleAmp: 0.18,
+    tentacleAmp: 0.08,
+    eyeAmp: 0.18,
+    moodHold: 0.3,
+  },
+  slip: {
+    radius: 0.7,           // metres a grounded Dweeb must step inside a peel
+    cooldown: 1.6,         // per-Dweeb grace so a pile of peels cannot stun-lock
+    stun: 0.55,
+    up: 4.6,
+    forward: 4.2,
+    spin: 9,
   },
 
   // Recovery tools (Spec 6)
@@ -190,9 +246,35 @@ export const BALANCE = {
     magnetWarn: 1.2,        // telegraph before the pull starts
     magnetActive: 2.0,      // how long the pull lasts
     magnetForce: 16,        // m/s² toward the centre while active
+    // Bubble Wrap Ring: a grid of poppable bubbles over the whole island
+    bubble: {
+      spacing: 0.78,        // grid pitch (m)
+      radius: 0.3,          // bubble radius (m)
+      floorRadius: 10.6,    // bubbles cover the island out to here
+      stepReach: 0.42,      // a walking Dweeb pops bubbles this close to its feet
+      slamReach: 1.7,       // a hard landing pops a crater this wide
+      slamSpeed: 7,         // downward speed (m/s) that counts as a hard landing
+      propSpeed: 2.5,       // a skidding/landing prop pops bubbles when moving this fast
+      hop: 1.5,             // tiny upward pop per bubble under a grounded Dweeb
+      hopCooldown: 0.16,    // seconds between hops for one Dweeb
+      regrow: 7,            // seconds before a popped bubble re-inflates
+      maxPopsPerTick: 24,   // cap on pops handled per frame
+      soundsPerSec: 22,     // cap on pop sounds
+    },
     // Sinking Sands sticky centre
     quicksandRadius: 5,
     quicksandDrag: 0.88,    // horizontal velocity kept per tick, grounded in the zone
+    // Wind-Up Chattering Teeth (core roamer values live in OBJECT_DEFS.chatteringTeeth.roamer)
+    chatter: {
+      turn: 8,              // steering responsiveness toward the nearest Dweeb
+      contactPad: 0.6,      // extra reach beyond the body radius before a chomp lands
+      base: 5, growth: 6,   // small knockback bite, scales gently with damage
+      knock: 5.5,           // directional shove after the bite
+      landResume: 0.5,      // pause after a throw lands before it steers again
+      chompAnim: 0.25,      // jaw-snap duration
+      aggroY: 2.5,          // ignore Dweebs on a different level
+      verticalReach: 1.4,   // bite reach above / below the teeth
+    },
   },
 
   // King of the Hill.
@@ -213,6 +295,18 @@ export const BALANCE = {
     lightningStrike: 10, lavaHit: 6,
     levels: [20, 40, 60, 80],
     names: ['murmur', 'buzz', 'roar', 'frenzy', 'pandemonium'],
+    // Crowd reaction thresholds
+    gaspLaunch: 16,       // launch speed that triggers a gasp
+    awwLaunch: 8,         // launch speed for aww (whiffed throw / weak hit)
+    chantStocks: 1,       // last stock triggers chant
+    chantComebackPct: 120, // damage % for comeback chant
+    laughDamage: 80,      // damage % where bonk/whiff gets a laugh
+    giftThreshold: 0.9,     // arena.cheer needed before the front row starts tossing
+    giftCooldown: 8,        // seconds between care packages
+    giftBias: {             // crowd gifts are toys, never explosives
+      toyRocket: 0, explosiveBarrel: 0,
+      beachBall: 2, rubberChicken: 2, cake: 1.5, teddyBear: 1.5, poolRing: 1.5, pinata: 1.5,
+    },
   },
 
   // Pickup power-ups (the gems) and the two new gadget weapons.
@@ -225,6 +319,11 @@ export const BALANCE = {
   gadgets: {
     freezeRay: { range: 7.5, cone: 0.55, cooldown: 0.85, freeze: 1.5, style: 7 },
     magnet: { range: 8, cooldown: 1.15, pull: 16, style: 5 },
+    extinguisher: { range: 5, cone: 0.6, cooldown: 0.45, charges: 6, recoil: 11, lift: 4, airLift: 7, maxSpeed: 18, style: 6 },
+    // Turbo Leaf Blower: a short, rapid cone of wind. Shoves Dweebs and props, kicks you backwards,
+    // and blowing at the ground mid-air gives a little hover lift (blower-jetpack comedy).
+    leafBlower: { range: 7, cone: 0.62, cooldown: 0.32, push: 9, lift: 2.6, propPush: 5.5, recoil: 4.2, hover: 4.6, style: 3 },
+    grappleGlove: { range: 22, cooldown: 1.2, spring: 60, maxSpeed: 18, detachDist: 1.5, maxTime: 2.5, yankSpeed: 14, yankUp: 4, hitstun: 0.3, style: 8 },
   },
 
   // Style meter (Spec: gains, tiers, decay). Single source of truth — CombatSystem.STYLE,
@@ -270,6 +369,15 @@ export const BALANCE = {
     blastTop: 30,
     sdBlastScale: 0.88,    // sudden death pulls the side blast line in (34 → 30)
   },
+
+  // Endless Gauntlet (Build-A-Dweeb): per-wave growth of the champion, each with a cap.
+  gauntlet: {
+    massPerWave: 0.06, massCap: 1.8,
+    armorPerWave: 0.08, armorCap: 2.2,
+    speedPerWave: 0.025, speedCap: 1.35,
+    jumpPerWave: 0.02, jumpCap: 1.3,
+    dnaMax: 0.95, dnaWaves: 12,   // AI accuracy/confidence ramp toward dnaMax by wave 13
+  },
 };
 
 // Archetypes: same collider, different feel.
@@ -291,14 +399,14 @@ export const TYPE_STATS = {
   bean:        { label: 'Bean',        mass: 3.1, move: 0.97, jump: 1.02, armor: 1.0,  growthTaken: 0.98, airAccel: 1.0,  escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Tilted legume with side eyes' },
   tadpole:     { label: 'Tadpole',     mass: 2.7, move: 1.08, jump: 1.08, armor: 1.05, growthTaken: 1.0,  airAccel: 1.1,  escape: 1.0, diveCd: 0.95, diveDmg: 0.95, hitDmg: 1.0,  blurb: 'Wagging spring tail' },
   floppy:      { label: 'Floppy',      mass: 3.0, move: 1.0,  jump: 1.05, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.0,  escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Heavy drooping ear lobes' },
-  chonk:       { label: 'Chonk',       mass: 4.0, move: 0.82, jump: 0.85, armor: 0.86, growthTaken: 0.90, airAccel: 0.8,  escape: 1.3, diveCd: 1.3,  diveDmg: 1.25, hitDmg: 1.15, blurb: 'Heavy 4-legged block' },
-  ghosty:      { label: 'Ghosty',      mass: 2.4, move: 1.14, jump: 1.2,  armor: 1.18, growthTaken: 1.08, airAccel: 1.25, escape: 1.1, diveCd: 0.9,  diveDmg: 0.9,  hitDmg: 0.95, blurb: 'Floating sheet specter' },
+  chonk:       { label: 'Chonk',       mass: 4.0, move: 0.82, jump: 0.85, armor: 0.86, growthTaken: 0.90, airAccel: 0.8,  escape: 1.3, diveCd: 1.3,  diveDmg: 1.25, hitDmg: 1.15, blurb: 'Heavy 4-legged block', signature: { id: 'quake', name: 'Chonk Quake', blurb: 'Hard landings shove rivals', radius: 2.8, minFall: 12 } },
+  ghosty:      { label: 'Ghosty',      mass: 2.4, move: 1.14, jump: 1.2,  armor: 1.18, growthTaken: 1.08, airAccel: 1.25, escape: 1.1, diveCd: 0.9,  diveDmg: 0.9,  hitDmg: 0.95, blurb: 'Floating sheet specter', signature: { id: 'phase', name: 'Ghost Phase', blurb: 'First air-dodge per stock is free', invuln: 0.1 } },
   triclops:    { label: 'Tri-Clops',   mass: 3.1, move: 0.98, jump: 1.02, armor: 1.0,  growthTaken: 0.98, airAccel: 0.98, escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Pyramid with 3 mismatched eyes' },
   rolling_eye: { label: 'Roll-Eye',    mass: 2.9, move: 1.04, jump: 1.02, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.02, escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Smiley orb with wander eye' },
   sherbet:     { label: 'Sherbet',     mass: 2.8, move: 1.06, jump: 1.06, armor: 1.02, growthTaken: 1.0,  airAccel: 1.05, escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Pastel rainbow swirl' },
   antenna:     { label: 'Antenna',     mass: 2.7, move: 1.07, jump: 1.08, armor: 1.04, growthTaken: 1.0,  airAccel: 1.06, escape: 1.0, diveCd: 0.98, diveDmg: 0.98, hitDmg: 1.0,  blurb: 'Teardrop with radio top' },
-  boing:       { label: 'Boing',       mass: 3.0, move: 1.1,  jump: 1.35, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.12, escape: 1.0, diveCd: 0.9,  diveDmg: 1.05, hitDmg: 1.05, blurb: 'Steel coiled spring legs' },
-  boxer:       { label: 'Boxer',       mass: 3.5, move: 0.95, jump: 0.92, armor: 0.88, growthTaken: 0.92, airAccel: 0.9,  escape: 1.1, diveCd: 1.1,  diveDmg: 1.25, hitDmg: 1.2,  blurb: 'Giant boxing gloves' },
+  boing:       { label: 'Boing',       mass: 3.0, move: 1.1,  jump: 1.35, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.12, escape: 1.0, diveCd: 0.9,  diveDmg: 1.05, hitDmg: 1.05, blurb: 'Steel coiled spring legs', signature: { id: 'pogo', name: 'Pogo Spring', blurb: 'Hold jump to pogo on landing', bounce: 11.5 } },
+  boxer:       { label: 'Boxer',       mass: 3.5, move: 0.95, jump: 0.92, armor: 0.88, growthTaken: 0.92, airAccel: 0.9,  escape: 1.1, diveCd: 1.1,  diveDmg: 1.25, hitDmg: 1.2,  blurb: 'Giant boxing gloves', signature: { id: 'uppercut', name: 'Uppercut Streak', blurb: 'Every 3rd punch is an uppercut', every: 3 } },
   plunger:     { label: 'Plunger',     mass: 3.1, move: 1.0,  jump: 1.0,  armor: 0.98, growthTaken: 0.98, airAccel: 1.0,  escape: 1.05,diveCd: 1.0,  diveDmg: 1.05, hitDmg: 1.05, blurb: 'Accordion suction cup arms' },
 };
 
