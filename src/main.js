@@ -106,6 +106,9 @@ let rematch = null;
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
 
+// Photo Finish: slow-mo when a KO leaves exactly one dweeb standing in stock modes
+let photoFinish = 0;
+
 // Sudden-death item bias for the final 10 s: the sky rains explosives
 const FINALE_BIAS = { toyRocket: 5, explosiveBarrel: 5, giantHammer: 0.5, anvil: 0.5 };
 
@@ -484,6 +487,7 @@ function toMenu() {
   arena.hazardsActive = false;
   controller && (controller.enabled = false);
   resetSuddenDeathFx();
+  photoFinish = 0;
   cam.unlock();
   audio.stopMusic();
   audio.setCharge(0);
@@ -978,6 +982,7 @@ function startRound() {
   arena.hazardsActive = false;
   arena.reset();
   resetSuddenDeathFx();
+  photoFinish = 0;
   hud.clearTransient();
   trails.clear();
   bursts.clear();
@@ -1102,6 +1107,18 @@ const matchEvents = {
     if (d.eliminated && !d.isPlayer) hud.popup('OUT!', pos, 'big', d.color);
     // Kill-cam lite: lean toward where they went when the player was part of it
     if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
+
+    // PHOTO FINISH: when a KO leaves exactly one dweeb standing in stock modes
+    const stockModes = ['derby', 'brawl', 'teams', 'sudden'];
+    const isStockMode = stockModes.includes(currentMode);
+    const remaining = dweebs.filter(dw => !dw.eliminated).length;
+    if (isStockMode && remaining === 1 && !deathCinema?.isPlaying) {
+      photoFinish = 0.9;
+      hud.announce('PHOTO FINISH!', 'ko', 1.2);
+      audio.duck?.(0.3, 1.2);
+      cam.kickFov?.(10);
+      hud.flashImpact?.();
+    }
   },
   onFlail(d, pos) {
     fx.flail(d, pos);
@@ -1358,7 +1375,13 @@ function loop() {
 
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
-  const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
+  let dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
+
+  // Photo Finish: dramatic slow-mo when one dweeb remains
+  if (photoFinish > 0) {
+    photoFinish -= rawDt;
+    dt *= 0.22;
+  }
 
   if (inGame && dweebs.length) {
     if (currentMode !== 'build_arena') {
