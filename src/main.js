@@ -753,6 +753,7 @@ function toMenu() {
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+  if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   currentBuildTelemetry = null;
   if (currentDweebball) { currentDweebball.dispose(); currentDweebball = null; }
   match.phase = Phase.MENU;
@@ -1623,6 +1624,11 @@ function startRound() {
   decals.clear();
   $('round-screen').classList.add('hidden');
 
+  // Mimic & Mutate Lab owns its own toy arena while the round runs.
+  if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+  if (modeDef.isMimic) {
+    currentMimicLab = new MimicLab(physics, scene, { fx, hud, audio, arena });
+  }
   // King of the Hill: draw the zone + race board, and point the bots at it
   if (hillZone) { hillZone.dispose(); hillZone = null; }
   if (modeDef.isHill) hillZone = new HillZone(scene, BALANCE.hill);
@@ -2317,9 +2323,14 @@ function loop() {
     }
     if (match.running) {
       try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
-      if (!trainingLab || trainingLab.botActive()) for (const b of bots) b.update(dt, dweebs);
+      if (currentMode === 'mimic') {
+        // The bots are copycat pupils here: they watch and get yeeted, they don't brawl.
+        for (const d of dweebs) if (!d.isPlayer && !d.mimicGhost) d.moveInput.set(0, 0);
+      } else {
+        if (!trainingLab || trainingLab.botActive()) for (const b of bots) b.update(dt, dweebs);
+        for (const b of builderBots) b.update(dt, dweebs);
+      }
       if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled && !currentMeadowlands /* adventure uses 1–6 for camera/tools */; emotes.update(dt); }
-      for (const b of builderBots) b.update(dt, dweebs);
       try { mutatorDirector.update(dt, mutatorCtx()); } catch (e) { console.error('[Mutator] update error:', e); }
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
@@ -2336,6 +2347,9 @@ function loop() {
     handleImpacts();
     combat.update(dt, match.time);
     combat.status?.update(dt);
+    if (currentMimicLab && currentMode === 'mimic') {
+      currentMimicLab.update(dt, player, dweebs, combat);
+    }
     updateDrops(dt);
     match.update(dt);
     teamRings?.update(dt, dweebs);
