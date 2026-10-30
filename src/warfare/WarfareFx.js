@@ -76,6 +76,15 @@ export class WarfareFx {
     this.addShake(big ? 0.55 : 0.18);
   }
 
+  /** Balloon decoy bursting: a rubbery shockwave, a puff and a burst of plastic shards. */
+  balloonPop(x, z, team = 'blue') {
+    this.shockwave(x, z, 4.2, TEAM_COLORS[team] || 0xffd23f);
+    const mats = [this.shardMats[team] || this.shardMats.brass, this.shardMats.brass, this.shardMats.wood];
+    for (let i = 0; i < 14; i++) this._shard(x, 1.2, z, mats[i % mats.length], 7);
+    this.puff(x, z);
+    this.addShake(0.2);
+  }
+
   shockwave(x, z, r, color = 0xffffff) {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false });
     const ring = new THREE.Mesh(waveGeo, mat);

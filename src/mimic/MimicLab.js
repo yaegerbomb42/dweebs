@@ -12,6 +12,9 @@ export const MUTATION_TYPES = [
   { id: 'clumsy', name: 'CLUMSY SLAPSTICK', blurb: 'Stumbles on air, drops the prop on their foot, and squashes flat!' },
   { id: 'substitute', name: 'MAD SCIENTIST', blurb: 'Substituted the item with an explosive barrel or anvil!' },
   { id: 'swarm', name: 'CHAOS SWARM', blurb: 'Multiple Dweebs try to do it simultaneously and yeet each other!' },
+  { id: 'backfire', name: 'BACKFIRE', blurb: 'The prop detonates right in their face. Oops.' },
+  { id: 'slowmo', name: 'SLO-MO SAGE', blurb: 'Attempts the move in dramatic slow motion. Very artsy. Very slow.' },
+  { id: 'prodigy', name: 'PRODIGY', blurb: 'Nails it PERFECTLY on the first try. Show-off!' },
 ];
 
 /** Seconds of player input kept on tape. */
@@ -58,6 +61,9 @@ export class MimicLab {
     this._wasRagdolling = false;
     this._prevHitstun = 0;
     this._prevHeld = null;
+    // PhysicsWorld body ids created by this lab — removed on dispose so
+    // re-entering the lab doesn't stack invisible phantom colliders.
+    this._physIds = [];
 
     this._buildAmphitheater();
     this._spawnToyTrunk();
@@ -112,11 +118,24 @@ export class MimicLab {
     }
   }
 
+  /** Register a PhysicsWorld creation result for cleanup on dispose. */
+  _trackPhysics(entry) {
+    if (entry && entry.id) this._physIds.push(entry.id);
+    return entry;
+  }
+
   _buildAmphitheater() {
     const floorMat = toonMat({ color: 0xfef08a, flatShading: true });
     const woodMat = toonMat({ color: 0x78350f, flatShading: true });
 
-    // The stadium stage is the lab floor; everything here is decoration on top of it.
+    // Central circular arena floor (r = 18)
+    const floor = new THREE.Mesh(new THREE.CylinderGeometry(18, 18.5, 0.8, 24), floorMat);
+    floor.position.y = -0.4;
+    this.group.add(floor);
+    if (this.physicsWorld) {
+      this._trackPhysics(this.physicsWorld.createFixedCylinder(0, -0.4, 0, 18, 0.4, 'toy'));
+    }
+
     // Checkered center testing rug
     const rug = new THREE.Mesh(
       new THREE.CircleGeometry(6, 16),
@@ -138,6 +157,10 @@ export class MimicLab {
       bleacher.rotation.x = Math.PI / 2;
       bleacher.position.y = height;
       this.group.add(bleacher);
+
+      if (this.physicsWorld) {
+        this._trackPhysics(this.physicsWorld.createFixedCylinder(0, height, 0, radius, 0.35, 'wood'));
+      }
     }
 
     // Sunny overhead lab lighting
@@ -156,7 +179,7 @@ export class MimicLab {
     trunk.position.set(trunkX, 0.7, trunkZ);
     this.group.add(trunk);
     if (this.physicsWorld) {
-      this._trackBody(this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood'));
+      this._trackPhysics(this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood'));
     }
 
     // Starting toys, as real arena items so the player can grab, throw and blow them up
@@ -171,6 +194,51 @@ export class MimicLab {
       if (o) this.items.push(o);
       return o;
     } catch { return null; }
+  }
+
+  /** Collider shape matched to the prop's visual so boxes don't roll like balls. */
+  _propCollider(name) {
+    if (name === 'crate' || name === 'giantDie') return { shape: 'box', dims: { hx: 0.6, hy: 0.6, hz: 0.6 } };
+    if (name === 'watermelon') return { shape: 'sphere', dims: { radius: 0.65 } };
+    if (name === 'bowlingBall') return { shape: 'sphere', dims: { radius: 0.6 } };
+    if (name === 'rubberChicken') return { shape: 'capsule', dims: { halfHeight: 0.45, radius: 0.28 } };
+    return { shape: 'cylinder', dims: { halfHeight: 0.65, radius: 0.55 } }; // explosiveBarrel
+  }
+
+  _spawnProp(name, x, y, z, material, mass, isExplosive = false) {
+    let geo;
+    let mat = toonMat({ color: PALETTE.red, flatShading: true });
+    if (name === 'watermelon') {
+      geo = new THREE.SphereGeometry(0.65, 8, 8);
+      mat = toonMat({ color: 0x16a34a, flatShading: true });
+    } else if (name === 'bowlingBall') {
+      geo = new THREE.SphereGeometry(0.6, 12, 12);
+      mat = toonMat({ color: 0x1e293b, flatShading: true });
+    } else if (name === 'crate' || name === 'giantDie') {
+      geo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
+      mat = toonMat({ color: name === 'giantDie' ? 0xffffff : 0xca8a04, flatShading: true });
+    } else if (name === 'rubberChicken') {
+      geo = new THREE.CylinderGeometry(0.2, 0.35, 1.2, 6);
+      mat = toonMat({ color: PALETTE.yellow, flatShading: true });
+    } else {
+      geo = new THREE.CylinderGeometry(0.55, 0.55, 1.3, 8);
+      mat = toonMat({ color: PALETTE.red, flatShading: true });
+    }
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    this.group.add(mesh);
+
+    let body = null;
+    if (this.physicsWorld) {
+      const { shape, dims } = this._propCollider(name);
+      const b = this._trackPhysics(
+        this.physicsWorld.createDynamicBody(x, y, z, shape, dims, { material, mass })
+      );
+      body = b.body;
+    }
+
+    this.props.push({ name, mesh, body, isExplosive });
   }
 
   update(dt, player, dweebs = [], combat = null) {
@@ -225,11 +293,17 @@ export class MimicLab {
     this._prevHeld = held ? { kind: held.kind, ref: held.ref } : null;
   }
 
-  triggerDemonstration(actionName, dweebs = []) {
-    if (this.mutationCooldown > 0) return false;
+  triggerDemonstration(actionName, dweebs = [], forceMutationId = null) {
+    // Tests (and scripted demos) may force a mutation and bypass the cooldown.
+    if (!forceMutationId && this.mutationCooldown > 0) return false;
 
+    // Encore escalation: repeating the same demo back-to-back hypes the
+    // pupils up — impulses scale up to +75% by the 4th consecutive encore.
+    if (actionName === this.lastAction) this.encoreCount = (this.encoreCount || 1) + 1;
+    else this.encoreCount = 1;
     this.lastAction = actionName;
     this.mutationCooldown = 2.5;
+    this.boost = 1 + 0.25 * Math.min(3, this.encoreCount - 1);
 
     // Chain hype: repeated demos inside the 7s window build a bigger MIMIC combo.
     this.chain = this.chainTimer > 0 ? Math.min(9, this.chain + 1) : 1;
@@ -239,12 +313,15 @@ export class MimicLab {
     const pool = this.chain >= 3
       ? MUTATION_TYPES.filter(m => m.id === 'swarm' || m.id === 'substitute')
       : MUTATION_TYPES;
-    const mut = pool[Math.floor(Math.random() * pool.length)] || MUTATION_TYPES[0];
+    const mut = forceMutationId
+      ? (MUTATION_TYPES.find(m => m.id === forceMutationId) || MUTATION_TYPES[0])
+      : (pool[Math.floor(Math.random() * pool.length)] || MUTATION_TYPES[0]);
     this.activeMutation = mut;
 
     const style = this.chain >= 3 ? 'danger' : 'trick';
+    const encoreTag = this.encoreCount > 1 ? ` <small>ENCORE x${this.encoreCount}!</small>` : '';
     this._announce(
-      `MIMIC x${this.chain}!<small>${actionName} → ${mut.name}: ${mut.blurb}</small>`,
+      `MIMIC x${this.chain}: ${mut.name}!<small>${actionName} → ${mut.blurb}</small>${encoreTag}`,
       style,
       2.0
     );
@@ -270,16 +347,29 @@ export class MimicLab {
 
   /** The mutation's comedic payoff (applied on the copied beat, or instantly if nothing was taped). */
   _punchline(mut, pupil, pupils) {
+    const boost = this.boost || 1;
     if (!pupil?.body || !pupil.active) return;
+
+    // The rest of the crowd cheers the performer with a little hop.
+    const cheer = () => {
+      for (const p of pupils) {
+        if (p !== pupil && p.body) {
+          p.body.setLinvel({ x: (Math.random() - 0.5) * 2, y: 3.0, z: (Math.random() - 0.5) * 2 }, true);
+        }
+      }
+    };
 
     if (mut.id === 'overachiever') {
       // Wind up and blast upward into the stratosphere!
-      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 8, y: 28.0, z: (Math.random() - 0.5) * 8 }, true);
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 8, y: 28.0 * boost, z: (Math.random() - 0.5) * 8 }, true);
       if (pupil.onBounce) pupil.onBounce();
+      cheer();
     } else if (mut.id === 'clumsy') {
       // Trip, tumble, and ragdoll
-      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 3, y: 5.0, z: (Math.random() - 0.5) * 3 }, true);
-      pupil.startRagdoll?.(1.8, 10);
+      pupil.body.setLinvel({ x: 0, y: 4.0, z: 0 }, true);
+      pupil.ragdolling = true;
+      pupil.hitstun = 2.5;
+      cheer();
     } else if (mut.id === 'substitute') {
       // Swapped the prop for an explosive barrel… with the fuse already lit
       const pp = pupil.getPosition();
@@ -295,11 +385,27 @@ export class MimicLab {
         if (p.body) {
           p.body.setLinvel({
             x: (Math.random() - 0.5) * 12,
-            y: 16 + Math.random() * 8,
+            y: (16 + Math.random() * 8) * boost,
             z: (Math.random() - 0.5) * 12,
           }, true);
         }
       }
+    } else if (mut.id === 'backfire') {
+      // Prop detonates in their face: launched, ragdolled, dazed.
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 6, y: 14.0 * boost, z: (Math.random() - 0.5) * 6 }, true);
+      pupil.ragdolling = true;
+      pupil.hitstun = 2.0;
+      cheer();
+    } else if (mut.id === 'slowmo') {
+      // Dramatic slow-motion attempt: gentle float, maximum gravitas.
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 2, y: 6.0, z: (Math.random() - 0.5) * 2 }, true);
+      pupil.slowmoT = 3.0;
+      cheer();
+    } else if (mut.id === 'prodigy') {
+      // Nails it perfectly: clean vertical pop with a victory bounce.
+      pupil.body.setLinvel({ x: 0, y: 12.0 * boost, z: 0 }, true);
+      if (pupil.onBounce) pupil.onBounce();
+      cheer();
     }
   }
 
@@ -422,9 +528,12 @@ export class MimicLab {
 
     // Remove every body this lab created, not just the dynamic props.
     if (this.physicsWorld) {
-      for (const id of this.bodyIds) this.physicsWorld.removeBody(id);
+      for (const id of [...this.bodyIds, ...this._physIds]) {
+        try { this.physicsWorld.removeBody(id); } catch { /* already gone */ }
+      }
     }
     this.bodyIds.length = 0;
+    this._physIds = [];
 
     // Legacy collider entries (if any code pushed them manually).
     for (const c of this.colliders) {
