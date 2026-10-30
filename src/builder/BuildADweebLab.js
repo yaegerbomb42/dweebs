@@ -17,10 +17,11 @@ import {
   refreshDweebCollider,
   installAppendageGameplay,
 } from './CustomDweebModel.js';
-import { TournamentBracket } from './Tournament.js';
+import { TournamentBracket, gauntletOpponent } from './Tournament.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
 const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+const GAUNTLET_KEY = 'dweebs-gauntlet-v1';
 
 export class BuildADweebLab {
   constructor(scene, camera, renderer) {
@@ -41,6 +42,7 @@ export class BuildADweebLab {
     // the active tournament bracket (null when no tournament is running).
     this.attachedFighter = null;
     this.tournament = this.loadTournament();
+    this.gauntlet = this.loadGauntlet();
 
     this._buildStage();
     this.rebuildModel();
@@ -230,6 +232,38 @@ export class BuildADweebLab {
     return this.tournament ? this.tournament.state() : null;
   }
 
+  // ─── Endless Gauntlet: wave survival ──────────────────────────────────────────
+  // State lives in localStorage (see gauntlet* helpers below) because the lab is disposed while
+  // the arena bout runs; main.js records the bout result straight into storage at match end.
+
+  /** Start a new endless gauntlet run with the lab's current build. */
+  startGauntlet() {
+    this.gauntlet = { wave: 1, best: gauntletBest(), alive: true, opponent: gauntletOpponent(1), lastCleared: 0 };
+    saveGauntletState(this.gauntlet);
+    return this.gauntletState();
+  }
+
+  /** Champion config for the current wave (null when no gauntlet active). */
+  gauntletOpponent() {
+    if (!this.gauntlet?.alive) return null;
+    if (!this.gauntlet.opponent) { this.gauntlet.opponent = gauntletOpponent(this.gauntlet.wave); saveGauntletState(this.gauntlet); }
+    return this.gauntlet.opponent;
+  }
+
+  /** Plain gauntlet summary for the HUD (null when no gauntlet active). */
+  gauntletState() {
+    return this.gauntlet ? { ...this.gauntlet, best: Math.max(this.gauntlet.best || 0, gauntletBest()) } : null;
+  }
+
+  abandonGauntlet() {
+    this.gauntlet = null;
+    saveGauntletState(null);
+  }
+
+  loadGauntlet() {
+    return loadGauntletState();
+  }
+
   abandonTournament() {
     this.tournament = null;
     this.clearTournamentStorage();
@@ -284,4 +318,47 @@ export class BuildADweebLab {
   dispose() {
     this.scene.remove(this.group);
   }
+}
+
+// ─── Endless Gauntlet persistence (module level so main.js can record results) ───
+const GAUNTLET_BEST_KEY = 'dweebs-gauntlet-best';
+
+export function loadGauntletState() {
+  try {
+    const g = JSON.parse(localStorage.getItem(GAUNTLET_KEY) || 'null');
+    return g && typeof g.wave === 'number' ? g : null;
+  } catch { return null; } // corrupted / private mode
+}
+
+export function saveGauntletState(g) {
+  try {
+    if (g) localStorage.setItem(GAUNTLET_KEY, JSON.stringify(g));
+    else localStorage.removeItem(GAUNTLET_KEY);
+  } catch { /* private mode */ }
+}
+
+export function gauntletBest() {
+  try { return Number(localStorage.getItem(GAUNTLET_BEST_KEY)) || 0; } catch { return 0; }
+}
+
+/**
+ * Record a finished gauntlet bout. Win: bank the wave, roll a tougher champion for the next one.
+ * Loss: the run ends (kept in storage, flagged dead, so the lab can show where you fell).
+ * Returns the new state, or null when no run is active.
+ */
+export function recordGauntletBout(playerWon) {
+  const g = loadGauntletState();
+  if (!g?.alive) return null;
+  if (playerWon) {
+    g.lastCleared = g.wave;
+    g.wave += 1;
+    g.opponent = gauntletOpponent(g.wave);
+  } else {
+    g.alive = false;
+  }
+  const cleared = playerWon ? g.lastCleared : g.wave - 1;
+  g.best = Math.max(g.best || 0, cleared, gauntletBest());
+  try { localStorage.setItem(GAUNTLET_BEST_KEY, String(g.best)); } catch { /* private mode */ }
+  saveGauntletState(g);
+  return g;
 }
