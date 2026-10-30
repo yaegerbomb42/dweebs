@@ -45,6 +45,7 @@ import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
 import { MutatorDirector } from './game/Mutators.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
+import { PetPen } from './adventure/pets.js';
 import { loadWardrobe, applyWardrobe, syncOwned, cycle as cycleWardrobe, buildWardrobeRack, refreshRack } from './world/Cosmetics.js';
 import { QuestBoard } from './adventure/quests.js';
 import { BuildingManager } from './adventure/building.js';
@@ -71,6 +72,7 @@ let lastBuilderOppType = 'random';
 
 let currentMeadowlands = null;
 let colony = null;
+let petPen = null; // tamed critter pets
 let wardrobe = null, wardrobeRack = null, wardrobeSyncT = 0; // vault cosmetics (hats/tools)
 const WARDROBE_POS = { x: -3.2, z: -4.2 };
 let questBoard = null; // Meadowlands NPC quests + Moss Tablet secrets
@@ -339,6 +341,7 @@ async function init() {
 
   setupMenu();
   window.addEventListener('resize', onResize);
+  window.addEventListener('keydown', e => { if (e.code === 'KeyG' && !e.repeat && petPen && currentMeadowlands && player) petPen.tryTame(player); });
   window.addEventListener('keydown', onWardrobeKey);
   document.addEventListener('pointerlockchange', onPointerLockChange);
   canvas.addEventListener('click', (e) => {
@@ -695,6 +698,7 @@ function toMenu() {
   $('wardrobe-prompt')?.remove(); wardrobeRack = null;
   if (currentMeadowlands) {
     if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
+    (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
     (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
     currentMeadowlands = null;
   }
@@ -750,6 +754,7 @@ function startWarfare(submode = 'defense') {
   spectateTarget = null;
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
+  if (currentMeadowlands) { (petPen?.dispose(), petPen = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentMeadowlands) { (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
@@ -915,6 +920,7 @@ function startBuildLab() {
   spectateTarget = null;
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
+  if (currentMeadowlands) { (petPen?.dispose(), petPen = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentMeadowlands) { (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
@@ -1110,6 +1116,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) Object.defineProperty(window, '__pets', { get: () => petPen, configurable: true });
   if (import.meta.env.DEV) window.__dweebs.matchEvents = matchEvents;
   if (import.meta.env.DEV) Object.defineProperty(window, '__db', { get: () => currentDweebball, configurable: true });
   if (import.meta.env.DEV) Object.defineProperty(window, '__river', { get: () => currentMeadowlands?.river, configurable: true });
@@ -1130,6 +1137,7 @@ function startMatch() {
   if (isAdventure) {
     if (arena.setStadiumVisible) arena.setStadiumVisible(false);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMeadowlands) (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
     if (currentMeadowlands) (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
     currentMeadowlands = new Meadowlands(physics, scene, { fx });
     if (currentMeadowlands.river) currentMeadowlands.river.onCatch = (label, pos) => hud.popup(label, pos, 'small', 0x3fa9ff);
@@ -1166,6 +1174,7 @@ function startMatch() {
       const restored = applySave(savedVillage, { colony, buildingManager, world: currentMeadowlands });
       colony._addLog(`📂 Welcome back! Restored ${restored.citizens} citizens and ${restored.structures} structures.`);
     }
+    try { petPen = new PetPen({ world: currentMeadowlands, colony, hud, audio }); } catch (e) { console.warn('[pets]', e); petPen = null; }
     try {
       wardrobe = loadWardrobe();
       syncOwned(wardrobe, colony);
@@ -1261,6 +1270,7 @@ function startMatch() {
     if (currentMeadowlands) {
       // Save the village before tearing it down.
       if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
+      (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
       (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
       currentMeadowlands = null;
     }
@@ -1971,6 +1981,7 @@ function loop() {
       buildingManager.updatePlaced(rawDt, dweebs);
     }
     currentMeadowlands.update(dt, dweebs, colony);
+    petPen?.update(dt, player);
     updateWardrobe(dt);
     if (questBoard && player) questBoard.update(dt, player);
 
@@ -2604,6 +2615,7 @@ function wireCivCameraControls() {
       saveVillage({ colony, buildingManager, world: currentMeadowlands });
     }
     if (currentMeadowlands) {
+      (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
       (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
       currentMeadowlands = null;
     }
