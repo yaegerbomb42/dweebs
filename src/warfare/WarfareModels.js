@@ -27,6 +27,7 @@ function shared() {
   geo.gear = new THREE.CylinderGeometry(0.7, 0.7, 0.22, 12);
   geo.tooth = new THREE.ConeGeometry(0.16, 0.36, 4);
   geo.shadow = new THREE.CircleGeometry(0.6, 10);
+  geo.pip = new THREE.SphereGeometry(0.075, 6, 4);
   geo.ring = new THREE.RingGeometry(0.75, 0.95, 16);
   mat.blue = toonMat({ color: TEAM_COLORS.blue });
   mat.red = toonMat({ color: TEAM_COLORS.red });
@@ -40,6 +41,8 @@ function shared() {
   mat.bomb = toonMat({ color: 0x2a2438 });
   mat.spark = new THREE.MeshBasicMaterial({ color: 0xffd23f });
   mat.mask = toonMat({ color: 0x2b2b3a });
+  mat.pit = toonMat({ color: 0x241a12 });
+  mat.spike = toonMat({ color: 0x9a9aa8 });
   mat.shadow = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
   mat.retreat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
 }
@@ -50,7 +53,7 @@ export function sharedMats() { shared(); return mat; }
 
 /** Toys read better a bit chunkier than their sim footprint. */
 export const VIEW_SCALE = 1.35;
-const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1 };
+const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1, medic: 0.9 };
 
 /**
  * Build one unit. Returns { root, body, gear, spark } where `body` is the mesh whose material
@@ -141,8 +144,44 @@ export function buildUnit(type, team) {
     back.position.set(-1.55, 1.7, 0);
     back.name = 'backGear';
     tilt.add(back);
+  } else if (type === 'medic') {
+    gear = new THREE.Group();
+    // Red cross backpack
+    const pack = new THREE.Mesh(geo.dowel, mat.wood);
+    pack.scale.set(0.6, 0.8, 0.4);
+    pack.position.set(-0.35, 0.9, 0);
+    pack.rotation.x = Math.PI / 6;
+    gear.add(pack);
+    const crossV = new THREE.Mesh(geo.dowel, mat.red);
+    crossV.scale.set(0.12, 0.45, 0.12);
+    crossV.position.set(-0.35, 1.1, 0.05);
+    gear.add(crossV);
+    const crossH = new THREE.Mesh(geo.dowel, mat.red);
+    crossH.scale.set(0.35, 0.12, 0.12);
+    crossH.position.set(-0.35, 1.1, 0.05);
+    crossH.rotation.z = Math.PI / 2;
+    gear.add(crossH);
+    // Small med pouch on hip
+    const pouch = new THREE.Mesh(geo.dowel, mat.darkWood);
+    pouch.scale.set(0.25, 0.3, 0.2);
+    pouch.position.set(0.4, 0.55, -0.35);
+    pouch.rotation.z = -Math.PI / 4;
+    gear.add(pouch);
+    gear.position.set(0, 0, 0);
   }
   if (gear) tilt.add(gear);
+
+  // Veteran rank pips: three small gold dots above the body, toggled by the view from u.rank.
+  const rank = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const pip = new THREE.Mesh(geo.pip, mat.brass);
+    pip.position.set((i - 1) * 0.2, 0, 0);
+    pip.visible = false;
+    rank.add(pip);
+  }
+  rank.position.set(0, r * 2 + 0.35, 0);
+  rank.visible = false;
+  tilt.add(rank);
 
   const shadow = new THREE.Mesh(geo.shadow, mat.shadow);
   shadow.rotation.x = -Math.PI / 2;
@@ -152,7 +191,7 @@ export function buildUnit(type, team) {
   root.add(shadow);
 
   root.scale.setScalar((SCALE[type] || 1) * VIEW_SCALE);
-  return { root, tilt, body, gear, spark, height: r * 2 };
+  return { root, tilt, body, gear, spark, rank, height: r * 2 };
 }
 
 /** Arcing shell: a little brass rocket with a plastic nose. */
@@ -176,6 +215,32 @@ export function buildRing(color) {
   m.rotation.x = -Math.PI / 2;
   noOutline(m);
   return m;
+}
+
+/** Spike pit trap: a dark toy pit ringed with plastic spikes. */
+export function buildTrap(r) {
+  shared();
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 18), mat.pit);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.03;
+  noOutline(disc);
+  g.add(disc);
+  const rim = new THREE.Mesh(new THREE.RingGeometry(r - 0.18, r + 0.12, 18), mat.spike);
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.04;
+  noOutline(rim);
+  g.add(rim);
+  const spikeGeo = new THREE.ConeGeometry(0.14, 0.7, 5);
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    const s = new THREE.Mesh(spikeGeo, mat.spike);
+    s.position.set(Math.cos(a) * (r - 0.35), 0.3, Math.sin(a) * (r - 0.35));
+    s.rotation.z = -Math.cos(a) * 0.35;
+    s.rotation.x = Math.sin(a) * 0.35;
+    g.add(s);
+  }
+  return g;
 }
 
 export function sharedGeo() { shared(); return geo; }
