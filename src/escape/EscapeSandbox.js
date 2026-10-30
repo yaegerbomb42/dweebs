@@ -46,6 +46,20 @@ const DRONE = {
 const DRONE_WAYPOINTS = [{ x: -7, z: 9 }, { x: 7, z: 9 }, { x: 8, z: -9 }, { x: -7, z: -9 }];
 const DRONE_ANCHOR = { x: 0, z: 5 };
 
+const LOCKDOWN_TIME = 150;
+const HAZARD_STEPS = [
+  { at: 100, level: 1, warn: 'SWEEP LASER IS ARMING' },
+  { at: 60, level: 2, warn: 'STEAM VENTS ARE PRESSURIZING' },
+  { at: 30, level: 3, warn: 'THE CEILING IS CREEPING DOWN' },
+];
+const LASER_Y = 1.55;
+const CEILING_Y = 11.8;
+const CEILING_MIN = 3.6;
+const CEILING_SPEED = 0.16;
+const STEAM_JETS = [{ x: SOCKET.x, z: SOCKET.z }, { x: -9, z: -10 }, { x: 6, z: 8 }, { x: -6, z: 2 }];
+const GRADE_ORDER = { C: 1, B: 2, A: 3, S: 4 };
+const METHOD_BONUS = { demolition: 0.1, pulley: 0.05, circuit: 0.08, vent: 0.12 };
+
 function loadStore() {
   try { return { found: {}, best: null, ...JSON.parse(localStorage.getItem(STORE_KEY) || '{}') }; } catch { return { found: {}, best: null }; }
 }
@@ -77,6 +91,23 @@ export class EscapeSandbox {
     this.escaped = false;
     this.escapeMethod = null;
     this.store = loadStore();
+    if (!this.store.grades || typeof this.store.grades !== 'object') this.store.grades = {};
+
+    // Lockdown run state: a countdown drives three escalating, telegraphed hazards.
+    this.timeLimit = LOCKDOWN_TIME;
+    this.elapsed = 0;
+    this.timeRemaining = LOCKDOWN_TIME;
+    this.hazardLevel = 0;
+    this.lockdown = false;
+    this._warned = {};
+    this._laserAngle = 0.35;
+    this._laserWarm = 0;
+    this._laserCd = 0;
+    this._steamWarm = 0;
+    this._steamCd = 0;
+    this._ceilingWarm = 0;
+    this._ceilingY = CEILING_Y;
+    this._lastDweebs = [];
 
     this.hingeHp = [100, 100];
     this.doorBlown = false;
@@ -109,7 +140,9 @@ export class EscapeSandbox {
     this._buildVentShelf();
     this._spawnProps();
     this._buildDrone();
+    this._buildHazards();
     this._buildHintPanel();
+    this._buildLockdownClock();
   }
 
   // ─── helpers ───
@@ -316,6 +349,37 @@ export class EscapeSandbox {
     this.droneGroup = g;
   }
 
+  _buildHazards() {
+    // Level 1: a rotating laser bar that sweeps the whole room.
+    this.laserMat = new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0, depthWrite: false });
+    this.laserBeam = new THREE.Mesh(new THREE.BoxGeometry(21, 0.22, 0.22), this.laserMat);
+    this.laserBeam.position.y = LASER_Y;
+    noOutline(this.laserBeam);
+    this.laserGroup = new THREE.Group();
+    this.laserGroup.add(this.laserBeam);
+    this.group.add(this.laserGroup);
+    const laserBody = this.physicsWorld?.createKinematicBox(this.O.x, LASER_Y, this.O.z, 10.5, 0.18, 0.18, 'metal');
+    if (laserBody) { this.laserBody = laserBody; this.bodyIds.push(laserBody.id); }
+
+    // Level 2: steam vents that launch props (and anyone standing on them).
+    this.steamJets = STEAM_JETS.map((j, i) => {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xcffafe, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 1.0, 5.5, 8, 1, true), mat);
+      mesh.position.set(j.x, 2.75, j.z);
+      noOutline(mesh);
+      this.group.add(mesh);
+      return { x: j.x, z: j.z, mesh, mat, phase: i * 1.7 };
+    });
+
+    // Level 3: the ceiling itself starts descending.
+    this.ceilingMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, transparent: true, opacity: 0, depthWrite: false });
+    this.ceiling = this._box(0, CEILING_Y, 0, 11.7, 0.25, 15.7, this.ceilingMat);
+    noOutline(this.ceiling);
+    this.ceiling.visible = false;
+    const ceilingBody = this.physicsWorld?.createKinematicBox(this.O.x, CEILING_Y, this.O.z, 11.7, 0.25, 15.7, 'metal');
+    if (ceilingBody) { this.ceilingBody = ceilingBody; this.bodyIds.push(ceilingBody.id); }
+  }
+
   _buildHintPanel() {
     if (typeof document === 'undefined') return;
     const el = document.createElement('div');
@@ -327,21 +391,52 @@ export class EscapeSandbox {
     this._paintHints(true);
   }
 
+  _buildLockdownClock() {
+    if (typeof document === 'undefined') return;
+    const el = document.createElement('div');
+    el.id = 'escape-lockdown';
+    el.style.cssText = 'position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:41;pointer-events:none;background:#1b1030;'
+      + 'color:#ffd23f;border:3px solid #ffd23f;border-radius:12px;box-shadow:0 4px 0 #000;padding:6px 16px;'
+      + 'font:900 26px/1 Nunito,system-ui,sans-serif;letter-spacing:.08em;text-align:center';
+    document.body.appendChild(el);
+    this.lockdownEl = el;
+    this._paintLockdown(true);
+  }
+
+  _paintLockdown(force = false) {
+    if (!this.lockdownEl) return;
+    const remain = Math.max(0, Math.ceil(this.timeRemaining));
+    const key = `${this.lockdown}|${remain}|${this.hazardLevel}`;
+    if (!force && key === this._lockdownKey) return;
+    this._lockdownKey = key;
+    const mm = String(Math.floor(remain / 60)), ss = String(remain % 60).padStart(2, '0');
+    const danger = remain <= 30;
+    this.lockdownEl.textContent = this.lockdown ? 'LOCKDOWN!' : `⏳ ${mm}:${ss}`;
+    this.lockdownEl.style.color = this.lockdown ? '#ff4d5e' : danger ? '#ff8a5a' : '#ffd23f';
+    this.lockdownEl.style.borderColor = danger ? '#ff4d5e' : '#ffd23f';
+  }
+
   _paintHints(force = false) {
     if (!this.hintEl) return;
     const t = Math.floor(this.clock);
-    const key = `${t}|${Math.round(this.basketWeight * 2)}|${this.hingeHp.map(h => Math.ceil(h / 10)).join()}|${this.batterySocketed}|${this.escaped}`;
+    const remain = Math.max(0, Math.ceil(this.timeRemaining));
+    const key = `${t}|${remain}|${this.hazardLevel}|${Math.round(this.basketWeight * 2)}|${this.hingeHp.map(h => Math.ceil(h / 10)).join()}|${this.batterySocketed}|${this.escaped}|${this.lockdown}`;
     if (!force && key === this._hintKey) return;
     this._hintKey = key;
     const found = this.store.found;
+    const grades = this.store.grades || {};
     const n = EXITS.filter(e => found[e.id]).length;
     const rows = EXITS.map(e => found[e.id]
-      ? `<div>✅ ${e.icon} <b>${e.name}</b></div>`
+      ? `<div>✅ ${e.icon} <b>${e.name}</b>${grades[e.id] ? ` <span style="color:#b45309">${grades[e.id]}</span>` : ''}</div>`
       : `<div style="opacity:.75">⬜ ${e.icon} <i>${e.hint}</i></div>`).join('');
     const mm = String(Math.floor(t / 60)), ss = String(t % 60).padStart(2, '0');
+    const rm = String(Math.floor(remain / 60)), rs = String(remain % 60).padStart(2, '0');
+    const clock = this.lockdown ? 'LOCKDOWN!' : `${rm}:${rs}`;
+    const clockColor = remain <= 30 || this.lockdown ? '#dc2626' : '#b45309';
     const best = this.store.best != null ? ` · best ${this.store.best.toFixed(1)}s` : '';
     const hinge = Math.max(0, Math.round((this.hingeHp[0] + this.hingeHp[1]) / 2));
     this.hintEl.innerHTML = `<div style="font-size:15px;letter-spacing:.04em">🔐 ESCAPE THE VAULT · ${mm}:${ss}${best}</div>`
+      + `<div style="margin:2px 0 4px;font-size:16px;color:${clockColor}">⏳ LOCKDOWN ${clock}</div>`
       + `<div style="margin:2px 0 4px">Exits found: <b>${n}/4</b></div>${rows}`
       + `<div style="margin-top:4px;opacity:.8">⚖️ ${this.basketWeight.toFixed(1)}/${BASKET.target} · 🚪 hinges ${hinge}%${this.batterySocketed ? ' · 🔋 ON' : ''}</div>`;
   }
@@ -660,10 +755,180 @@ export class EscapeSandbox {
     }
   }
 
+  // ─── lockdown hazards ───
+
+  _setHazardLevel(level) {
+    if (level <= this.hazardLevel) return;
+    this.hazardLevel = level;
+    if (level === 1) {
+      this._laserWarm = 3;
+      this.hud?.announce?.('⚠️ SWEEP LASER ONLINE', 'ko', 1.3);
+      this.hud?.feed?.('<b>LOCKDOWN</b> · the sweep laser is live', 'sd');
+      this.audio?.playWarning?.();
+    } else if (level === 2) {
+      this._steamWarm = 3;
+      this.hud?.announce?.('⚠️ STEAM VENTS OPEN', 'ko', 1.3);
+      this.hud?.feed?.('<b>LOCKDOWN</b> · the steam vents are opening', 'sd');
+      this.audio?.playWarning?.();
+    } else if (level === 3) {
+      this._ceilingWarm = 3;
+      this.hud?.announce?.('⚠️ CEILING CREEPING DOWN', 'ko', 1.3);
+      this.hud?.feed?.('<b>LOCKDOWN</b> · the ceiling is coming down', 'sd');
+      this.audio?.playWarning?.();
+    }
+  }
+
+  _updateHazards(dt, dweebs) {
+    for (const step of HAZARD_STEPS) {
+      const warnKey = `warn${step.level}`;
+      if (this.timeRemaining <= step.at + 6 && this.timeRemaining > step.at && !this._warned[warnKey]) {
+        this._warned[warnKey] = true;
+        this.hud?.announce?.(`⚠️ ${step.warn}`, 'small', 1.2);
+        this.hud?.feed?.(`<b>LOCKDOWN</b> · ${step.warn.toLowerCase()}`, 'sd');
+        this.audio?.playWarning?.();
+      }
+      if (this.timeRemaining <= step.at) this._setHazardLevel(step.level);
+    }
+
+    this._updateLaser(dt, dweebs);
+    this._updateSteam(dt, dweebs);
+    this._updateCeiling(dt);
+
+    if (this.timeRemaining <= 0) this._lockdown();
+  }
+
+  _updateLaser(dt, dweebs) {
+    if (!this.laserMat || !this.laserBeam || !this.laserGroup) return;
+    if (this.hazardLevel < 1) { this.laserMat.opacity = 0; return; }
+    this._laserWarm = Math.max(0, this._laserWarm - dt);
+    const active = this._laserWarm <= 0;
+    this._laserAngle += dt * (active ? 0.95 : 0.25);
+    this.laserGroup.rotation.y = this._laserAngle;
+    this.laserMat.opacity = active ? 0.8 + Math.sin(this.clock * 18) * 0.18 : 0.35 + Math.sin(this.clock * 28) * 0.2;
+    this.laserMat.color.setHex(active ? 0xff3355 : 0xffd23f);
+    if (this.laserBody?.body) {
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this._laserAngle);
+      this.laserBody.body.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+    }
+    if (!active) return;
+
+    this._laserCd = Math.max(0, this._laserCd - dt);
+    if (this._laserCd > 0) return;
+    this._laserCd = 0.3;
+    const ax = Math.cos(this._laserAngle), az = -Math.sin(this._laserAngle);
+    const px = -az, pz = ax;
+    for (const d of dweebs) {
+      if (!d?.body || !d.active) continue;
+      const p = d.getPosition?.();
+      if (!p) continue;
+      const rx = p.x - this.O.x, rz = p.z - this.O.z;
+      const along = rx * ax + rz * az;
+      const perp = rx * px + rz * pz;
+      if (Math.abs(along) > 10.2 || Math.abs(perp) > 0.8 || p.y < 0.2 || p.y > LASER_Y + 1.6) continue;
+      const dir = perp >= 0 ? 1 : -1;
+      this.physicsWorld?.applyImpulse?.(d.body, { x: px * dir * 9, y: 4.5, z: pz * dir * 9 });
+      this.fx?.particles?.sparkle?.(p, 0xff3355);
+    }
+  }
+
+  _updateSteam(dt, dweebs) {
+    if (!this.steamJets) return;
+    if (this.hazardLevel < 2) {
+      for (const j of this.steamJets) { j.mat.opacity = 0; j.mesh.visible = false; }
+      return;
+    }
+    this._steamWarm = Math.max(0, this._steamWarm - dt);
+    const active = this._steamWarm <= 0;
+    for (const j of this.steamJets) {
+      j.mesh.visible = true;
+      const pulse = 0.35 + Math.sin(this.clock * 9 + j.phase) * 0.22;
+      j.mat.opacity = active ? pulse : pulse * 0.5;
+      j.mesh.scale.y = 0.9 + Math.sin(this.clock * 7 + j.phase) * 0.12;
+    }
+    if (!active) return;
+
+    this._steamCd -= dt;
+    if (this._steamCd > 0) return;
+    this._steamCd = 0.3;
+    const O = this.O;
+    for (const o of this.items) {
+      if (!o?.body) continue;
+      const p = o.getPosition?.();
+      if (!p) continue;
+      for (const j of this.steamJets) {
+        if (Math.hypot(p.x - (O.x + j.x), p.z - (O.z + j.z)) < 2.0 && p.y < 5.5) {
+          this.physicsWorld?.applyImpulse?.(o.body, { x: (Math.random() - 0.5) * 3, y: 11, z: (Math.random() - 0.5) * 3 });
+          this.fx?.particles?.emit?.(p, { count: 4, colors: [0xffffff, 0x8fe9ff], speed: 2, up: 4, size: 0.14, life: 0.4, gravity: -2 });
+          break;
+        }
+      }
+    }
+    for (const d of dweebs) {
+      if (!d?.body || !d.active) continue;
+      const p = d.getPosition?.();
+      if (!p) continue;
+      for (const j of this.steamJets) {
+        if (Math.hypot(p.x - (O.x + j.x), p.z - (O.z + j.z)) < 1.6 && p.y < 3.2) {
+          this.physicsWorld?.applyImpulse?.(d.body, { x: (Math.random() - 0.5) * 2.5, y: 8, z: (Math.random() - 0.5) * 2.5 });
+          break;
+        }
+      }
+    }
+  }
+
+  _updateCeiling(dt) {
+    if (!this.ceiling || !this.ceilingMat) return;
+    if (this.hazardLevel < 3) { this.ceiling.visible = false; return; }
+    this._ceilingWarm = Math.max(0, this._ceilingWarm - dt);
+    const active = this._ceilingWarm <= 0;
+    if (active) this._ceilingY = Math.max(CEILING_MIN, this._ceilingY - CEILING_SPEED * dt);
+    this.ceiling.visible = true;
+    this.ceilingMat.opacity = Math.min(0.42, this.ceilingMat.opacity + dt * 0.35);
+    this.ceiling.position.y = this._ceilingY;
+    this.ceilingBody?.body?.setNextKinematicTranslation({ x: this.O.x, y: this._ceilingY, z: this.O.z });
+    if (active && Math.random() < dt * 3) {
+      this.fx?.particles?.dust?.({ x: this.O.x + (Math.random() - 0.5) * 20, y: this._ceilingY - 0.4, z: this.O.z + (Math.random() - 0.5) * 28 }, 3);
+    }
+  }
+
+  _lockdown() {
+    if (this.lockdown || this.escaped) return;
+    this.lockdown = true;
+    this.hazardLevel = 3;
+    this.hud?.announce?.('🚨 LOCKDOWN!<small>The vault is resetting…</small>', 'ko', 3.0);
+    this.hud?.feed?.('<b>LOCKDOWN</b> · the timer ran out!', 'sd');
+    this.audio?.playAirHorn?.();
+    this.audio?.playWarning?.();
+    for (const d of this._lastDweebs) {
+      if (!d?.body) continue;
+      try { this.rescue(d); } catch { /* a dweeb mid-respawn is fine */ }
+    }
+    const p = this.w(0, 3.4, 0);
+    this.fx?.particles?.ring?.(p, { color: 0xff3355, size: 8, life: 0.9 });
+    this.onLockdown?.();
+    this._paintHints(true);
+    this._paintLockdown(true);
+  }
+
+  _gradeFor(method, timeLeft) {
+    const ratio = Math.max(0, Math.min(1, timeLeft / this.timeLimit));
+    const score = ratio + (METHOD_BONUS[method] || 0);
+    if (score >= 0.72) return 'S';
+    if (score >= 0.5) return 'A';
+    if (score >= 0.3) return 'B';
+    return 'C';
+  }
+
   // ─── per-frame ───
 
   update(dt, dweebs = [], camera = null) {
-    this.clock += this.escaped ? 0 : dt;
+    this._lastDweebs = dweebs;
+    const running = !this.escaped && !this.lockdown;
+    if (running) {
+      this.clock += dt;
+      this.elapsed += dt;
+      this.timeRemaining = Math.max(0, this.timeLimit - this.elapsed);
+    }
     const O = this.O;
     const held = new Set();
     for (const d of dweebs) if (d.held?.kind === 'object') held.add(d.held.ref);
@@ -728,13 +993,15 @@ export class EscapeSandbox {
     pos.setXYZ(3, this.doorBlown ? -8 : -3.6, this.doorBlown ? 11 : this.doorMesh.position.y + DOOR.hy, -15.4);
     pos.needsUpdate = true;
 
+    if (running) this._updateHazards(dt, dweebs);
+
     // 🏁 Freedom check + fall rescue
     for (const d of dweebs) {
       if (!d.body) continue;
       const p = d.getPosition();
       const lx = p.x - O.x, lz = p.z - O.z;
       if (p.y < -7) { this.rescue(d); continue; }
-      if (!d.isPlayer || this.escaped) continue;
+      if (!d.isPlayer || this.escaped || this.lockdown) continue;
       if (lz < -16.8 && p.y > VENT.y0 - 1.2 && lx > VENT.x0 - 0.6 && lx < VENT.x1 + 0.6) this._win(d, 'vent');
       else if (lz < -17.6 && Math.abs(lx) < 15) {
         this._win(d, this.doorBlown ? 'demolition' : this.batterySocketed ? 'circuit' : this.pulleyLift > 0.12 ? 'pulley' : null);
@@ -747,6 +1014,7 @@ export class EscapeSandbox {
 
     if (camera) this._cutaway(camera, dt);
     this._paintHints();
+    this._paintLockdown();
   }
 
   /** Walls between the camera and the room fade out so you can always see your dweeb. */
@@ -784,17 +1052,27 @@ export class EscapeSandbox {
     const secs = this.clock;
     const best = this.store.best == null || secs < this.store.best;
     if (best) this.store.best = secs;
+
+    // Grade the run from time left plus a small bonus for the harder route.
+    const gradeKey = method || 'unknown';
+    const grades = this.store.grades || (this.store.grades = {});
+    const grade = this._gradeFor(method, this.timeRemaining);
+    const prevGrade = grades[gradeKey] || null;
+    const newBestGrade = !prevGrade || (GRADE_ORDER[grade] || 0) > (GRADE_ORDER[prevGrade] || 0);
+    if (newBestGrade) grades[gradeKey] = grade;
     saveStore(this.store);
+
     this.escapeMethod = exit ? exit.name : 'GLITCH IN THE VAULT';
     const n = EXITS.filter(e => this.store.found[e.id]).length;
-    const sub = `${exit ? exit.icon + ' ' : ''}${this.escapeMethod} · ${secs.toFixed(1)}s${best ? ' · NEW BEST!' : ''}${fresh ? ` · NEW EXIT ${n}/4` : ''}`;
-    this.hud?.announce?.(`FREEDOM!<small>${sub}</small>`, 'go', 3.2);
+    const gradeBit = `GRADE ${grade}${newBestGrade ? ' · NEW BEST GRADE!' : prevGrade ? ` · best ${prevGrade}` : ''}`;
+    const sub = `${exit ? exit.icon + ' ' : ''}${this.escapeMethod} · ${secs.toFixed(1)}s${best ? ' · NEW BEST!' : ''}${fresh ? ` · NEW EXIT ${n}/4` : ''} · ${gradeBit}`;
+    this.hud?.announce?.(`FREEDOM! <b>GRADE ${grade}</b><small>${sub}</small>`, 'go', 3.4);
     const p = d.getPosition();
     this.fx?.particles?.confetti(p, 90);
     this.audio?.playCheer?.(1);
     this.audio?.playAirHorn?.();
     this._paintHints(true);
-    this.onEscaped?.({ method, secs, fresh, best, found: n });
+    this.onEscaped?.({ method, secs, fresh, best, found: n, grade, timeLeft: this.timeRemaining });
   }
 
   dispose() {
@@ -803,9 +1081,11 @@ export class EscapeSandbox {
     this.bodyIds = [];
     if (this.arena) for (const o of this.items) if (this.arena.objects.includes(o)) this.arena.removeObject(o);
     this.items = [];
-    this.group.traverse(o => { o.geometry?.dispose?.(); });
-    this.droneConeMat?.dispose?.();
-    this.droneEyeMat?.dispose?.();
+    this.group.traverse(o => {
+      o.geometry?.dispose?.();
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) m?.dispose?.();
+    });
     this.droneGroup = null;
     this.droneCone = null;
     this.droneConeMat = null;
@@ -813,5 +1093,10 @@ export class EscapeSandbox {
     this.droneLight = null;
     this.hintEl?.remove();
     this.hintEl = null;
+    this.lockdownEl?.remove();
+    this.lockdownEl = null;
+    this.laserBody = null;
+    this.ceilingBody = null;
+    this.steamJets = [];
   }
 }
