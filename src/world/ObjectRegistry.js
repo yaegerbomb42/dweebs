@@ -200,6 +200,14 @@ export const OBJECT_DEFS = {
     material: 'metal', mass: 2, grabbable: true, throwable: true,
     breakable: false, breakForce: 6000, damage: 1.3, color: 0x999999,
   },
+  pogoStick: {
+    name: 'Pogo Stick',
+    shape: 'box', dims: { hx: 0.1, hy: 0.5, hz: 0.1 },
+    visualScale: [0.2, 1.0, 0.2],
+    material: 'metal', mass: 1.0, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.9, color: 0xff8a1f,
+    pogo: { bounceVel: 1.35, minInterval: 0.18, airSteer: 6 },
+  },
   couch: {
     name: 'Couch',
     shape: 'box', dims: { hx: 0.8, hy: 0.35, hz: 0.4 },

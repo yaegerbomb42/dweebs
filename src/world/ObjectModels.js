@@ -429,6 +429,28 @@ const BUILDERS = {
     for (let i = 0; i < 6; i++) k.add(Cyl(0.028, 0.028, 0.42, 6), 0xffd23f, { p: [0, -0.75 + i * 0.3, 0], r: [0, 0, PI / 2] });
   },
 
+  pogoStick(k) {
+    const pole = 0xff8a1f, grip = 0x2d2a3a, spring = 0xc9d3e6, rubber = 0x333333;
+    k.add(Cyl(0.045, 0.055, 1.0, 8), pole);
+    // T-handle bar
+    k.add(Cyl(0.04, 0.04, 0.34, 8), grip, { p: [0, 0.48, 0], r: [0, 0, PI / 2] });
+    for (const x of [-0.16, 0.16]) k.add(Cyl(0.055, 0.055, 0.08, 8), 0xffd23f, { p: [x, 0.48, 0], r: [0, 0, PI / 2] });
+    // Chunky coil spring above the foot
+    for (let i = 0; i < 5; i++) {
+      k.add(Tor(0.085, 0.022, 4, 12), spring, { p: [0, -0.3 + i * 0.06, 0], r: [PI / 2, 0, 0] });
+    }
+    // Foot pegs
+    for (const x of [-0.1, 0.1]) {
+      k.add(Cyl(0.026, 0.026, 0.14, 6), grip, { p: [x, -0.28, 0], r: [0, 0, PI / 2] });
+    }
+    // Rubber foot tip
+    k.add(Cyl(0.07, 0.09, 0.09, 10), rubber, { p: [0, -0.46, 0] });
+    k.add(Ico(0.07, 0), rubber, { p: [0, -0.5, 0], s: [1, 0.45, 1] });
+    // Googly eyes on the handle
+    k.eye([-0.07, 0.5, 0.05], [-0.25, 0.15, 1], 0.045);
+    k.eye([0.07, 0.5, 0.05], [0.25, 0.15, 1], 0.045);
+  },
+
   couch(k) {
     const c = 0x6f7cff, l = 0x8f9bff, d = 0x4f5ad6;
     k.add(B(1.46, 0.26, 0.76, 0.05), c, { p: [0, -0.16, 0] });

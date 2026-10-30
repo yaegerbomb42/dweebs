@@ -54,6 +54,11 @@ export class Fx {
     return Math.max(0, 1 - Math.hypot(p.x - pos.x, p.z - pos.z) / range);
   }
 
+  /** Comic popup shorthand for one-off events. */
+  popup(text, pos, size = 'small', color = 0xffffff) {
+    this.hud.popup(text, pos, size, color);
+  }
+
   // ─── Combat ───
 
   /** Hit feedback in four tiers (jab / solid / ragdoll / fireworks): small hits stay crisp, big ones get loud. */
