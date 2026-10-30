@@ -824,10 +824,21 @@ export function animateDweebFace(d, dt, time) {
   // Appendage dynamic physics wobble (ears, stalks, tails, antenna)
   if (d.wiggleItems) {
     const speedMult = screaming ? 2.5 : 1.0;
+    // Each appendage is a damped spring around a gentle idle sway, pushed by the body's
+    // acceleration in its own frame: dash and the ears fold back, stop and they flop forward.
+    const drv = d.appendageDrive;
+    const h = Math.min(Math.max(dt || 0, 1e-3), 1 / 30);
     for (const item of d.wiggleItems) {
       const axis = item.axis || 'z';
-      const rot = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
-      item.obj.rotation[axis] = rot;
+      const idle = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
+      const sign = Math.sign(item.amp) || 1;
+      let push = 0;
+      if (drv) push = axis === 'x' ? -drv.fwd * 0.004 : (drv.side * 0.003 + drv.up * 0.0015) * sign - drv.fwd * 0.0015;
+      item.a = item.a || 0; item.v = item.v || 0;
+      const k = 160, c = 7;
+      item.v += (k * (idle + THREE.MathUtils.clamp(push, -0.6, 0.6) - item.a) - c * item.v) * h;
+      item.a = THREE.MathUtils.clamp(item.a + item.v * h, -1.1, 1.1);
+      item.obj.rotation[axis] = item.a;
     }
   }
 

@@ -7,6 +7,7 @@ import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { STAGE_RADIUS } from '../world/Arena.js';
 import { BALANCE, statsFor } from '../game/Balance.js';
 import { buildDweebModel, animateDweebFace } from './DweebModel.js';
+import { makeLocomotionState, updateLean } from './locomotionJuice.js';
 
 const RADIUS = 0.36;
 const HALF_HEIGHT = 0.14;
@@ -18,6 +19,7 @@ const DI = BALANCE.di;
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
+const _zero3 = { x: 0, y: 0, z: 0 };
 
 export class Dweeb {
   constructor(scene, physicsWorld, options = {}) {
@@ -661,6 +663,7 @@ export class Dweeb {
       if (!this.wasGrounded && this.velocity.y < -3) {
         const fall = -this.velocity.y;
         this.landSquash = Math.min(0.5, fall * 0.03 * (this.stats.mass / 3));
+        if (fall > 6) this.jolt(Math.min(1.5, fall / 14), 0.6, 0);
         const tumbling = this.ragdolling || this.hitstun > 0;
         if (tumbling && fall > 6) {
           // Hard slam while tumbling: tech it (pressed just before) or eat a longer knockdown
@@ -701,6 +704,50 @@ export class Dweeb {
     this._animate(dt, time, pos);
   }
 
+  /**
+   * Body language springs: the blob's top lags behind its feet. Speeding up tips it back, braking
+   * pitches it forward, turning banks it into the curve, and the same world acceleration (in the
+   * Dweeb's own frame) drives ears/stalks/antennae so they flop and settle instead of ticking on a
+   * metronome. Presentation only: nothing here touches physics or hitboxes.
+   */
+  _bodySprings(dt) {
+    const I = this.inertia || (this.inertia = { px: 0, pv: 0, rz: 0, rv: 0, lvx: 0, lvz: 0, lvy: 0, ax: 0, az: 0, ay: 0, loco: makeLocomotionState() });
+    const h = Math.max(1e-3, Math.min(dt, 1 / 30));
+    const v = this.velocity;
+    let ax = (v.x - I.lvx) / h, az = (v.z - I.lvz) / h, ay = (v.y - I.lvy) / h;
+    I.lvx = v.x; I.lvz = v.z; I.lvy = v.y;
+    // Ignore teleports / respawns / grabs
+    if (this.ragdolling || this.grabbedBy || Math.hypot(ax, az) > 400) { ax = az = ay = 0; }
+    const sm = 1 - Math.exp(-18 * h);
+    I.ax += (ax - I.ax) * sm; I.az += (az - I.az) * sm; I.ay += (ay - I.ay) * sm;
+    // World accel → local (forward = +z rotated by yaw, matching sin/cos yaw convention)
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const fwdA = I.ax * sy + I.az * cy;
+    const sideA = I.ax * cy - I.az * sy;
+    const heavy = (this.stats?.mass ?? 3) / 3;
+    // Pitch spring (rad): accelerating forward tips the top back (negative x = lean back)
+    const k = 120 / heavy, c = 9;
+    const pTarget = this.grounded ? THREE.MathUtils.clamp(-fwdA * 0.006, -0.32, 0.32) : 0;
+    I.pv += (k * (pTarget - I.px) - c * I.pv) * h;
+    I.px += I.pv * h;
+    // Bank: into turns (locomotion lean), plus a little sideways sway from lateral jolts
+    const lean = this.grounded && !this.ragdolling ? updateLean(I.loco, v, this.moveInput, h) : updateLean(I.loco, _zero3, _zero3, h);
+    const rTarget = lean * 0.55 + THREE.MathUtils.clamp(sideA * 0.003, -0.15, 0.15);
+    I.rv += (k * (rTarget - I.rz) - c * I.rv) * h;
+    I.rz += I.rv * h;
+    if (!this.ragdolling) this.bodyGroup.rotation.z = I.rz;
+    // Appendages read local accel; the face code integrates their springs.
+    this.appendageDrive = { fwd: fwdA, side: sideA, up: I.ay };
+  }
+
+  /** Kick every spring (body + appendages) — landings, hits, getting grabbed. */
+  jolt(strength = 1, fwd = 0, side = 0) {
+    const I = this.inertia; if (!I) return;
+    I.pv += fwd * 6 * strength;
+    I.rv += side * 6 * strength;
+    if (this.wiggleItems) for (const w of this.wiggleItems) w.v = (w.v || 0) + (Math.random() - 0.5) * 18 * strength;
+  }
+
   _animate(dt, time, pos) {
     this.mesh.position.set(pos.x, pos.y, pos.z);
 
@@ -709,15 +756,19 @@ export class Dweeb {
       this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
     } else {
       _q.setFromAxisAngle(_up, this.yaw);
-      this.mesh.quaternion.slerp(_q, 1 - Math.exp(-25 * dt));
+      // Getting up after a tumble: roll back upright over a beat instead of snapping.
+      const rate = this.getUpT > 0 ? 7 : 25;
+      if (this.getUpT > 0) this.getUpT -= dt;
+      this.mesh.quaternion.slerp(_q, 1 - Math.exp(-rate * dt));
     }
+    this._bodySprings(dt);
 
     // Double-jump flip
     if (this.flipSpin > 0) {
       this.flipSpin = Math.max(0, this.flipSpin - dt * 3.2);
-      this.bodyGroup.rotation.x = (1 - this.flipSpin) * Math.PI * 2;
+      this.bodyGroup.rotation.x = (1 - this.flipSpin) * Math.PI * 2 + this.inertia.px;
     } else {
-      this.bodyGroup.rotation.x = 0;
+      this.bodyGroup.rotation.x = this.inertia.px;
     }
 
     // Squash & stretch
@@ -876,6 +927,8 @@ export class Dweeb {
     this.punchStreak = 0;
     const launch = (base + growth * this.stats.growthTaken * (this.percent / 100)) * armor * shieldLaunch;
 
+    // Body reels from the blow: local-frame kick so the wobble points away from the hit.
+    { const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw); this.jolt(Math.min(2, 0.4 + launch * 0.06), -(dir.x * sy + dir.z * cy), dir.x * cy - dir.z * sy); }
     this.rollTimer = 0;
     if (this.ledge) this.releaseLedge(false);
     this.airDodgeTimer = 0;
@@ -959,6 +1012,8 @@ export class Dweeb {
     this.body.setAngularDamping(1.5);
     this.collider.setFriction(0);
     this.landSquash = 0.3;
+    this.getUpT = 0.35;
+    this.jolt(1.2, 0.5, 0);
   }
 
   setGrabbed(holder) {
