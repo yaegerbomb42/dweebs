@@ -109,7 +109,7 @@ body.warfare-active canvas{touch-action:none}
 @media (max-width:640px){.wf-card{width:84px}.wf-card .h{display:none}.wf-title{font-size:40px}.wf-hints{grid-template-columns:1fr}.wf-fort{width:120px}}
 `;
 
-const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣', medic: '⚕️' };
+const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣', medic: '⚕️', netter: '🕸️' };
 const ICON_ALL = { ...ICON, sneak: '🗡️', brute: '🦍', boss: '⚙️' };
 
 /** One-line preview of wave N's composition, e.g. "🛡️×3 🚀×2 ⚙️ BOSS". Pure — unit-testable. */

@@ -10,13 +10,14 @@ import { stats, COUNTER_OF, RECRUITABLE, otherTeam } from './warfareUnits.js';
 
 /** Per-type preference bonus (metres of "closeness") for attacking a given enemy type. */
 export const PREFERENCES = Object.freeze({
-  rocket: { shield: -6, stealer: 3, sneak: 3, kami: 2 },
-  stealer: { rocket: 8, kami: 7, sneak: 3, shield: -5 },
-  kami: { shield: 6, brute: 7, boss: 5, rocket: 2 },
-  sneak: { rocket: 10, stealer: 3, shield: -6 },
-  shield: { kami: 2, stealer: 1 },
-  brute: { shield: 2 },
+  rocket: { shield: -6, stealer: 3, sneak: 3, kami: 2, netter: 1 },
+  stealer: { rocket: 8, kami: 7, sneak: 3, shield: -5, netter: -4 },
+  kami: { shield: 6, brute: 7, boss: 5, rocket: 2, netter: -5 },
+  sneak: { rocket: 10, stealer: 3, shield: -6, netter: -3 },
+  shield: { kami: 2, stealer: 1, netter: 4 },
+  brute: { shield: 2, netter: 3 },
   boss: {},
+  netter: { stealer: 6, kami: 6, rocket: -4, shield: -3 },
   medic: { kami: 3, sneak: 2, stealer: 1 },
 });
 
