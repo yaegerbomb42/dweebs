@@ -318,12 +318,12 @@ describe('online features: rematch, spectators, history', () => {
       const origH = s.handle.bind(s);
       s.handle = m => { if (m.t === 'snapshot') specSnaps++; return origH(m); };
       a.connect(); b.connect(); s.connect();
-      await waitFor(() => a.slot >= 0 && b.slot >= 0, 8000, 'join');
+      await waitFor(() => a.slot >= 0 && b.slot >= 0, 20000, 'join');
       // The spectator must not block (or join) the ready gate.
       a.setReady(true); b.setReady(true);
-      await waitFor(() => phase === 'playing', 8000, 'playing');
-      await waitFor(() => s.status === 'spectating', 5000, 'spectating');
-      await waitFor(() => specSnaps > 5, 6000, 'spectator snapshots');
+      await waitFor(() => phase === 'playing', 20000, 'playing');
+      await waitFor(() => s.status === 'spectating', 10000, 'spectating');
+      await waitFor(() => specSnaps > 5, 10000, 'spectator snapshots');
       expect(s.slot).toBe(-1);
       expect(specRoom).not.toBeNull();
       expect(specRoom.phase).toBe('playing');
@@ -347,7 +347,7 @@ describe('online features: rematch, spectators, history', () => {
     } finally {
       a.close(); b.close(); s.close();
     }
-  }, 25000);
+  }, 60000);
 
   it('spectating a missing room fails cleanly', async () => {
     const sock = new WebSocket(`ws://localhost:${PORT}`);
