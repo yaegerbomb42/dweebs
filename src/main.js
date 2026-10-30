@@ -180,6 +180,7 @@ async function init() {
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  arena.fx = fx;
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
   match = new Match();

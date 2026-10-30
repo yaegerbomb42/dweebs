@@ -213,6 +213,12 @@ export const BALANCE = {
     lightningStrike: 10, lavaHit: 6,
     levels: [20, 40, 60, 80],
     names: ['murmur', 'buzz', 'roar', 'frenzy', 'pandemonium'],
+    giftThreshold: 0.9,     // arena.cheer needed before the front row starts tossing
+    giftCooldown: 8,        // seconds between care packages
+    giftBias: {             // crowd gifts are toys, never explosives
+      toyRocket: 0, explosiveBarrel: 0,
+      beachBall: 2, rubberChicken: 2, cake: 1.5, teddyBear: 1.5, poolRing: 1.5, pinata: 1.5,
+    },
   },
 
   // Pickup power-ups (the gems) and the two new gadget weapons.
