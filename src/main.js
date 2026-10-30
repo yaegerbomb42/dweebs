@@ -1013,6 +1013,8 @@ function startRound() {
     currentEscapeSandbox = new EscapeSandbox(physics, scene, { arena, fx, hud, audio });
     // A few seconds to soak in the win, then a fresh vault (try another way out)
     currentEscapeSandbox.onEscaped = () => { escapeResetTimer = 6; };
+    // Timer ran out: show the lockdown callout, then rebuild the vault.
+    currentEscapeSandbox.onLockdown = () => { escapeResetTimer = 4; };
   }
 
   const total = dweebs.length;
