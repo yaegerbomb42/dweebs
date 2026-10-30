@@ -21,7 +21,8 @@ import { createLoading } from './loading.js';
 import { setMsg } from './dom.js';
 import { renderLobby, wireLobby, updatePing } from './lobby.js';
 import { mountSettings } from './settings-screen.js';
-import { loadSettings, saveSettings, serverUrl } from './settings.js';
+import { loadSettings, saveSettings, serverUrl, onSettingsChange, DEFAULT_BINDINGS } from './settings.js';
+import { createInput } from './input.js';
 import {
   isMatchLive, isAtResults, showOfflineMenu, hideOfflineMenu,
   startOfflineMatch, launchGameMode, watchGameScreens,
@@ -57,7 +58,14 @@ export function bootApp() {
   // (This was a silent bug: three of the four screens never reached the DOM.)
   shell.append(nodes.title, nodes.online, nodes.lobby, nodes.settings);
 
-  const ctx = { shell, nodes, net, toast, loading, settings };
+  // ─── unified input (keyboard + mouse + gamepad, app-owned) ───
+  // Lives in the app layer so it never touches src/player/Controller.js;
+  // subgames can adopt input.getState() later via window.__dweebsApp.input.
+  const input = createInput({ bindings: settings.bindings || DEFAULT_BINDINGS });
+  input.setGamepadEnabled(settings.gamepad !== false);
+  onSettingsChange(s => input.setGamepadEnabled(s.gamepad !== false));
+
+  const ctx = { shell, nodes, net, toast, loading, settings, input };
 
   const router = createRouter({ onRoute: route => onRoute(route, ctx) });
   ctx.router = router;
@@ -79,7 +87,7 @@ export function bootApp() {
   // First paint of the shell is independent of the game's loading screen.
   loading.progress(100, 'Ready');
 
-  return { router, net, toast, loading, ctx };
+  return { router, net, toast, loading, input, ctx };
 }
 
 // ─── NetClient seam ──────────────────────────────────────────────────────────
@@ -135,48 +143,16 @@ export async function upgradeNetClient(opts) {
 // ─── title ───
 
 function wireTitle({ nodes, router, toast }) {
-  // ── The Dweeb Mall: 5 Games in One Living Universe ──
-  nodes.title.querySelector('#app-btn-classic')?.addEventListener('click', () => {
-    launchGameMode('derby', 'stadium');
-  });
-
-  // Subgames for Game 1 (Knockout Arena)
-  nodes.title.querySelector('#app-btn-derby')?.addEventListener('click', () => {
-    launchGameMode('derby', 'stadium');
-  });
-  nodes.title.querySelector('#app-btn-walldrop')?.addEventListener('click', () => {
-    launchGameMode('walldrop', 'stadium');
-  });
-  nodes.title.querySelector('#app-btn-brawl')?.addEventListener('click', () => {
-    launchGameMode('brawl', 'stadium');
-  });
-
-  nodes.title.querySelector('#app-btn-dynasty')?.addEventListener('click', () => {
-    launchGameMode('adventure', 'meadowlands');
-  });
-
-  nodes.title.querySelector('#app-btn-escape')?.addEventListener('click', () => {
-    launchGameMode('escape', 'stadium');
-  });
-
-  nodes.title.querySelector('#app-btn-mimic')?.addEventListener('click', () => {
-    launchGameMode('mimic', 'stadium');
-  });
-
-  nodes.title.querySelector('#app-btn-builder')?.addEventListener('click', () => {
-    launchGameMode('build', 'stadium');
-  });
-
-  // Game 5 (Dweeb Warfare) and submodes
-  nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
-    launchGameMode('warfare', 'stadium', 'defense');
-  });
-  nodes.title.querySelector('#app-btn-warfare-defense')?.addEventListener('click', () => {
-    launchGameMode('warfare', 'stadium', 'defense');
-  });
-  nodes.title.querySelector('#app-btn-warfare-versus')?.addEventListener('click', () => {
-    launchGameMode('warfare', 'stadium', 'versus');
-  });
+  // ── The Dweeb Mall: every launchable button carries data-launch, rendered
+  // from src/app/mall.js. One generic handler means a new mall card can never
+  // be wired to a button that doesn't exist (Escape/Mimic were, before).
+  for (const b of nodes.title.querySelectorAll('[data-launch]')) {
+    b.addEventListener('click', () => {
+      let launch;
+      try { launch = JSON.parse(b.dataset.launch); } catch { return; }
+      launchGameMode(launch.mode, launch.arena, launch.submode);
+    });
+  }
 
   // Footer Navigation
   nodes.title.querySelector('#app-btn-offline')?.addEventListener('click', () => router.go('/play'));

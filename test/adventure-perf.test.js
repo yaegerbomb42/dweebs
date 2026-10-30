@@ -55,6 +55,7 @@ describe('adventure perf (24 citizens, 36 structures)', () => {
     world.buildingManager = bm;
     const colony = new Colony();
     colony.resources = { wood: 999, berries: 999, stone: 999, gold: 0 };
+    for (const bp of BLUEPRINTS) colony.unlockBlueprint(bp.id); // perf test: all tiers unlocked
 
     // 24 citizens with spread roles.
     const roles = ['forager', 'builder', 'defender', 'tinkerer', null];

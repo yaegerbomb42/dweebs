@@ -7,6 +7,26 @@
 import { Citizen, PERSONALITIES, ROLES, CITIZEN_STATES, ROLE_XP_LEVELS } from './citizen.js';
 import { BLUEPRINTS, SILO_CAP_BONUS } from './building.js';
 
+/**
+ * Town tiers: Hamlet → Village → Town → Citadel.
+ * Each tier is a milestone — reaching the population + structure thresholds
+ * unlocks rare landmark blueprints (also findable early in ruin vault chests)
+ * and expands the village boundary citizens build and patrol within.
+ */
+export const TOWN_TIERS = [
+  { id: 'hamlet', name: 'Hamlet', minCitizens: 0, minStructures: 0, boundary: 16, unlocks: [] },
+  { id: 'village', name: 'Village', minCitizens: 3, minStructures: 2, boundary: 24, unlocks: ['gazebo', 'waterwheel'] },
+  { id: 'town', name: 'Town', minCitizens: 6, minStructures: 5, boundary: 32, unlocks: ['windmill', 'clockwork'] },
+  { id: 'citadel', name: 'Citadel', minCitizens: 10, minStructures: 9, boundary: 44, unlocks: ['watchtower', 'fort'] },
+];
+
+/** Blueprints every hamlet starts with — the core toy-construction set. */
+export const CORE_BLUEPRINTS = [
+  'springboard', 'ramp', 'tent', 'firepit', 'catapult',
+  'launchpad', 'ziptower', 'berrymill', 'silo', 'cannon',
+  'tradepost', 'bakery', 'garden',
+];
+
 export class Colony {
   constructor() {
     this.name = 'New Dweebtopia';
@@ -41,6 +61,11 @@ export class Colony {
     // as fast while it lasts. Transient — never serialized.
     this.festival = { active: false, timer: 0 };
     this.lastFestivalDay = -1;
+
+    // Town tier (Expedition & Dynasty milestone): Hamlet → Village → Town → Citadel.
+    this.tierIndex = 0;
+    this.unlockedBlueprints = new Set(CORE_BLUEPRINTS);
+    this.villageRadius = TOWN_TIERS[0].boundary;
 
     this._addLog('The dawn of New Dweebtopia. The first settlement is founded in The Meadowlands.');
   }
@@ -97,9 +122,10 @@ export class Colony {
     return { added, overflowStored, overflowLost: overflow };
   }
 
-  /** Queue a blueprint for the Builders. Returns false for unknown ids / dupes. */
+  /** Queue a blueprint for the Builders. Returns false for unknown / locked / dupe ids. */
   queueBuild(blueprintId) {
     if (!BLUEPRINTS.some(b => b.id === blueprintId)) return false;
+    if (!this.isBlueprintUnlocked(blueprintId)) return false;
     if (this.buildQueue.includes(blueprintId)) return false;
     this.buildQueue.push(blueprintId);
     this._addLog(`📋 The ${blueprintId} blueprint was added to the build queue.`);
@@ -111,6 +137,57 @@ export class Colony {
     if (idx === -1) return false;
     this.buildQueue.splice(idx, 1);
     return true;
+  }
+
+  /** Current town tier id: 'hamlet' → 'village' → 'town' → 'citadel'. */
+  get tier() {
+    return TOWN_TIERS[this.tierIndex].id;
+  }
+
+  /** True when a blueprint may be queued / placed (core set, tier unlocks, vault chests). */
+  isBlueprintUnlocked(blueprintId) {
+    return this.unlockedBlueprints.has(blueprintId);
+  }
+
+  /**
+   * Unlock a blueprint (tier milestone or a ruin-vault treasure chest).
+   * Returns true when it was newly unlocked.
+   */
+  unlockBlueprint(blueprintId) {
+    if (!blueprintId || this.unlockedBlueprints.has(blueprintId)) return false;
+    this.unlockedBlueprints.add(blueprintId);
+    const bp = BLUEPRINTS.find(b => b.id === blueprintId);
+    this._addLog(`🔓 New blueprint unlocked: ${bp ? bp.name : blueprintId}!`);
+    return true;
+  }
+
+  /**
+   * Advance the town tier when the population + structure milestones are met.
+   * Unlocks the tier's landmark blueprints and expands the village boundary.
+   * Returns the current tier id. Safe to call every tick; logs only on change.
+   */
+  recalculateTier(world = null) {
+    const citizens = this.citizens.length;
+    const structures = world && world.buildingManager
+      ? world.buildingManager.placedStructures.length
+      : 0;
+    while (this.tierIndex < TOWN_TIERS.length - 1) {
+      const next = TOWN_TIERS[this.tierIndex + 1];
+      if (citizens < next.minCitizens || structures < next.minStructures) break;
+      this.tierIndex += 1;
+      this.villageRadius = next.boundary;
+      for (const id of next.unlocks) this.unlockBlueprint(id);
+      this._addLog(
+        `🏰 ${this.name} grew into a ${next.name}! ` +
+        `New blueprints: ${next.unlocks.join(', ') || '—'}. Village boundary expanded to ${next.boundary}m.`
+      );
+    }
+    return this.tier;
+  }
+
+  /** True when a point lies inside the current village boundary. */
+  withinBounds(x, z) {
+    return Math.hypot(x, z) <= this.villageRadius;
   }
 
   /**
@@ -197,7 +274,7 @@ export class Colony {
   _nextBuildSite(world) {
     const placed = world.buildingManager ? world.buildingManager.placedStructures.length : 0;
     const ang = (placed * 2.4) % (Math.PI * 2);
-    const r = 8 + (placed % 3) * 3;
+    const r = Math.min(8 + (placed % 3) * 3, this.villageRadius - 2);
     return { x: Math.cos(ang) * r, y: 0, z: Math.sin(ang) * r };
   }
 
@@ -262,11 +339,14 @@ export class Colony {
       citizen.update(dt, world, this.citizens, this);
     }
 
-    // 2. Berry Harvest Festival: every 3rd day at dusk, when the village can
+    // 2. Town-tier milestones: population + structures unlock blueprints & land.
+    this.recalculateTier(world);
+
+    // 3. Berry Harvest Festival: every 3rd day at dusk, when the village can
     // spare 10 berries for the feast. Lasts 60 seconds of pure mingling.
     this._updateFestival(dt, world);
 
-    // 3. Periodic off-screen emergent civilization adventures (every ~25 seconds)
+    // 4. Periodic off-screen emergent civilization adventures (every ~25 seconds)
     this.expeditionTimer += dt;
     if (this.expeditionTimer >= 25) {
       this.expeditionTimer = 0;
@@ -355,6 +435,9 @@ export class Colony {
       hats: [...this.hats],
       tools: [...this.tools],
       buildQueue: [...this.buildQueue],
+      tierIndex: this.tierIndex,
+      unlockedBlueprints: Array.from(this.unlockedBlueprints),
+      villageRadius: this.villageRadius,
       citizens: this.citizens.map(c => ({
         name: c.name,
         personalityId: c.personality.id,
@@ -371,9 +454,10 @@ export class Colony {
     };
   }
 
-  /** Restore a snapshot produced by serialize(). Citizens are matched by index. */
+  /** Restore a snapshot produced by serialize(). Citizens are matched by index.
+   *  Tolerates malformed entries — a corrupt save restores what it can. */
   restore(data) {
-    if (!data) return;
+    if (!data || typeof data !== 'object') return;
     if (typeof data.name === 'string') this.name = data.name;
     if (typeof data.generation === 'number') this.generation = data.generation;
     if (data.resources) this.resources = { ...this.resources, ...data.resources };
@@ -385,10 +469,19 @@ export class Colony {
     if (Array.isArray(data.hats)) this.hats = [...data.hats];
     if (Array.isArray(data.tools)) this.tools = [...data.tools];
     if (Array.isArray(data.buildQueue)) this.buildQueue = [...data.buildQueue];
+    if (typeof data.tierIndex === 'number') {
+      this.tierIndex = Math.max(0, Math.min(TOWN_TIERS.length - 1, Math.floor(data.tierIndex)));
+    }
+    if (Array.isArray(data.unlockedBlueprints)) {
+      this.unlockedBlueprints = new Set([...CORE_BLUEPRINTS, ...data.unlockedBlueprints.filter(id => typeof id === 'string')]);
+    }
+    if (typeof data.villageRadius === 'number' && data.villageRadius > 0) {
+      this.villageRadius = data.villageRadius;
+    }
     if (Array.isArray(data.citizens)) {
       data.citizens.forEach((saved, i) => {
         const c = this.citizens[i];
-        if (!c) return;
+        if (!c || !saved || typeof saved !== 'object') return;
         if (saved.name) c.name = saved.name;
         if (saved.personalityId) {
           const p = PERSONALITIES.find(pp => pp.id === saved.personalityId);
@@ -406,7 +499,13 @@ export class Colony {
         if (typeof saved.curiosity === 'number') c.curiosity = saved.curiosity;
         if (typeof saved.social === 'number') c.social = saved.social;
         if (Array.isArray(saved.knownVerbs)) c.knownVerbs = new Set(saved.knownVerbs);
-        if (Array.isArray(saved.friends)) c.friends = new Map(saved.friends);
+        if (Array.isArray(saved.friends)) {
+          try {
+            c.friends = new Map(saved.friends);
+          } catch {
+            // keep the citizen's existing friendships
+          }
+        }
       });
     }
   }

@@ -78,7 +78,8 @@ describe('weather', () => {
     expect(world.weather).toBe('clear');
     world.weatherTimer = 0.01;
     world.update(0.02, [], colony);
-    expect(['rain', 'wind']).toContain(world.weather);
+    // Merged weather: clear breaks into rain, wind (wave-2) or fog (milestone).
+    expect(['rain', 'wind', 'fog']).toContain(world.weather);
     expect(colony.historyLog.length).toBeGreaterThan(1); // founding log + weather log
     world.weatherTimer = 0.01;
     world.update(0.02, [], colony);

@@ -124,7 +124,7 @@ describe('save / load', () => {
 
   it('applySave with no save is a harmless no-op', () => {
     const v = buildVillage();
-    expect(applySave(null, v)).toEqual({ citizens: 0, structures: 0, gold: 0 });
+    expect(applySave(null, v)).toEqual({ citizens: 0, structures: 0, gold: 0, errors: 0 });
   });
 });
 
@@ -163,6 +163,7 @@ describe('landmark saves', () => {
     world.buildingManager = bm;
     const colony = new Colony();
     colony.addCitizen({ name: 'Blorp', body: fakeBody(0, 0, 0) });
+    colony.unlockBlueprint('fort'); // landmarks unlock via town tiers or vault chests
     place(bm, colony, world, 'fort', 5, 0, 5);
     const storage = fakeStorage();
     saveVillage({ colony, buildingManager: bm, world }, storage);

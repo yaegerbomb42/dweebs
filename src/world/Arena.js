@@ -103,6 +103,16 @@ const POWERUPS = {
   shield: { color: 0xffd23f, icon: '🛡', label: 'SHIELD' },
 };
 
+/**
+ * The mega-stadium ball-pit plastic. Kept as a named factory (instead of an
+ * inline toonMat call) so the toon-material property regression test can
+ * instantiate exactly what the theme builder uses. NOTE: MeshToonMaterial has
+ * no `roughness` property — passing it logs a THREE.Material warning.
+ */
+export function ballPitMaterial() {
+  return toonMat({ color: 0xffffff });
+}
+
 export class Arena {
   constructor(scene, physicsWorld) {
     this.scene = scene;
@@ -504,7 +514,7 @@ export class Arena {
       // Instanced Plastic Ball Pit Spheres
       const ballCount = 140;
       const ballGeo = new THREE.SphereGeometry(0.18, 10, 8);
-      const ballMat = toonMat({ color: 0xffffff, roughness: 0.3 });
+      const ballMat = ballPitMaterial();
       const ballMesh = new THREE.InstancedMesh(ballGeo, ballMat, ballCount);
       const ballColors = [PALETTE.red, PALETTE.yellow, PALETTE.blue, PALETTE.green, 0xff70a6, 0x00f0ff, 0xff9900];
       const dummy = new THREE.Object3D();

@@ -154,6 +154,37 @@ export class Fx {
     this.arena.excite(1);
   }
 
+  /**
+   * A thrown rare drop connected: each rare gets its own read so a thrown anvil never looks
+   * like a thrown cake. Explosive rares (rocket, barrel) go through explosion() instead.
+   */
+  rareHit(pos, key, launch) {
+    const p = this.particles;
+    const power = Math.min(1, launch / 20);
+    if (key === 'giantHammer') {
+      // cartoon clang: gold ring + sparks
+      p.ring(pos, { color: 0xffd23f, size: 3.5 + power * 2, life: 0.5 });
+      p.sparkle(pos, 0xffe9a8);
+      p.emit(pos, { count: 18, colors: [0xffd23f, 0xffffff], speed: 8, up: 4, size: 0.1, life: 0.5 });
+      this.bursts.spawn(pos, 1.6, 0xffd23f);
+      this.audio.playClang?.(this._pan(pos));
+    } else if (key === 'anvil') {
+      // heavy blacksmith thud: iron ring + dust
+      p.ring(pos, { color: 0x9aa4b5, size: 3 + power * 2, life: 0.45 });
+      p.dust(pos, 10);
+      p.emit(pos, { count: 14, colors: [0x9aa4b5, 0x5a626e], speed: 5, up: 2, size: 0.14, life: 0.6 });
+      this.bursts.spawn(pos, 2, 0x9aa4b5);
+      this.audio.playThud?.(this._pan(pos));
+    } else {
+      // fallback for future rares: a gold confetti pop
+      p.confetti(pos, 30);
+      p.ring(pos, { color: 0xffd23f, size: 3, life: 0.4 });
+    }
+    this.cam.shake(0.15 + power * 0.35);
+    this.hitStop = Math.max(this.hitStop, 0.05 + power * 0.06);
+    this.haptics?.hit(2, this._near(pos, 24), false);
+  }
+
   // ─── Recovery ───
 
   airDodge(d) {

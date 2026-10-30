@@ -107,6 +107,11 @@ export class Citizen {
     this.arrivalDist = 1.6;
     this.stuckTimer = 0;
     this.lastPos = new THREE.Vector3();
+    this._lastTargetDist = undefined; // distance-to-goal last tick (stuck detection)
+    // Corner-unstick: a perpendicular sidestep engaged while a sharp building
+    // corner blocks the straight-line heading (see _executeGoal).
+    this._sidestep = null; // { until, dx, dz } in citizen clock seconds
+    this.unstuckCount = 0; // how many times the sidestep fired (test hook)
 
     // Role work accumulators
     this._eatAcc = 0;
@@ -319,7 +324,13 @@ export class Citizen {
     ];
     const stationary = this.state === CITIZEN_STATES.REST ||
       (workStates.includes(this.state) && distToWork <= this.arrivalDist + 0.4);
-    if (this.lastPos.distanceTo(currentPos) < 0.1 && !stationary) {
+    // A citizen covering ground toward its goal isn't stuck: walk speed is
+    // 4.2 m/s (0.07 m/tick), so per-tick displacement alone can't tell a
+    // steady walk from wedging into a corner. Require no *progress* too.
+    const lastDist = this._lastTargetDist;
+    this._lastTargetDist = distToWork;
+    const progress = lastDist === undefined ? 1 : lastDist - distToWork;
+    if (this.lastPos.distanceTo(currentPos) < 0.1 && progress < 0.02 && !stationary) {
       this.stuckTimer += dt;
       if (this.stuckTimer > 2.5) {
         this.stateTimer = 0; // force re-evaluate
@@ -632,6 +643,7 @@ export class Citizen {
       let nearest = null;
       let best = 10;
       for (const c of world.critters) {
+        if (c.hostile === false) continue; // defenders leave friendly beetles alone
         const d = Math.hypot(c.x - pos.x, c.z - pos.z);
         if (d < best) { best = d; nearest = c; }
       }
@@ -778,6 +790,27 @@ export class Citizen {
       jump = true;
     }
 
+    // Corner unstick: straight-line steering wedges citizens against sharp
+    // building corners (the physics body pushes into the corner while the
+    // heading never changes, so the stuck detector alone just re-picks goals).
+    // After ~1.2 s of no progress, sidestep perpendicular to the blocked
+    // heading for a moment — sliding along the wall rounds the corner.
+    if (this._sidestep && this.clock >= this._sidestep.until) this._sidestep = null;
+    if (!this._sidestep && this.stuckTimer > 1.2) {
+      const side = Math.random() < 0.5 ? 1 : -1;
+      this._sidestep = { until: this.clock + 1.4, dx: -dirZ * side, dz: dirX * side };
+      this.unstuckCount += 1;
+    }
+    let moveX = dirX;
+    let moveZ = dirZ;
+    if (this._sidestep) {
+      moveX = dirX * 0.45 + this._sidestep.dx * 0.9;
+      moveZ = dirZ * 0.45 + this._sidestep.dz * 0.9;
+      const mlen = Math.hypot(moveX, moveZ) || 1;
+      moveX /= mlen;
+      moveZ /= mlen;
+    }
+
     // If we have learned the Bounce verb and are near a spring pad, bounce!
     if (this.knownVerbs.has('bounce') && world.springPads) {
       for (const sp of world.springPads) {
@@ -792,14 +825,15 @@ export class Citizen {
     // Dweeb (tx = x * speed, tz = y * speed), so the direction is NOT negated:
     // negating dirZ here used to send citizens mirrored in Z, away from every
     // target they were ever given (they could never arrive to eat, build,
-    // chat, sing or deliver expeditions).
+    // chat, sing or deliver expeditions). The corner-unstick sidestep above
+    // blends into moveX/moveZ, so both are fed unnegated in world frame.
     this.dweeb.controllerInput = {
-      moveX: dirX,
-      moveY: dirZ,
+      moveX,
+      moveY: moveZ,
       jump,
     };
     if (this.dweeb.moveInput) {
-      this.dweeb.moveInput.set(dirX, dirZ);
+      this.dweeb.moveInput.set(moveX, moveZ);
     }
     if (jump && typeof this.dweeb.jump === 'function') {
       this.dweeb.jump();
