@@ -9,9 +9,15 @@
 //   F / MMB   cash in a full style meter: next charged smash/throw is a SUPER YEET
 //   Q         drop held item
 //   Mouse look up/down sets the throw arc (the aim guide shows exactly where it lands)
+//
+// Gamepad (standard mapping; Xbox names, PS equivalents work the same):
+//   L-stick move · R-stick camera (pitch = throw arc) · A jump · X / RT punch (hold = SMASH)
+//   B grab / throw (hold = charge) · RB dive / air-dodge · LB parry · Y super · LT drop
+//   L3 fast-fall · D-pad emotes 1–4 · Start pause. A pad works without pointer lock.
 
 import * as THREE from 'three';
 import { DEFAULT_LOFT } from '../combat/CombatSystem.js';
+import { findGamepad, stickVector, lookVector, BUTTONS } from '../app/gamepad.js';
 import { loadSettings, onSettingsChange, DEFAULT_BINDINGS } from '../app/settings.js';
 
 const _dir = new THREE.Vector2();
@@ -63,11 +69,83 @@ export class Controller {
   }
 
   get live() {
-    return this.enabled && this.camera.isLocked && this.dweeb.active;
+    return this.enabled && (this.camera.isLocked || this.padActive) && this.dweeb.active;
+  }
+
+  /**
+   * Poll the first connected gamepad and drive the exact same actions as keyboard/mouse.
+   * Edge-detected so holds (charge smash, charge throw) behave like the mouse buttons.
+   */
+  /** While paused only Start is read (so the pad can unpause); nothing else moves. */
+  pollPadWhilePaused() {
+    const pad = typeof navigator !== 'undefined' ? findGamepad(navigator) : null;
+    const prev = this._padPrev || (this._padPrev = []);
+    const on = !!pad?.buttons?.[BUTTONS.START]?.pressed;
+    if (on && !prev[BUTTONS.START]) this.onPausePressed?.();
+    prev[BUTTONS.START] = on;
+  }
+
+  _pollPad(dt) {
+    const pad = typeof navigator !== 'undefined' ? findGamepad(navigator) : null;
+    const prev = this._padPrev || (this._padPrev = []);
+    if (!pad) { this.padMove = null; this.padActive = false; prev.length = 0; return; }
+    const b = pad.buttons || [];
+    const down = i => !!(b[i]?.pressed || (b[i]?.value ?? 0) > 0.5);
+    const pressed = i => down(i) && !prev[i];
+    const released = i => !down(i) && prev[i];
+    const mv = stickVector(pad), lk = lookVector(pad);
+    const any = Math.hypot(mv.x, mv.y) > 0 || Math.hypot(lk.x, lk.y) > 0 || b.some(x => x?.pressed);
+    if (any) this.padActive = true;
+    if (!this.padActive) return;
+
+    // Start toggles pause regardless of live state
+    if (pressed(BUTTONS.START)) this.onPausePressed?.();
+
+    if (this.enabled && this.dweeb.active) {
+      // Camera: right stick, a touch of acceleration curve for fine aim
+      const cam = this.camera, rate = 2.8 * (this.padSensitivity ?? 1);
+      cam.yaw -= Math.sign(lk.x) * lk.x * lk.x * rate * dt;
+      cam.pitch -= Math.sign(lk.y) * lk.y * lk.y * rate * 0.7 * dt;
+      cam.pitch = Math.max(cam.minPitch, Math.min(cam.maxPitch, cam.pitch));
+
+      // Movement: camera-relative left stick (analog magnitude kept)
+      const f = cam.getForward(), r = cam.getRight();
+      const x = r.x * mv.x - f.x * mv.y, z = r.z * mv.x - f.z * mv.y;
+      const m = Math.min(1, Math.hypot(mv.x, mv.y)), l = Math.hypot(x, z);
+      this.padMove = l > 1e-4 ? { x: x / l * m, z: z / l * m } : null;
+      this.padJump = down(BUTTONS.A);
+      this.padFastFall = down(BUTTONS.L3) || mv.y > 0.85;
+    }
+
+    if (this.live) {
+      const d = this.dweeb;
+      if (pressed(BUTTONS.A)) {
+        if (d.grounded && mv.y > 0.6) d.requestDropThrough(); else d.requestJump();
+      }
+      // Punch / smash on X or RT
+      const atk = BUTTONS.X, rt = BUTTONS.RT;
+      if (pressed(atk) || pressed(rt)) this._onMouseDown({ button: 0, preventDefault() {} });
+      if ((released(atk) && !down(rt)) || (released(rt) && !down(atk))) this._onMouseUp({ button: 0 });
+      if (pressed(BUTTONS.B)) this._startGrabOrThrow();
+      if (released(BUTTONS.B)) this._releaseThrow();
+      if (pressed(BUTTONS.RB)) {
+        const md = this._moveDir();
+        if (d.grounded) this._faceCamera(true);
+        this.combat.dodgeOrDive(d, md.x, md.y, down(BUTTONS.A));
+      }
+      if (pressed(BUTTONS.LB)) this.combat.startParry(d);
+      if (pressed(BUTTONS.Y)) this.combat.armSuper(d);
+      if (pressed(BUTTONS.LT)) this.combat.drop(d);
+      // D-pad → emote keys (game/Emotes.js listens for Digit1–4 when present)
+      const em = [[BUTTONS.DPAD_UP, 'Digit1'], [BUTTONS.DPAD_RIGHT, 'Digit2'], [BUTTONS.DPAD_DOWN, 'Digit3'], [BUTTONS.DPAD_LEFT, 'Digit4']];
+      for (const [i, code] of em) if (pressed(i)) window.dispatchEvent(new window.KeyboardEvent("keydown", { code }));
+    }
+    for (let i = 0; i < b.length; i++) prev[i] = down(i);
   }
 
   _onKeyDown(e) {
     this.keys[e.code] = true;
+    if (e.isTrusted) this.padActive = false;
     if (!this.live || e.repeat) return;
     const d = this.dweeb;
     if (this._isBound('jump', e.code)) {
@@ -162,6 +240,7 @@ export class Controller {
     if (this._isHeld('left')) { x -= right.x; z -= right.z; }
     if (this._isHeld('right')) { x += right.x; z += right.z; }
     const len = Math.hypot(x, z);
+    if (len === 0 && this.padMove) return _dir.set(this.padMove.x, this.padMove.z);
     return len > 0 ? _dir.set(x / len, z / len) : _dir.set(0, 0);
   }
 
@@ -176,6 +255,7 @@ export class Controller {
   update(dt) {
     const d = this.dweeb;
     d.moveInput.set(0, 0);
+    this._pollPad(dt);
     if (!this.live) {
       if (d.isCharging) { d.isCharging = false; d.charging = 0; }
       this.throwCharging = false;
@@ -183,6 +263,8 @@ export class Controller {
       return;
     }
 
+    d.jumpHeld = !!this.keys.Space || !!this.padJump;
+    d.fastFallInput = !!(this.keys.KeyS || this.keys.ArrowDown) || !!this.padFastFall;
     d.jumpHeld = this._isHeld('jump');
     d.fastFallInput = this._isHeld('back');
     d.moveInput.copy(this._moveDir());

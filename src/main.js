@@ -978,6 +978,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   ];
 
   controller = new Controller(player, cam, combat);
+  controller.onPausePressed = () => { if (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN || paused) setPaused(!paused); };
   controller.enabled = false;
 
   combat.status?.setDweebs(dweebs);
@@ -1050,6 +1051,7 @@ function startMatch() {
   for (const d of dweebs) wireDweeb(d);
 
   controller = new Controller(player, cam, combat);
+  controller.onPausePressed = () => { if (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN || paused) setPaused(!paused); };
   combat.status?.setDweebs(dweebs);
   combat.setDweebs(dweebs);
   fx.reactions?.setDweebs(dweebs);
@@ -1598,6 +1600,7 @@ function loop() {
   const inGame = match.phase !== Phase.MENU && match.phase !== Phase.RESULTS;
 
   if (paused) {
+    controller?.pollPadWhilePaused?.(); // Start on a gamepad unpauses
     effect.render(scene, camera);
     return;
   }
