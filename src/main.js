@@ -33,6 +33,7 @@ import { warmModels } from './world/ObjectModels.js';
 import { OBJECT_DEFS } from './world/ObjectRegistry.js';
 import { PALETTE } from './render/Toon.js';
 import { statsFor, BALANCE } from './game/Balance.js';
+import { mountRosterSelect } from './app/roster-select.js';
 import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
@@ -318,9 +319,20 @@ const MOODS_DEV = ['grumpy', 'calm', 'smug', 'worried'];
 
 // ─── Menu ───
 
+let rosterCleanup = null;
+
 function setupMenu() {
   const unlockAudio = () => { audio.init(); audio.resume(); applyAudioSettings(); };
   document.addEventListener('pointerdown', unlockAudio, { once: false });
+
+  // Mount Roster Select 2.0 into the empty .dweeb-roster-grid container
+  const rosterGrid = document.querySelector('.seg.dweeb-roster-grid');
+  if (rosterGrid) {
+    rosterCleanup = mountRosterSelect(rosterGrid, {
+      getType: () => settings.type,
+      setType: (v) => { settings.type = v; saveSettings(); }
+    });
+  }
 
   for (const seg of document.querySelectorAll('.seg')) {
     const key = seg.dataset.setting;
@@ -464,6 +476,7 @@ function applyAudioSettings() {
 }
 
 function toMenu() {
+  setTimeout(() => rosterCleanup?.resumePreview?.(), 0);
   if (currentMeadowlands) {
     if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
     currentMeadowlands.dispose();
@@ -952,6 +965,7 @@ function startMatch() {
 
   for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden');
+  rosterCleanup?.disposePreview();
   audio.init();
   audio.resume();
   applyAudioSettings();
