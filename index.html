@@ -397,6 +397,36 @@
     .reel div { background: var(--cream); border: 3px solid var(--ink); border-radius: 12px; padding: 4px 12px; font-weight: 900; box-shadow: 0 4px 0 var(--ink); animation: slidein .3s ease-out both; }
     .reel div:nth-child(2) { animation-delay: .1s; } .reel div:nth-child(3) { animation-delay: .2s; }
     .reel b { font-family: var(--display); font-weight: 400; color: var(--pink); -webkit-text-stroke: .8px var(--ink); margin-right: 6px; }
+
+    /* Podium awards + match report */
+    #result-awards { margin: 8px 0 4px; }
+    #result-awards:empty { display: none; }
+    .award-grid { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; max-width: 760px; }
+    .award-card {
+      background: var(--cream); border: 3px solid var(--ink); border-radius: 16px;
+      padding: 14px 20px; min-width: 160px; text-align: center;
+      box-shadow: 0 5px 0 var(--ink); animation: awardIn .5s cubic-bezier(.2,1.6,.4,1) both;
+    }
+    .award-card:nth-child(1) { animation-delay: .1s; }
+    .award-card:nth-child(2) { animation-delay: .2s; }
+    .award-card:nth-child(3) { animation-delay: .3s; }
+    @keyframes awardIn { from { opacity: 0; transform: scale(.8) rotate(-6deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
+    .award-emoji { font-size: 40px; line-height: 1; margin-bottom: 4px; }
+    .award-title { font-family: var(--display); font-size: 16px; color: var(--ink); letter-spacing: .04em; margin-bottom: 6px; }
+    .award-name { font-family: var(--display); font-size: 22px; -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; margin-bottom: 4px; }
+    .award-value { font-family: var(--display); font-size: 18px; color: var(--pink); -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; }
+
+    #result-report { margin: 4px 0 8px; max-width: 760px; }
+    #result-report:empty { display: none; }
+    .report-table { width: 100%; border-collapse: collapse; font-family: var(--body); font-size: 14px; }
+    .report-table thead th { font-family: var(--display); font-size: 13px; color: var(--cream); background: var(--ink); padding: 6px 10px; text-align: left; }
+    .report-table tbody td { background: var(--cream); border: 2px solid var(--ink); border-top: none; padding: 5px 10px; font-weight: 700; }
+    .report-table tbody tr:last-child td { border-bottom: 3px solid var(--ink); }
+    .report-table tbody td:first-child { border-left: 3px solid var(--ink); }
+    .report-table tbody td:last-child { border-right: 3px solid var(--ink); }
+    .report-table tbody td { text-align: center; }
+    .report-table tbody td:first-child { text-align: left; }
+
     #confetti-layer { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 60; }
     .cf { position: absolute; top: -24px; width: 11px; height: 17px; border: 2px solid var(--ink); border-radius: 3px; opacity: 0; }
     .cf.go { animation: cfFall var(--t) cubic-bezier(.25,.6,.5,1) var(--d) forwards; }
@@ -794,6 +824,8 @@
     <h1 id="result-title">YOU WIN!</h1>
     <div class="banners" id="result-banners"></div>
     <div class="podium" id="results-podium"></div>
+    <div id="result-awards"></div>
+    <div id="result-report"></div>
     <div class="reel" id="result-reel"></div>
     <div class="arena-tag" id="result-arena"></div>
     <div class="vote" id="rematch-vote"></div>
