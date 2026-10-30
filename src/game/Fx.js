@@ -80,6 +80,18 @@ export class Fx {
     }
   }
 
+  /** A thrown Dweeb clipped a bystander: regular hit juice plus a bowling callout. */
+  bowlingHit(victim, attacker, launch, hits = 1) {
+    if (!victim?.getPosition) return;
+    this.hit(victim, attacker, launch, 'throw');
+    const pos = victim.getPosition();
+    const color = attacker?.color ?? 0xffd23f;
+    const double = hits >= 2;
+    this._toyWord(double ? 'DOUBLE!' : 'STRIKE!', pos, color, double ? 'big' : 'small');
+    this.cam?.shake?.(double ? 0.32 : 0.16);
+    this.arena?.excite?.(double ? 0.5 : 0.25);
+  }
+
   /** Heavy throws telegraph their heft: grunt popup, dust, a tiny freeze. */
   heavyThrow(d, obj, mass) {
     const pos = d.getPosition();

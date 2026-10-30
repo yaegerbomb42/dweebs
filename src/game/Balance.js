@@ -51,6 +51,16 @@ export const BALANCE = {
     heavyThrowFrom: 4,     // throws at/above this mass get a grunt, dust and a micro hit-stop
   },
 
+  // Thrown-Dweeb bowling (collateral hits). A thrown body becomes a short-lived
+  // projectile that can clip other Dweebs before it lands.
+  dweebThrow: {
+    bowling: {
+      radius: 1.1,         // metres from the flying body to clip another Dweeb
+      damage: 1.6,         // heft input to attacks.thrown (lighter than a direct throw)
+      life: 0.9,           // seconds the flying body stays a projectile
+    },
+  },
+
   // Stage toys (Spec 12)
   bounce: {
     bumperMinSpeed: 9,     // items leave a bumper at least this fast across the floor
