@@ -2,13 +2,18 @@
 // dowel-bundle barricades and brass-geared forts. No voxel terrain anywhere.
 import * as THREE from 'three';
 import { toonMat, noOutline } from '../render/Toon.js';
-import { FIELD, FORT_X, FORT_RADIUS, BARRICADES } from '../sim/warfareBattle.js';
+import { FIELD, FORT_X, FORT_RADIUS } from '../sim/warfareBattle.js';
+import { getBattleground } from './Battlegrounds.js';
 import { TEAM_COLORS, sharedMats } from './WarfareModels.js';
 
-/** Barricades: three stacked dowel logs with brass bands, at each circle in `list`. */
+/** Barricades: three stacked dowel logs with brass bands, at each circle in `list`.
+ *  Destructible bundles (with hp) get scorched bands so commanders can tell them apart.
+ *  Returns { group, meshes } where meshes = [{x, z, r, g}] is tracked so the view can
+ *  hide a barricade when the sim reports it broken (barricadeDown). */
 export function buildBarricades(list) {
   const mats = sharedMats();
   const g = new THREE.Group();
+  const meshes = [];
   const logGeo = new THREE.CylinderGeometry(0.42, 0.42, 3.4, 7);
   const bandGeo = new THREE.TorusGeometry(0.5, 0.08, 4, 10);
   for (const b of list) {
@@ -21,8 +26,9 @@ export function buildBarricades(list) {
       log.castShadow = true;
       bg.add(log);
     }
+    const bandMat = b.hp > 0 ? toonMat({ color: 0x8a5a2a }) : mats.brass;
     for (const oz of [-1.1, 1.1]) {
-      const band = new THREE.Mesh(bandGeo, mats.brass);
+      const band = new THREE.Mesh(bandGeo, bandMat);
       band.scale.set(1.6, 1.5, 1);
       band.position.set(0, 0.75, oz);
       bg.add(band);
@@ -31,8 +37,9 @@ export function buildBarricades(list) {
     bg.scale.set(s, 1, s);
     bg.position.set(b.x, 0, b.z);
     g.add(bg);
+    meshes.push({ x: b.x, z: b.z, r: b.r, g: bg });
   }
-  return g;
+  return { group: g, meshes };
 }
 
 function roundedRect(w, h, r) {
@@ -46,7 +53,7 @@ function roundedRect(w, h, r) {
   return s;
 }
 
-export function buildBoard(barricades = BARRICADES) {
+export function buildBoard(map = getBattleground('meadow')) {
   const mats = sharedMats();
   const group = new THREE.Group();
   const W = FIELD.halfX * 2 + 4, H = FIELD.halfZ * 2 + 4;
@@ -75,6 +82,50 @@ export function buildBoard(barricades = BARRICADES) {
   for (let z = -FIELD.halfZ + 2; z < FIELD.halfZ - 1; z += 3) paint(0.35, 1.6, 0xfff8ee, 0, z + 0.8, 0.8);
   for (const x of [-14, 14]) paint(0.2, H - 6, 0xfff8ee, x, 0, 0.35);
 
+  // Gullies: dark painted cracks in the play-mat that bridges span.
+  for (const gl of map.gullies || []) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(gl.w, gl.h), new THREE.MeshBasicMaterial({ color: 0x4a3b2c, transparent: true, opacity: 0.85, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.rotation.z = gl.rot || 0;
+    m.position.set(gl.x, 0.012, gl.z);
+    noOutline(m);
+    group.add(m);
+  }
+
+  // High ground: raised plastic plateaus (the sim grants +damage from up here).
+  for (const hg of map.highGround || []) {
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(hg.w, 0.7, hg.h), toonMat({ color: 0x7cc45e }));
+    ridge.position.set(hg.x, 0.35, hg.z);
+    ridge.castShadow = true;
+    ridge.receiveShadow = true;
+    group.add(ridge);
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(hg.w + 0.5, 0.12, hg.h + 0.5), toonMat({ color: 0x5da244 }));
+    rim.position.set(hg.x, 0.68, hg.z);
+    group.add(rim);
+  }
+
+  // Bridges: plank decks on dowel posts over the gullies.
+  for (const br of map.bridges || []) {
+    const bg = new THREE.Group();
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(br.len, 0.25, 3.2), mats.wood);
+    deck.castShadow = true;
+    bg.add(deck);
+    for (const s of [-1, 1]) {
+      const railP = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, br.len, 5), mats.darkWood);
+      railP.rotation.z = Math.PI / 2;
+      railP.position.set(0, 0.75, s * 1.5);
+      bg.add(railP);
+      for (const px of [-br.len / 2 + 0.4, br.len / 2 - 0.4]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.4, 5), mats.darkWood);
+        post.position.set(px, -0.4, s * 1.5);
+        bg.add(post);
+      }
+    }
+    bg.position.set(br.x, 0.85, br.z);
+    bg.rotation.y = br.rot || 0;
+    group.add(bg);
+  }
+
   // Dowel fence: instanced posts plus long rails
   const postGeo = new THREE.CylinderGeometry(0.16, 0.16, 1.5, 6);
   const posts = [];
@@ -100,9 +151,12 @@ export function buildBoard(barricades = BARRICADES) {
     rail(FIELD.halfZ * 2 - 2, FIELD.halfX + 1.4, 0, false, y);
   }
 
-  // Barricades: dowel-bundle circles the sim slides units around (rebuilt per battle/map)
-  const barr = buildBarricades(barricades);
-  group.add(barr);
+  // Barricades: three stacked dowel logs with brass bands. Destructible bundles (map hp)
+  // get scorched bands so commanders can tell them apart; the view hides them when broken.
+  // Built into a sub-group so setBarricades can swap just the barricades per battle/map.
+  const barr = buildBarricades(map.barricades);
+  group.add(barr.group);
+  const barricadeMeshes = barr.meshes;
 
   const forts = { blue: buildFort('blue', -FORT_X), red: buildFort('red', FORT_X) };
   group.add(forts.blue.group, forts.red.group);
@@ -112,7 +166,7 @@ export function buildBoard(barricades = BARRICADES) {
   pick.rotation.x = -Math.PI / 2;
   group.add(pick);
 
-  return { group, pick, forts, barr };
+  return { group, pick, forts, barricades: barricadeMeshes, barr: barr.group, mapId: map.id };
 }
 
 function buildFort(team, x) {

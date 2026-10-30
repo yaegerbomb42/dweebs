@@ -49,6 +49,9 @@ function setup() {
   const bm = new BuildingManager(fakeScene(), fakePhysics());
   const colony = new Colony();
   colony.resources = { wood: 50, berries: 50, stone: 50, gold: 0 };
+  // These tests exercise the construction mechanics, not tier gating —
+  // unlock every blueprint so landmark placement is allowed.
+  for (const bp of BLUEPRINTS) colony.unlockBlueprint(bp.id);
   const world = {
     springPads: [],
     ziplines: [],

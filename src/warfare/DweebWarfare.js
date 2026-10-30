@@ -14,6 +14,7 @@ import { WarfareView } from './WarfareView.js';
 import { WarfareHud, bestKey } from './WarfareHud.js';
 import { WarfareAudio } from './WarfareAudio.js';
 import { WarfareNet } from './WarfareNet.js';
+import { getBattleground } from './Battlegrounds.js';
 
 export { RECRUITABLE as UNIT_ROLES };
 
@@ -80,6 +81,7 @@ export class DweebWarfare {
     this.view = new WarfareView(scene, camera);
     this.hud = new WarfareHud({ onAction: a => this._action(a), onRecruit: u => this.recruit(u) });
     this.hud.setModeButtons({ online: !!serverUrl });
+    this.mapId = this.hud.mapId;
     this.team = 'blue';
     this.mode = 'defense';
     this.difficulty = 'normal';
@@ -119,6 +121,7 @@ export class DweebWarfare {
     this.overlay = false;
     this.st = createBattle({ seed: (Date.now() & 0xffff) + 1, mode: 'versus', map: 'random' });
     this.attract = true;
+    this.view.setMap(getBattleground('meadow'));
     this.brain = createCommanderBrain();
     this._cancelAim();
     this.view.reset();
@@ -135,11 +138,12 @@ export class DweebWarfare {
     if (this.canvas) this.canvas.style.cursor = '';
   }
 
-  start(mode = 'defense') {
+  start(mode = 'defense', mapId) {
     this._leaveOnline();
     this.campaignRun = null;
+    this.setMap(mapId || this.hud.mapId);
     this._begin(mode, (Date.now() & 0x7fffffff) | 1, 'blue', this.difficulty, {
-      map: 'random', personality: 'random', aiLevel: AI_LEVEL[this.difficulty] ?? 1,
+      mapId: this.mapId, personality: 'random', aiLevel: AI_LEVEL[this.difficulty] ?? 1,
     });
     const mapTag = ` · ${this.st.mapName} MAP`;
     if (mode === 'defense') {
@@ -154,6 +158,53 @@ export class DweebWarfare {
       this.hud.banner('VERSUS', `${P.title} commands the enemy — ${P.desc}${mapTag}`, '', 3.2);
       this.hud.toast('The AI buys counters to your army — and shells your clumps. Mix it up!', 8);
     }
+  }
+
+  /** Pick the campaign battleground (title-screen map buttons). */
+  setMap(mapId) {
+    const bg = this.hud.setMap(mapId || this.hud.mapId);
+    this.mapId = bg.id;
+    return bg;
+  }
+
+  _begin(mode, seed, team, difficulty = 'normal', opts = {}) {
+    this.mode = mode;
+    this.attract = false;
+    this.team = team;
+    // 5th arg: an opts object (campaign/skirmish) or a battleground id string (the online
+    // handshake and the legacy map-picker path). A battleground feeds explicit
+    // barricades/highGround; a named wave-2 layout goes through `map`. Both peers see the
+    // same seed, so lockstep agrees on whichever is used.
+    const o = typeof opts === 'string' ? { mapId: opts } : opts;
+    this.campaignIdx = o.campaignIdx ?? null;
+    const bg = o.mapId ? getBattleground(o.mapId) : null;
+    if (bg) this.mapId = bg.id;
+    this.st = createBattle({
+      seed, mode, difficulty,
+      map: o.map ?? 'random', waves: o.waves, personality: o.personality ?? 'random',
+      aiLevel: o.aiLevel ?? 1, veterans: o.veterans,
+      barricades: bg?.barricades, highGround: bg?.highGround,
+    });
+    if (bg) this.st.mapName = bg.name.toUpperCase();
+    this.powerCooldowns = Object.fromEntries(Object.keys(POWER_COOLDOWNS).map(k => [k, 0]));
+    this.brain = createCommanderBrain();
+    this._cancelAim();
+    this.pending = [];
+    this.outbox = [];
+    this.seen = new Set();
+    this.acc = 0;
+    this.endTimer = 0;
+    this.overlay = false;
+    this.view.setMap(bg);
+    this.view.reset();
+    this.view.setBarricades(this.st.barricades);
+    this.view.localTeam = team;
+    this.phase = 'playing';
+    this.hud.last = {};
+    this.hud.screen('game');
+    const side = team === 'blue' ? -1 : 1;
+    this.cam.tx = 16 * side; this.cam.tz = 3; this.cam.tdist = 40;
+    this.audio?.unlock();
   }
 
   /** Start a campaign mission by id (from the campaign screen). */
@@ -194,36 +245,6 @@ export class DweebWarfare {
     this._beginCampaignMission();
   }
 
-  _begin(mode, seed, team, difficulty = 'normal', opts = {}) {
-    this.mode = mode;
-    this.attract = false;
-    this.team = team;
-    this.campaignIdx = opts.campaignIdx ?? null;
-    this.st = createBattle({
-      seed, mode, difficulty,
-      map: opts.map ?? 'random', waves: opts.waves, personality: opts.personality ?? 'random',
-      aiLevel: opts.aiLevel ?? 1, veterans: opts.veterans,
-    });
-    this.powerCooldowns = Object.fromEntries(Object.keys(POWER_COOLDOWNS).map(k => [k, 0]));
-    this.brain = createCommanderBrain();
-    this._cancelAim();
-    this.pending = [];
-    this.outbox = [];
-    this.seen = new Set();
-    this.acc = 0;
-    this.endTimer = 0;
-    this.overlay = false;
-    this.view.reset();
-    this.view.setBarricades(this.st.barricades);
-    this.view.localTeam = team;
-    this.phase = 'playing';
-    this.hud.last = {};
-    this.hud.screen('game');
-    const side = team === 'blue' ? -1 : 1;
-    this.cam.tx = 16 * side; this.cam.tz = 3; this.cam.tdist = 40;
-    this.audio?.unlock();
-  }
-
   // ── online (lockstep over the dweebs-server WebSocket) ──
 
   async _goOnline(kind, code = '') {
@@ -240,7 +261,7 @@ export class DweebWarfare {
       this._wireNet(net);
     }
     this.hud.onlineStatus({ status: code ? `Joining ${code}…` : (kind === 'coop' ? 'Looking for a co-op partner…' : 'Looking for an opponent…') });
-    this.net.queue(kind, { code, name: commanderName(), difficulty: this.difficulty });
+    this.net.queue(kind, { code, name: commanderName(), difficulty: this.difficulty, map: this.mapId });
   }
 
   _wireNet(net) {
@@ -249,18 +270,52 @@ export class DweebWarfare {
       .on('error', m => { if (this.phase === 'playing') this.hud.toast(m.message, 4); else this.hud.onlineStatus({ status: m.message }); })
       .on('desync', () => this.hud.toast('<b>Desync</b> detected: the two battles drifted apart. Finish this one for fun!', 8))
       .on('peerLeft', () => this._peerLeft())
+      .on('peerBack', m => { if (this.phase === 'playing') this.hud.toast(`${m.name || 'Your partner'} reconnected.`, 4); })
+      .on('verifyHash', () => {
+        // Tightened post-reconnect check: hash the newest fully-applied turn right now.
+        if (this.online && this.phase === 'playing' && this.net) {
+          const t = Math.floor(this.st.tick / this.online.turnTicks);
+          this.net.sendHash(t, battleHash(this.st));
+        }
+      })
       .on('close', () => {
+        const dead = this.net === net ? net : null;
         this.net = null;
-        if (this.online && this.phase === 'playing') this._forfeitEnd(false, 'Lost the connection to the server.');
-        this.online = null;
-        this.hud.setNet('');
+        if (this.online && this.phase === 'playing' && dead?.match?.token) this._tryRejoin(dead);
+        else {
+          if (this.online && this.phase === 'playing') this._forfeitEnd(false, 'Lost the connection to the server.');
+          this.online = null;
+          this.hud.setNet('');
+        }
       });
+  }
+
+  /** A socket blip mid-battle: resume the same match instead of forfeiting. */
+  async _tryRejoin(dead) {
+    this.hud.setNet('ONLINE · reconnecting…');
+    const net = new WarfareNet(this.serverUrl);
+    net.nextTurn = dead.nextTurn;
+    net.match = dead.match;
+    let ok = true;
+    try { await net.rejoin(8000); } catch { ok = false; }
+    if (!ok || this.phase !== 'playing' || !this.online) {
+      try { net.close(); } catch { /* already closed */ }
+      if (this.online && this.phase === 'playing') this._forfeitEnd(false, 'Lost the connection to the server.');
+      this.online = null;
+      this.hud.setNet('');
+      return;
+    }
+    this.net = net;
+    this._wireNet(net);
+    this.online.stallT = 0;
+    this.hud.setNet(`ONLINE · ${this.online.kind === 'coop' ? 'co-op with' : 'vs'} ${this.online.partner} · reconnected`);
+    this.hud.toast('Reconnected — the battle resumes where it left off.', 4);
   }
 
   _startOnline(m) {
     const mode = m.mode === 'versus' ? 'versus' : 'defense';
     this.online = { kind: m.mode, partner: m.partner, turnTicks: m.turnTicks, stallT: 0 };
-    this._begin(mode, m.seed, m.team, m.difficulty);
+    this._begin(mode, m.seed, m.team, m.difficulty, m.map);
     this.hud.setNet(`ONLINE · ${m.mode === 'coop' ? 'co-op with' : 'vs'} ${m.partner}`);
     if (mode === 'defense') {
       this.hud.banner('ONLINE CO-OP', `Hold the fort together · shared coins & rally flag · ${this.st.diff.label}`, '', 2.6);
@@ -492,12 +547,13 @@ export class DweebWarfare {
       this.hud.setDifficulty(this.difficulty);
     }
     else if (a === 'startWave') this._cmd({ type: 'startWave' });
+    else if (a.startsWith('map-')) { this.setMap(a.slice(4)); this.audio?.click(); }
     else if (a === 'pause') this.setPaused(true);
     else if (a === 'resume') this.setPaused(false);
     else if (a === 'restart') {
       if (this.campaignRun) this._beginCampaignMission();
       else if (this.onlineKind && (this.online || this.lastWasOnline)) this._goOnline(this.onlineKind);
-      else this.start(this.mode);
+      else this.start(this.mode, this.mapId);
     }
     else if (a === 'quit') { this._leaveOnline(); this._startAttract(); }
     else if (a === 'exit') { this._leaveOnline(); this.onExit?.(); }
@@ -634,7 +690,6 @@ export class DweebWarfare {
     const hud = this.hud, st = this.st;
     for (const ev of events) {
       if (ev.type === 'artillery') {
-        this.view?.fx?.explosion?.(ev.x, ev.z, ev.radius || 8.5, true);
         hud.toast(`🎯 Artillery strike impact at X:${Math.round(ev.x)}!`, 2.5);
       } else if (ev.type === 'supply') {
         this.view?.fx?.shockwave?.(ev.x, ev.z, 10, 0x5ee06a);

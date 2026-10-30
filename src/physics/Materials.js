@@ -59,6 +59,11 @@ export const MATERIALS = {
     color: 0xffffff,
     sound: { base: 150, modes: [[1, 0.07, 0.8], [2.2, 0.04, 0.3]], noise: [100, 1200, 0.5, 0.05] },
   },
+  ice: { // Slippery Ice Peak: almost no traction, keeps a little bounce for comic slides
+    name: 'ice', friction: 0.08, restitution: 0.12, density: 900, breakable: false,
+    color: 0xbfeaff,
+    sound: { base: 900, modes: [[1, 0.12, 0.5], [2.1, 0.08, 0.3]], noise: [1500, 6000, 0.25, 0.04] },
+  },
 };
 
 export function getMaterial(name) {
