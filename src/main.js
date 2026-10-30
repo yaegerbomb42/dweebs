@@ -1374,7 +1374,7 @@ function loop() {
     }
     if (match.running) {
       for (const b of bots) b.update(dt, dweebs);
-      if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled && !currentMeadowlands; // adventure uses 1–6 for camera/tools emotes.update(dt); }
+      if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled && !currentMeadowlands /* adventure uses 1–6 for camera/tools */; emotes.update(dt); }
       for (const b of builderBots) b.update(dt, dweebs);
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
