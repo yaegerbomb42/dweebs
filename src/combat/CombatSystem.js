@@ -26,6 +26,17 @@ export const DEFAULT_LOFT = 0.2;  // throw elevation (rad) when nobody's aiming
 const CATCH = { radius: 2.2, nearRadius: 3.2, approach: 0.25, minSpeed: 0.01 };
 const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
+
+/** Materials that catch fire from blasts. `time` = seconds of burn, `ash` = crumbles when done. */
+const FLAMMABLE = {
+  wood: { time: 6 },
+  cardboard: { time: 3.5, ash: true },
+  fabric: { time: 4, ash: true },
+};
+/** How many links a chain reaction may ripple through before it fizzles (perf + sanity). */
+const CHAIN_MAX_DEPTH = 8;
+const _CHAR = new THREE.Color(0x1d1712);
+const _fire = new THREE.Vector3();
 const SLIP = BALANCE.slip;
 const SUPER = 1.35;           // Super Yeet: damage / base / growth multiplier
 
@@ -1431,7 +1442,9 @@ export class CombatSystem {
         if (attacker && attacker !== t) this.addStyle(attacker, 8 + launch * 0.4);
       }
     }
+    this._chainReact(pos, attacker, source);
     for (const { obj } of this.arena.getObjectsNear(pos, 5)) {
+      if (!obj.body) continue;
       const op = obj.getPosition();
       _dir.set(op.x - pos.x, 0, op.z - pos.z).normalize();
       const m = Math.sqrt(obj.body.mass()) * 2;
@@ -1439,6 +1452,191 @@ export class CombatSystem {
       this.physics.applyTorqueImpulse(obj.body, { x: (Math.random() - 0.5) * m, y: (Math.random() - 0.5) * m, z: (Math.random() - 0.5) * m });
     }
     this.fx.explosion(pos);
+  }
+
+  // ═══ Chain reactions & fire ═══
+
+  /**
+   * A blast lights every explosive in reach on a short, distance-scaled fuse (so a barrel cluster
+   * ripples outward instead of popping at once) and sets nearby wood / cardboard / fabric burning.
+   * Chain kills credit whoever lit the first one.
+   */
+  _chainReact(pos, attacker, source) {
+    const depth = (source?.chainDepth ?? 0) + 1;
+    const reach = (source?.def?.explosionRadius ?? 5) * 1.3;
+    let lit = 0;
+    for (const { obj, dist } of this.arena.getObjectsNear(pos, reach)) {
+      if (!obj || obj === source || obj.broken || !obj.body || obj.isDebris) continue;
+      const d = dist ?? 0;
+      if (obj.def.explosive && !(obj.fuse > 0) && depth <= CHAIN_MAX_DEPTH) {
+        obj.chainDepth = depth;
+        this.lightFuse(obj, attacker, 0.14 + d * 0.05);
+        lit++;
+      } else if (FLAMMABLE[obj.def.material] && !(obj.burning > 0) && d < 5) {
+        this.ignite(obj, attacker);
+      }
+    }
+    // Chain bookkeeping: a combo window that grows as each linked blast goes off
+    const c = this.chain;
+    if (source?.chainDepth && c && c.by === attacker && this.time - c.t < 2.5) {
+      c.n++; c.t = this.time;
+      if (c.n >= 2) {
+        const big = c.n >= 4;
+        this.fx._toyWord?.(`CHAIN x${c.n}!`, { x: pos.x, y: pos.y + 1.6, z: pos.z }, big ? 0xff3b3b : 0xff9a1f, big ? 'big' : 'small');
+        if (attacker) this.addStyle(attacker, 6 * c.n, c.n >= 4 ? 'CHAIN REACTION' : 'CHAIN');
+        this.fx.cam?.shake?.(0.25 + c.n * 0.05);
+      }
+    } else if (lit > 0 || !source?.chainDepth) {
+      this.chain = { by: attacker, n: 1, t: this.time };
+    }
+  }
+
+  /** Set a flammable prop burning: it chars, smokes, spreads to neighbours and cooks fuses. */
+  ignite(obj, by = null) {
+    if (!obj?.body || obj.broken || obj.burning > 0) return;
+    const fl = FLAMMABLE[obj.def.material];
+    if (!fl) return;
+    obj.burning = fl.time * (0.8 + Math.random() * 0.4);
+    obj.burnTotal = obj.burning;
+    obj.burnBy = by;
+    obj.burnTick = 0;
+    if (!obj._charMats && obj.mesh) {
+      obj._charMats = [];
+      obj.mesh.traverse(m => {
+        if (!m.isMesh || !m.material || Array.isArray(m.material) || !m.material.color) return;
+        m.material = m.material.clone();
+        obj._charMats.push({ mat: m.material, base: m.material.color.clone() });
+      });
+    }
+    (this.burning ??= []).push(obj);
+    const p = obj.getPosition();
+    this.fx._toyWord?.('FWOOSH!', { x: p.x, y: p.y + 0.8, z: p.z }, 0xff7a1a);
+  }
+
+  _updateBurning(dt) {
+    if (!this.burning?.length) return;
+    for (let i = this.burning.length - 1; i >= 0; i--) {
+      const obj = this.burning[i];
+      if (obj.broken || !obj.body) { this.burning.splice(i, 1); continue; }
+      obj.burning -= dt;
+      obj.burnTick += dt;
+      const p = obj.getPosition();
+      const char = 1 - Math.max(0, obj.burning) / (obj.burnTotal || 1);
+      if (obj._charMats) for (const c of obj._charMats) c.mat.color.copy(c.base).lerp(_CHAR, Math.min(0.85, char));
+      // Splashing into water puts it out
+      if (p.y < -1.2) { obj.burning = 0; this.burning.splice(i, 1); continue; }
+      if (obj.burnTick > 0.12) {
+        obj.burnTick = 0;
+        const ps = this.fx.particles;
+        if (ps?.emit) {
+          _fire.set(p.x, p.y + 0.35, p.z);
+          ps.emit(_fire, { count: 2, colors: [0xffd23f, 0xff6a1f, 0xff3b1f], speed: 1.2, up: 3, size: 0.13, life: 0.45 });
+          if (Math.random() < 0.35) ps.emit(_fire, { count: 1, colors: [0x3a3a3a, 0x555555], speed: 0.6, up: 2.2, size: 0.22, life: 0.9 });
+        }
+        // Spread: neighbours catch, explosives cook off
+        for (const { obj: o, dist } of this.arena.getObjectsNear(p, 1.6)) {
+          if (o === obj || o.broken || !o.body || o.isDebris) continue;
+          if (o.def.explosive && !(o.fuse > 0) && (dist ?? 0) < 1.3) { o.chainDepth = 1; this.lightFuse(o, obj.burnBy, 0.9); }
+          else if (FLAMMABLE[o.def.material] && !(o.burning > 0) && Math.random() < 0.12) this.ignite(o, obj.burnBy);
+        }
+        // Hot foot: Dweebs touching a burning prop hop off it
+        for (const t of this.dweebs) {
+          if (!t.active || t.hazardCd > 0 || t.held === obj) continue;
+          const tp = t.getPosition();
+          if (Math.hypot(tp.x - p.x, tp.z - p.z) > 1.0 || Math.abs(tp.y - p.y) > 1.4) continue;
+          t.hazardCd = 0.9;
+          _dir.set(tp.x - p.x, 0, tp.z - p.z);
+          if (_dir.lengthSq() < 1e-4) _dir.set(1, 0, 0);
+          _dir.normalize(); _dir.y = 1.2;
+          const launch = t.receiveHit({ dir: _dir, ...A.explosion(0.18), attacker: obj.burnBy, time: this.time });
+          if (launch > 0) this.fx._toyWord?.('HOT FOOT!', { x: tp.x, y: tp.y + 1.4, z: tp.z }, 0xff7a1a);
+        }
+      }
+      // Holding a burning prop is a hot potato: after a beat you yelp and let go
+      const g = obj.isGrabbed ? this.dweebs.find(t => t.held === obj) : null;
+      if (g) {
+        obj.heldHot = (obj.heldHot || 0) + dt;
+        if (obj.heldHot > 1.4) { obj.heldHot = 0; this.drop(g); this.fx._toyWord?.('OW OW OW!', g.getPosition(), 0xff7a1a); }
+      }
+      if (obj.burning <= 0) {
+        this.burning.splice(i, 1);
+        // Cardboard and fabric burn to ash; wood stays as a charred husk
+        if (FLAMMABLE[obj.def.material].ash) {
+          const h = obj.isGrabbed ? this.dweebs.find(t => t.held === obj) : null;
+          if (h) this.drop(h);
+          this.breakObject(obj, null);
+        }
+      }
+    }
+  }
+
+  breakObject(obj, by = null) {
+    const pos = obj.getPosition();
+    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
+    if (by) this.addStyle(by, 5);
+    const color = obj.def.color ?? 0xc4a06a;
+    const mass = obj.def.mass ?? 1;
+    const dims = obj.def.dims || {};
+    const bulk = Math.max(dims.hx ?? 0, dims.hy ?? 0, dims.hz ?? 0, dims.radius ?? 0, dims.halfHeight ?? 0, 0.3);
+    const vel = obj.body?.linvel?.() ?? { x: 0, y: 0, z: 0 };
+    const speed = hit?.speed ?? Math.hypot(vel.x, vel.y, vel.z);
+    let dir = hit?.dir;
+    if (!dir) { const l = Math.hypot(vel.x, vel.z) || 1; dir = { x: vel.x / l, y: 0, z: vel.z / l }; }
+    const count = Math.round(Math.min(16, Math.max(6, 5 + mass * 2.5 + bulk * 4)));
+    obj.broken = true;
+    this.arena.removeObject(obj);
+    this.arena.spawnDebris(pos, color, count, obj.def.material, obj.def.breakColors,
+      { vel, dir, power: Math.min(18, speed), size: Math.min(1.8, Math.max(0.8, bulk / 0.35)) });
+    // Shockwave: heavy smashes kick nearby loose props.
+    const shove = Math.min(6, mass * 0.8 + speed * 0.15);
+    if (shove > 1.2) {
+      for (const o of this.arena.objects) {
+        if (o === obj || o.isDebris || o.broken || o.isGrabbed || !o.body) continue;
+        const op = o.getPosition(), dx = op.x - pos.x, dz = op.z - pos.z, dd = Math.hypot(dx, dz);
+        if (dd > 2.8 || dd < 1e-3) continue;
+        const k = shove * (1 - dd / 2.8) * Math.min(1, (o.def?.mass ?? 1));
+        this.physics.applyImpulse(o.body, { x: dx / dd * k, y: k * 0.5, z: dz / dd * k });
+      }
+    }
+    this.fx.break(pos, obj);
+
+    // Piñata Loot Burst: spill candies if this object has spill metadata
+    if (obj.def?.spill) {
+      const { key, count = 6 } = obj.def.spill;
+      const candyDef = getObjectDef(key);
+      if (candyDef) {
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+          const radius = 0.4 + Math.random() * 0.3;
+          const x = pos.x + Math.cos(angle) * radius;
+          const z = pos.z + Math.sin(angle) * radius;
+          const y = pos.y + 0.5 + Math.random() * 0.5;
+          const candy = this.arena.spawnItem(key, { x, y, z });
+          if (candy && candy.body) {
+            const speed = 4 + Math.random() * 3;
+            candy.body.setLinvel({
+              x: Math.cos(angle) * speed * 0.7,
+              y: 3 + Math.random() * 4,
+              z: Math.sin(angle) * speed * 0.7,
+            }, true);
+            candy.body.setAngvel({
+              x: (Math.random() - 0.5) * 8,
+              y: (Math.random() - 0.5) * 8,
+              z: (Math.random() - 0.5) * 8,
+            }, true);
+            candy.candyLife = 12; // uneaten candy melts away
+            candy.candyGrace = 0.5; // can't be eaten mid-burst
+          }
+        }
+        if (Math.random() < 0.15) {
+          this.arena.spawnPowerUp(null);
+        }
+        // Juicy feedback
+        this.fx._toyWord?.('SWEET!', pos, 0xffd23f, 'big');
+        this.fx.cam?.shake?.(0.25);
+        this.arena.excite?.(0.3);
+      }
+    }
   }
 
   /**
@@ -1602,6 +1800,7 @@ export class CombatSystem {
     }
 
     this._updateFuses(dt);
+    this._updateBurning(dt);
     this._updateProjectiles(dt);
     this._updateBananaPeels();
     this._updateHazards();
