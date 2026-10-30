@@ -1,6 +1,9 @@
 // CameraController.js — Third-person camera with smooth follow, shake, and mouse orbit
 
 import * as THREE from 'three';
+import { loadSettings, onSettingsChange } from '../app/settings.js';
+
+const BASE_SENSITIVITY = 0.003;
 
 export class CameraController {
   constructor(camera, canvas) {
@@ -17,6 +20,7 @@ export class CameraController {
     this.mode = 'explorer';
     this.trackedEntity = null;
     this.targetPitch = -0.42;
+    this.targetDistance = 9;
 
     // Zoom & FOV
     this.baseFov = 60;
@@ -36,7 +40,9 @@ export class CameraController {
     this.minDistance = 5;
     this.maxDistance = 22;
     this.minCameraY = -3.5;  // never dip under the lagoon
-    this.sensitivity = 0.003;
+    this.baseSensitivity = BASE_SENSITIVITY;
+    this.sensitivity = BASE_SENSITIVITY;
+    this.invertY = false;
     this.zoomSpeed = 1.5;
 
     // High-action framing (spectator safety): the colosseum spectator follows
@@ -63,6 +69,20 @@ export class CameraController {
     this.shakeDecay = 8;
     this.shakeScale = 1;              // player setting: off / subtle / full
 
+    // Collision probe for occlusion-aware camera
+    this._collisionProbe = null;
+    this._occlusionDist = null;       // smoothed occlusion distance
+
+    // Landing dip (spring offset on camera Y)
+    this._dipOffset = 0;
+    this._dipVel = 0;
+
+    // Camera roll offset
+    this._rollOffset = 0;
+
+    // Speed-based FOV
+    this._speedFovOffset = 0;
+
     // Pointer lock
     this.isLocked = false;
     this._onMouseMove = this._onMouseMove.bind(this);
@@ -71,6 +91,28 @@ export class CameraController {
 
     canvas.addEventListener('wheel', this._onWheel, { passive: true });
     document.addEventListener('pointerlockchange', this._onPointerLockChange);
+
+    // Live settings sync
+    this._settingsOff = onSettingsChange(s => this._applySettings(s));
+    this._applySettings(loadSettings());
+  }
+
+  _applySettings(s) {
+    if (typeof s.sensitivity === 'number') {
+      this.baseSensitivity = BASE_SENSITIVITY * Math.max(0.1, Math.min(3, s.sensitivity));
+      this.sensitivity = this.baseSensitivity;
+    }
+    if (typeof s.invertY === 'boolean') {
+      this.invertY = s.invertY;
+    }
+  }
+
+  /** Detach all listeners (call when the controller is retired). */
+  dispose() {
+    this.canvas.removeEventListener('wheel', this._onWheel);
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    document.removeEventListener('mousemove', this._onMouseMove);
+    this.isLocked = false;
   }
 
   lock() {
@@ -96,7 +138,8 @@ export class CameraController {
   _onMouseMove(e) {
     if (!this.isLocked) return;
     this.yaw -= e.movementX * this.sensitivity;
-    this.pitch -= e.movementY * this.sensitivity;
+    const pitchDelta = e.movementY * this.sensitivity;
+    this.pitch -= this.invertY ? -pitchDelta : pitchDelta;
     this.pitch = Math.max(this.minPitch, Math.min(this.maxPitch, this.pitch));
   }
 
@@ -181,6 +224,7 @@ export class CameraController {
   /** Ease toward a KO point (victim → blast direction) for `dur` seconds. */
   killCam(pos, dur = 0.75) {
     if (this.multiFraming) return;
+    if (!(dur > 0)) return; // guard: dur <= 0 would make kcT/kcDur divide by zero
     this.kc.set(pos.x, Math.max(pos.y, this.minCameraY + 1), pos.z);
     this.kcT = dur;
     this.kcDur = dur;
@@ -194,6 +238,32 @@ export class CameraController {
   /** Punch zoom on dramatic impacts */
   punchZoom(amount = 1.2) {
     this.distance = Math.max(this.minDistance, this.distance - amount);
+  }
+
+  /** Set a collision probe function for occlusion-aware camera.
+   *  fn(from, to) -> hit distance (number) or null if no hit.
+   *  Called with world-space positions: from = look target, to = ideal camera position.
+   */
+  setCollisionProbe(fn) {
+    this._collisionProbe = fn;
+  }
+
+  /** Add a landing dip: spring offset on camera Y (dip down then recover, critically damped ~0.25s). */
+  addLandingDip(amount) {
+    this._dipOffset -= Math.abs(amount);
+    this._dipVel -= Math.abs(amount) * 8; // initial downward velocity
+  }
+
+  /** Add a brief camera roll (radians). Applied after lookAt, decays as exp(-8t). */
+  addRoll(radians) {
+    this._rollOffset += radians;
+  }
+
+  /** Widen FOV by up to +6 deg above speed 8 m/s, smoothed. Adds to any existing FOV kick. */
+  setSpeedFov(speed) {
+    const excess = Math.max(0, speed - 8);
+    const target = Math.min(6, excess * 0.5); // +6 deg at 20 m/s
+    this._speedFovOffset += (target - this._speedFovOffset) * 0.15; // smooth approach
   }
 
   /** Get the forward direction (on XZ plane) based on camera yaw */
@@ -224,13 +294,17 @@ export class CameraController {
       this.pitch += (this.targetPitch - this.pitch) * Math.min(1, dt * 4);
     }
 
-    // Dynamic FOV recover
+    // Dynamic FOV recover + speed FOV offset
     this.targetFov += (this.baseFov - this.targetFov) * Math.min(1, dt * 8);
     this.currentFov += (this.targetFov - this.currentFov) * Math.min(1, dt * 12);
-    if (Math.abs(this.camera.fov - this.currentFov) > 0.05) {
-      this.camera.fov = this.currentFov;
+    // Combine base + kick + speed offset
+    const combinedFov = this.currentFov + this._speedFovOffset;
+    if (Math.abs(this.camera.fov - combinedFov) > 0.05) {
+      this.camera.fov = combinedFov;
       this.camera.updateProjectionMatrix();
     }
+    // Decay speed FOV offset when not driven
+    this._speedFovOffset *= Math.exp(-dt * 4);
 
     // Smooth target follow: tight across the floor, softer vertically so jumps don't bob the view
     this._ahead.lerp(this.lookAhead, 1 - Math.exp(-5 * dt));
@@ -286,8 +360,47 @@ export class CameraController {
 
     idealPos.y = Math.max(idealPos.y, this.minCameraY);
 
+    // Occlusion-aware camera: cast from look target to ideal position
+    if (this._collisionProbe && this.mode !== 'first_person' && this.mode !== 'god' && this.mode !== 'builder') {
+      const hitDist = this._collisionProbe(this.currentTarget, idealPos);
+      if (hitDist != null && hitDist > 0) {
+        const clampedDist = Math.max(1.6, hitDist - 0.35);
+        // Smooth occlusion distance: fast pull-in (k=18), slow ease-out (k=4)
+        if (this._occlusionDist == null || clampedDist < this._occlusionDist) {
+          // Pulling in: fast
+          this._occlusionDist = this._occlusionDist == null ? clampedDist :
+            this._occlusionDist + (clampedDist - this._occlusionDist) * Math.min(1, dt * 18);
+        } else {
+          // Easing out: slow
+          this._occlusionDist += (clampedDist - this._occlusionDist) * Math.min(1, dt * 4);
+        }
+        // Apply occlusion by scaling the ideal position toward the target
+        if (this._occlusionDist < effDistance) {
+          const scale = this._occlusionDist / effDistance;
+          idealPos.lerp(this.currentTarget, 1 - scale);
+        }
+      } else {
+        // No hit: ease occlusion distance back to null (i.e. no occlusion)
+        if (this._occlusionDist != null) {
+          this._occlusionDist += (effDistance - this._occlusionDist) * Math.min(1, dt * 4);
+          if (this._occlusionDist > effDistance * 0.999) this._occlusionDist = null;
+        }
+      }
+    } else {
+      // Probe disabled or excluded mode: clear occlusion
+      this._occlusionDist = null;
+    }
+
     // Smooth camera position
     this.currentPos.lerp(idealPos, 1 - Math.exp(-20 * dt));
+
+    // Landing dip spring (critically damped ~0.25s: omega = 4π, zeta = 1)
+    // x'' + 2*zeta*omega*x' + omega^2*x = 0
+    const omega = 4 * Math.PI; // ~12.57 rad/s => period ~0.5s, half-period ~0.25s
+    const zeta = 1.0;
+    this._dipVel += (-2 * zeta * omega * this._dipVel - omega * omega * this._dipOffset) * dt;
+    this._dipOffset += this._dipVel * dt;
+    this.currentPos.y += this._dipOffset;
 
     // Apply shake
     const shakeOffset = this._shakeOffset.set(0, 0, 0);
@@ -304,5 +417,21 @@ export class CameraController {
 
     this.camera.position.copy(this.currentPos).add(shakeOffset);
     this.camera.lookAt(this.currentTarget);
+
+    // Camera roll offset (decays as exp(-8t)); rotate about the view axis so lookAt's orientation is kept
+    if (this._rollOffset !== 0) {
+      this._rollOffset *= Math.exp(-8 * dt);
+      if (Math.abs(this._rollOffset) < 0.001) this._rollOffset = 0;
+      else this.camera.rotateZ(this._rollOffset);
+    }
+  }
+
+  destroy() {
+    if (this._settingsOff) this._settingsOff();
+    this.canvas.removeEventListener('wheel', this._onWheel);
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    if (this.isLocked) {
+      document.removeEventListener('mousemove', this._onMouseMove);
+    }
   }
 }

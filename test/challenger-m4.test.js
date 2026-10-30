@@ -242,9 +242,9 @@ describe('Empirical Challenge 1: Rapid Preset Switching & 3D Turntable Sync', ()
 
   it('rapidly switches presets 100 times without desync or memory leaks in 3D scene graph', () => {
     const keys = ['titan_chonk', 'speed_gremlin', 'sniper_bean', 'pugilist_champ'];
-    const initialChildrenCount = lab.group.children.length; // pedestal + ring + lights + currentModelRoot = 4
+    const initialChildrenCount = lab.group.children.length; // pedestal + ring + lights + dust + holo + scan + currentModelRoot = 7
 
-    expect(initialChildrenCount).toBe(4);
+    expect(initialChildrenCount).toBe(7);
 
     for (let i = 0; i < 100; i++) {
       const key = keys[i % keys.length];
@@ -269,8 +269,8 @@ describe('Empirical Challenge 1: Rapid Preset Switching & 3D Turntable Sync', ()
 
       // 2. Verify 3D model root is attached to lab group
       expect(lab.group.children).toContain(lab.currentModelRoot);
-      // Ensure no orphan meshes accumulate
-      expect(lab.group.children.length).toBe(4);
+      // Ensure no orphan meshes accumulate (pedestal, ring, lights, dust, holo, scan, model root)
+      expect(lab.group.children.length).toBe(7);
 
       // 3. Verify procedural mesh structure corresponds to preset
       const model = lab.modelInstance;
