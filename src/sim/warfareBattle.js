@@ -13,6 +13,9 @@ import { stats, otherTeam, bounty, RECRUITABLE } from './warfareUnits.js';
 import { computeDamage, splashFalloff, knockback, COVER_RADIUS } from './warfareDamage.js';
 import { pickTarget, shouldRetreat, flankGoal, REJOIN_AT } from './warfareAI.js';
 import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward, DIFFICULTY } from './warfareWaves.js';
+/* AI personality keys live here so the sim (lockstep, seeded) can draw them while the
+ * behaviour definitions stay in src/warfare/WarfareCommander.js (which imports this way). */
+export const AI_PERSONALITIES = Object.freeze(['tactician', 'brawler', 'turtle', 'trickster']);
 
 export const WF_HZ = 30;
 export const WF_DT = 1 / WF_HZ;
@@ -31,13 +34,53 @@ export const FORT_ALARM = 16;
 export const PEN_REACH = 4;
 export const SPAWN_GAP = 8;
 export const VERSUS_INCOME = 4;          // coins per second per side in versus
-/** Dowel-bundle barricades in no-man's land: circles units slide around. */
-export const BARRICADES = Object.freeze([
-  { x: -2, z: -13, r: 1.5 }, { x: 2, z: -4.5, r: 1.5 }, { x: -2, z: 4.5, r: 1.5 }, { x: 2, z: 13, r: 1.5 },
+/** Commander stances and their army-wide speed multiplier. */
+export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
+/** Ticks a supply drop's +35% speed boost lasts (then the army falls back to its stance pace). */
+export const SUPPLY_BOOST_TICKS = 10 * WF_HZ;
+/** Artillery also cracks the enemy fort for this fraction of its splash damage. */
+export const ARTILLERY_FORT_FRAC = 0.5;
+/** Toy-battlefield layouts: symmetric dowel-bundle barricade sets, one picked per battle by seed. */
+export const MAP_LAYOUTS = Object.freeze([
+  { name: 'CROSSROADS', barricades: Object.freeze([
+    { x: -2, z: -13, r: 1.5 }, { x: 2, z: -4.5, r: 1.5 }, { x: -2, z: 4.5, r: 1.5 }, { x: 2, z: 13, r: 1.5 },
+  ]) },
+  { name: 'GAUNTLET', barricades: Object.freeze([
+    { x: 0, z: -9, r: 2.2 }, { x: 0, z: 9, r: 2.2 }, { x: -16, z: -8, r: 1.6 }, { x: 16, z: 8, r: 1.6 },
+  ]) },
+  { name: 'OPEN FIELD', barricades: Object.freeze([]) },
+  { name: 'CORNERS', barricades: Object.freeze([
+    { x: -15, z: -11, r: 1.8 }, { x: 15, z: 11, r: 1.8 }, { x: 15, z: -11, r: 1.8 }, { x: -15, z: 11, r: 1.8 },
+  ]) },
+  { name: 'CANYON', barricades: Object.freeze([
+    { x: 0, z: -13, r: 2.6 }, { x: 0, z: 13, r: 2.6 },
+    { x: -24, z: -13, r: 1.4 }, { x: 24, z: 13, r: 1.4 }, { x: 24, z: -13, r: 1.4 }, { x: -24, z: 13, r: 1.4 },
+  ]) },
+  { name: 'ISLETS', barricades: Object.freeze([
+    { x: 8, z: 6, r: 1.2 }, { x: -8, z: -6, r: 1.2 }, { x: -8, z: 6, r: 1.2 }, { x: 8, z: -6, r: 1.2 },
+    { x: 22, z: 0, r: 1.5 }, { x: -22, z: 0, r: 1.5 }, { x: 0, z: 16, r: 1.3 }, { x: 0, z: -16, r: 1.3 },
+  ]) },
 ]);
+/** War horn: this damage multiplier and +20% speed for WARHORN_TICKS on the whole army. */
+export const WARHORN_COST = 20;
+export const WARHORN_TICKS = 8 * WF_HZ;
+export const WARHORN_DMG_MUL = 1.3;
+/** Fortify: patch the commander's own fort for this much HP. */
+export const REPAIR_COST = 30;
+export const REPAIR_AMOUNT = 400;
+/** Spike pit: an aimed trap that chews enemies standing in it, then collapses. */
+export const TRAP_COST = 20;
+export const TRAP_RADIUS = 3.2;
+export const TRAP_TICKS = 25 * WF_HZ;
+export const TRAP_DPS = 90;
+export const MAX_TRAPS = 6;
+/** Campaign veterans fight on with this much extra max HP. */
+export const VETERAN_HP_MUL = 1.15;
+export const MAX_VETERANS = 12;
+/** Dowel-bundle barricades in no-man's land: circles units slide around (default layout). */
+export const BARRICADES = MAP_LAYOUTS[0].barricades;
 
 /** Speed multiplier per formation stance (the [R] toggle). Recruits inherit the current stance. */
-export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
 function stanceSpeedMul(st, team) {
   const s = st.stance && st.stance[team];
   return s ? (STANCE_SPEED[s] ?? 1) : 1;
@@ -93,34 +136,77 @@ function teamStats() {
  * @param {boolean} [o.army] spawn the starting armies (tests turn this off for duels)
  * @param {Array} [o.barricades] battleground barricade circles (default: the meadow ring)
  * @param {Array} [o.highGround] battleground high-ground rects {x,z,w,h}
+ * @param {'random'|number|string} [o.map] battlefield layout: 'random' (drawn from the seed,
+ *   so lockstep peers agree), a MAP_LAYOUTS index, or a layout name. Defaults to CROSSROADS,
+ *   the classic map the balance tests are tuned on.
+ * @param {number} [o.waves] waves to survive in defense (campaign missions run shorter tours)
+ * @param {Array<{type:string,hpFrac:number}>} [o.veterans] surviving campaign units that fight on
+ * @param {'random'|string|{blue:string,red:string}} [o.personality] AI commander personality,
+ *   drawn from the seed when 'random' so lockstep peers agree
+ * @param {number} [o.aiLevel] versus income multiplier for the red AI (difficulty handicap)
  */
-export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround } = {}) {
+export function createBattle({ seed = 1, mode = 'defense', army = true, coins, difficulty = 'normal', barricades, highGround, map, waves, veterans, personality = 'random', aiLevel = 1 } = {}) {
   const versus = mode === 'versus';
   const dkey = !versus && Object.hasOwn(DIFFICULTY, difficulty) ? difficulty : 'normal';
   const diff = DIFFICULTY[dkey];
   const fortHp = versus ? 1200 : Math.round(DEFENSE_FORT_HP * diff.fort);
+  const fw = Number.isInteger(waves) && waves >= 1 ? waves : FINAL_WAVE;
   const st = {
     mode, seed, tick: 0, difficulty: dkey, diff, rng: new Rng(seed), nextId: 1,
-    units: [], shells: [], events: [],
+    units: [], shells: [], events: [], traps: [],
     forts: {
       blue: { x: -FORT_X, z: 0, hp: fortHp, maxHp: fortHp, r: FORT_RADIUS, invulnerable: false },
       red: { x: FORT_X, z: 0, hp: 1200, maxHp: 1200, r: FORT_RADIUS, invulnerable: !versus },
     },
     rally: { blue: { x: -22, z: 0 }, red: { x: 22, z: 0 } },
-    barricades: (barricades ?? BARRICADES).map(b => ({ ...b })),
-    highGround: (highGround ?? []).map(r => ({ ...r })),
+    // barricades/highGround are set after the map layout is resolved (see below).
     coins: { blue: coins ?? (versus ? 150 : diff.coins), red: versus ? (coins ?? 150) : 0 },
-    wave: 0,
+    wave: 0, finalWave: fw,
     phase: versus ? 'battle' : 'prep',
     prepTicks: versus ? 0 : PREP_FIRST,
     spawnQueue: [], spawnCd: 0, scaling: { hpMul: 1, dmgMul: 1 },
-    winner: null, income: versus ? VERSUS_INCOME : 0,
+    winner: null, income: versus ? VERSUS_INCOME : 0, incomeRed: versus ? VERSUS_INCOME * aiLevel : 0,
     stats: { blue: teamStats(), red: teamStats(), wavesCleared: 0 },
   };
+  // Personalities come from their own seeded stream so the draw never perturbs the main
+  // rng sequence: every spawn position and behaviour pinned by earlier tests stays bit-identical.
+  const pRng = new Rng(((seed * 31 + 7) | 0) >>> 0);
+  const pickP = p => p && p !== 'random' && AI_PERSONALITIES.includes(p) ? p
+    : AI_PERSONALITIES[pRng.int(AI_PERSONALITIES.length)];
+  st.aiPersonality = typeof personality === 'object' && personality
+    ? { blue: pickP(personality.blue), red: pickP(personality.red) }
+    : { blue: pickP(personality), red: pickP(personality) };
+  const mapIdx = map === 'random' ? st.rng.int(MAP_LAYOUTS.length)
+    : typeof map === 'number' ? ((map % MAP_LAYOUTS.length) + MAP_LAYOUTS.length) % MAP_LAYOUTS.length
+    : typeof map === 'string' ? Math.max(0, MAP_LAYOUTS.findIndex(m => m.name === map)) : 0;
+  const layout = MAP_LAYOUTS[mapIdx];
+  st.mapName = layout.name;
+  // Named map layouts and the explicit barricades/highGround overrides share one slot:
+  // an explicit array wins, the named layout is the fallback (index 0 is the classic
+  // meadow ring, so default battles are unchanged), and the sim always owns its copies.
+  st.barricades = (barricades ?? layout.barricades).map(b => ({ ...b }));
+  st.highGround = (highGround ?? []).map(r => ({ ...r }));
   if (army) {
     const start = versus ? ['shield', 'shield', 'shield', 'rocket', 'rocket'] : ['shield', 'shield', 'shield', 'shield', 'rocket', 'rocket', 'stealer'];
     for (const t of start) spawnUnit(st, 'blue', t, { x: -26 + st.rng.range(-3, 3), z: st.rng.range(-8, 8) });
     if (versus) for (const t of start) spawnUnit(st, 'red', t, { x: 26 + st.rng.range(-3, 3), z: st.rng.range(-8, 8) });
+  }
+  if (veterans) {
+    const f = st.forts.blue;
+    let n = 0;
+    for (const v of veterans) {
+      if (n >= MAX_VETERANS) break;
+      let ok = true;
+      try { stats(v.type); } catch { ok = false; }
+      if (!ok) continue;
+      const u = spawnUnit(st, 'blue', v.type, {
+        x: f.x + (f.r + 2) + st.rng.range(-2, 2), z: st.rng.range(-6, 6), hpMul: VETERAN_HP_MUL,
+      });
+      u.hp = u.maxHp * Math.min(1, Math.max(0.5, +v.hpFrac || 1));
+      u.veteran = true;
+      st.events.push({ type: 'veteran', id: u.id, team: 'blue', unit: v.type, x: u.x, z: u.z });
+      n++;
+    }
   }
   return st;
 }
@@ -135,7 +221,9 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     cd: st.rng.int(Math.max(1, s.cooldown || 1)),
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
-    dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), cdMul: 1,
+    dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), boostMul: 1, boostT: 0, cdMul: 1,
+    rageT: 0,
+    lastAttackerId: 0, lastHurtTick: -1e9, grudgeId: 0, pushT: 0,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -143,6 +231,9 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
 }
 
 const dirOf = team => (team === 'blue' ? 1 : -1);
+
+/** Effective damage multiplier: wave scaling times the war-horn rage bonus. */
+const dmgMulOf = u => (u.rageT > 0 ? u.dmgMul * WARHORN_DMG_MUL : u.dmgMul);
 
 /** Apply commands from a commander (local input, AI, or a network peer). */
 export function applyCommand(st, c) {
@@ -196,7 +287,11 @@ export function applyCommand(st, c) {
         if (u.hp <= 0) kill(st, u, c.team, kdirX * 3, kdirZ * 3);
       }
     }
+    // Barrages also crack barricades and the enemy fort when it sits inside the blast.
     damageBarricades(st, tx, tz, splashR, splashDmg, c.team);
+    const foe = otherTeam(c.team);
+    const ef = st.forts[foe];
+    if (Math.hypot(ef.x - tx, ef.z - tz) <= splashR + ef.r) hurtFort(st, foe, splashDmg * ARTILLERY_FORT_FRAC, 'artillery');
     return true;
   }
   if (c.type === 'supply') {
@@ -211,7 +306,9 @@ export function applyCommand(st, c) {
       if (!u.alive || u.team !== c.team) continue;
       if (Math.hypot(u.x - tx, u.z - tz) < 14) {
         u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.45);
-        u.speedMul = 1.35;
+        // a temporary hustle on top of the stance pace — it decays, never clobbers the stance
+        u.boostMul = 1.35;
+        u.boostT = SUPPLY_BOOST_TICKS;
       }
     }
     return true;
@@ -227,6 +324,39 @@ export function applyCommand(st, c) {
         u.speedMul = mul;
       }
     }
+    return true;
+  }
+  if (c.type === 'warhorn') {
+    let n = 0;
+    for (const u of st.units) if (u.alive && u.team === c.team && !u.carriedBy) n++;
+    if (!n || st.coins[c.team] < WARHORN_COST) return false;
+    st.coins[c.team] -= WARHORN_COST;
+    for (const u of st.units) {
+      if (!u.alive || u.team !== c.team || u.carriedBy) continue;
+      u.rageT = WARHORN_TICKS;
+      if (u.boostT < WARHORN_TICKS) { u.boostMul = Math.max(u.boostMul, 1.2); u.boostT = WARHORN_TICKS; }
+    }
+    st.events.push({ type: 'warhorn', team: c.team, n, x: st.rally[c.team]?.x ?? 0, z: st.rally[c.team]?.z ?? 0 });
+    return true;
+  }
+  if (c.type === 'repair') {
+    const f = st.forts[c.team];
+    if (f.invulnerable || f.hp >= f.maxHp || st.coins[c.team] < REPAIR_COST) return false;
+    st.coins[c.team] -= REPAIR_COST;
+    f.hp = Math.min(f.maxHp, f.hp + REPAIR_AMOUNT);
+    st.events.push({ type: 'repair', team: c.team, x: f.x, z: f.z, amount: REPAIR_AMOUNT });
+    return true;
+  }
+  if (c.type === 'trap') {
+    if (st.coins[c.team] < TRAP_COST) return false;
+    let n = 0;
+    for (const t of st.traps) if (t.team === c.team) n++;
+    if (n >= MAX_TRAPS) return false;
+    st.coins[c.team] -= TRAP_COST;
+    const tx = clamp(+c.x || 0, -FIELD.halfX + 2, FIELD.halfX - 2);
+    const tz = clamp(+c.z || 0, -FIELD.halfZ + 2, FIELD.halfZ - 2);
+    st.traps.push({ team: c.team, x: tx, z: tz, r: TRAP_RADIUS, ticks: TRAP_TICKS, dps: TRAP_DPS });
+    st.events.push({ type: 'trap', team: c.team, x: tx, z: tz, r: TRAP_RADIUS });
     return true;
   }
   return false;
@@ -260,8 +390,8 @@ function kill(st, u, attTeam, kx, kz) {
   }
 }
 
-/** Damage `t` from an attacker of (team, type) at (ax, az). */
-function hurt(st, t, dmg, attTeam, attType, ax, az) {
+/** Damage `t` from an attacker of (team, type) at (ax, az). attId: the attacking unit, for retaliation. */
+function hurt(st, t, dmg, attTeam, attType, ax, az, attId = 0) {
   if (!t.alive || dmg <= 0) return;
   t.hp -= dmg;
   const dx = t.x - ax, dz = t.z - az;
@@ -272,6 +402,9 @@ function hurt(st, t, dmg, attTeam, attType, ax, az) {
   st.stats[attTeam].dmgDealt += dmg;
   st.events.push({ type: 'hit', id: t.id, team: t.team, unit: t.type, src: attType, dmg, x: t.x, z: t.z, kx, kz });
   if (t.hp <= 0) kill(st, t, attTeam, kx, kz);
+  // Remember the attacker: a stationary unit with nothing to fight may nurse a grudge.
+  // (The grudge itself is taken up in updateUnit — never here — so advancing walls don't scatter.)
+  else if (attId && attId !== t.id) { t.lastAttackerId = attId; t.lastHurtTick = st.tick; }
 }
 
 function isCovered(st, t) {
@@ -286,7 +419,7 @@ function isCovered(st, t) {
 }
 
 /** Splash damage centred at (x, z). ax/az = the attacker's position (high-ground bonus). */
-function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, ax, az } = {}) {
+function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, base, ax, az, attId = 0 } = {}) {
   const hg = groundMult(st, ax ?? x, az ?? z);
   for (const e of st.units) {
     if (!e.alive || e.team === attTeam) continue;
@@ -295,7 +428,7 @@ function splash(st, x, z, radius, attTeam, attType, dmgMul, { cover = false, bas
     const f = splashFalloff(d, radius + e.radius * 0.5);
     if (f <= 0) continue;
     const dmg = computeDamage(attType, e.type, { base, dmgMul: dmgMul * hg, falloff: f, covered: cover && isCovered(st, e) });
-    hurt(st, e, dmg, attTeam, attType, x, z);
+    hurt(st, e, dmg, attTeam, attType, x, z, attId);
   }
   damageBarricades(st, x, z, radius, (stats(attType).dmg || 0) * dmgMul, attTeam);
 }
@@ -316,7 +449,7 @@ function fireShell(st, u, tx, tz, tvx, tvz) {
   const lead = (T * WF_DT) * 0.7;
   const sh = {
     team: u.team, src: u.type, ownerId: u.id, x0: u.x, z0: u.z,
-    x1: tx + tvx * lead, z1: tz + tvz * lead, t: 0, T, dmgMul: u.dmgMul, splash: s.splash,
+    x1: tx + tvx * lead, z1: tz + tvz * lead, t: 0, T, dmgMul: dmgMulOf(u), splash: s.splash,
     x: u.x, z: u.z,
   };
   st.shells.push(sh);
@@ -336,7 +469,7 @@ function updateShells(st) {
     if (sh.t < sh.T) continue;
     st.shells.splice(i, 1);
     st.events.push({ type: 'explode', team: sh.team, src: sh.src, x: sh.x1, z: sh.z1, r: sh.splash });
-    splash(st, sh.x1, sh.z1, sh.splash, sh.team, sh.src, sh.dmgMul, { cover: true, ax: sh.x0, az: sh.z0 });
+    splash(st, sh.x1, sh.z1, sh.splash, sh.team, sh.src, sh.dmgMul, { cover: true, ax: sh.x0, az: sh.z0, attId: sh.ownerId });
     const enemy = otherTeam(sh.team);
     const f = st.forts[enemy];
     const fx = sh.x1 - f.x, fz = sh.z1 - f.z;
@@ -344,6 +477,31 @@ function updateShells(st) {
   }
 }
 
+/** Start a grudge: a stationary unit with no natural target answers whoever is hitting it,
+ *  even past normal aggro. Breaks bombardment standoffs (a rocket plinking a held shield
+ *  from 16 m forever) without scattering advancing walls — those keep their orders. */
+function startGrudge(st, u) {
+  if (!u.lastAttackerId || st.tick - u.lastHurtTick > 120) return null;
+  if (u.vx * u.vx + u.vz * u.vz >= 1) return null;
+  const a = st.byId.get(u.lastAttackerId);
+  if (!a || !a.alive || a.team === u.team || a.carriedBy) return null;
+  const dx = a.x - u.x, dz = a.z - u.z;
+  const reach = stats(u.type).aggro * 2;
+  if (dx * dx + dz * dz > reach * reach) return null;
+  u.grudgeId = a.id;
+  return a;
+}
+
+/** Keep nursing a grudge while the target is still a plausible chase. */
+function keepGrudge(st, u) {
+  if (!u.grudgeId) return null;
+  const g = st.byId.get(u.grudgeId);
+  if (!g || !g.alive || g.team === u.team || g.carriedBy) { u.grudgeId = 0; return null; }
+  const dx = g.x - u.x, dz = g.z - u.z;
+  const reach = stats(u.type).aggro * 2;
+  if (dx * dx + dz * dz > reach * reach) { u.grudgeId = 0; return null; }
+  return g;
+}
 /** Nearest enemy inside FORT_ALARM of u's own fort: defenders always answer a raid on home. */
 function fortAlarm(st, u, enemies) {
   const f = st.forts[u.team];
@@ -387,6 +545,52 @@ function halt(u) {
 
 function updateUnit(st, u, enemies) {
   const s = stats(u.type);
+  if (u.type === 'medic') {
+    // Medic: heal the most wounded ally in range before normal targeting
+    const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
+    const home = st.forts[u.team];
+    const enemyTeam = otherTeam(u.team);
+    const efort = st.forts[enemyTeam];
+
+    // Retreat and heal
+    if (u.state === 'fight' && shouldRetreat(u)) {
+      u.state = 'retreat';
+      u.targetId = 0;
+      st.events.push({ type: 'retreat', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
+    if (u.state === 'retreat') {
+      const dx = home.x - u.x, dz = home.z - u.z;
+      const near = dx * dx + dz * dz <= (home.r + 4) * (home.r + 4);
+      if (near) {
+        halt(u);
+        u.hp = Math.min(u.maxHp, u.hp + (u.maxHp * 0.08) / WF_HZ);
+        if (u.hp >= u.maxHp * REJOIN_AT) u.state = 'fight';
+      } else {
+        seek(u, home.x + dirOf(u.team) * 2, home.z, speed * 1.1);
+      }
+      return;
+    }
+
+    // Heal pulse: find most wounded ally in range
+    if (u.cd <= 0) {
+      let best = null, bestPct = 1;
+      for (const a of st.units) {
+        if (!a.alive || a.team !== u.team || a === u || a.carriedBy) continue;
+        const dx = a.x - u.x, dz = a.z - u.z;
+        if (dx * dx + dz * dz > s.range * s.range) continue;
+        const pct = a.hp / a.maxHp;
+        if (pct < bestPct) { bestPct = pct; best = a; }
+      }
+      if (best) {
+        halt(u);
+        u.cd = Math.round(s.cooldown * u.cdMul);
+        best.hp = Math.min(best.maxHp, best.hp + s.heal);
+        st.events.push({ type: 'heal', id: best.id, x: best.x, z: best.z, healer: u.id, amount: s.heal });
+        return;
+      }
+    }
+    // No wounded ally: fall through to normal targeting with weak melee
+  }
   if (u.carriedBy) {
     const c = st.byId.get(u.carriedBy);
     if (c && c.alive) { u.x = c.x; u.z = c.z; u.vx = c.vx; u.vz = c.vz; u.kx = 0; u.kz = 0; return; }
@@ -395,6 +599,8 @@ function updateUnit(st, u, enemies) {
   if (u.cd > 0) u.cd--;
   if (u.dashCd > 0) u.dashCd--;
   if (u.dash > 0) u.dash--;
+  if (u.boostT > 0 && --u.boostT === 0) u.boostMul = 1;
+  if (u.rageT > 0) u.rageT--;
   if (u.type === 'boss' && !u.enraged && u.hp < u.maxHp * ENRAGE_AT) {
     u.enraged = true;
     u.speedMul = 1.35;
@@ -404,7 +610,7 @@ function updateUnit(st, u, enemies) {
       spawnUnit(st, u.team, 'kami', { x: u.x + dirOf(u.team) * -1.5, z: u.z + (i - 1) * 2.2, hpMul: st.scaling.hpMul, dmgMul: st.scaling.dmgMul });
     }
   }
-  const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
+  const speed = s.speed * u.speedMul * u.boostMul * (u.dash > 0 ? CHARGE.speedMul : 1);
   const home = st.forts[u.team];
   const enemyTeam = otherTeam(u.team);
   const efort = st.forts[enemyTeam];
@@ -452,10 +658,18 @@ function updateUnit(st, u, enemies) {
     return;
   }
 
-  // Target selection (staggered so 120 units don't all think on the same tick)
+  // Target selection (staggered so 120 units don't all think on the same tick).
+  // A grudge lets a stationary unit answer bombardment past aggro; a natural target always
+  // ends one, so grudges never pull units off a real fight.
   let t = u.targetId ? st.byId.get(u.targetId) : null;
-  if (!t || !t.alive || t.carriedBy || t.team === u.team || (st.tick + u.id) % 6 === 0) {
+  if (!t || !t.alive || t.carriedBy || t.team === u.team) {
+    u.grudgeId = 0;
+    t = pickTarget(u, enemies) || fortAlarm(st, u, enemies) || startGrudge(st, u);
+    u.targetId = t ? t.id : 0;
+  } else if ((st.tick + u.id) % 6 === 0) {
     t = pickTarget(u, enemies) || fortAlarm(st, u, enemies);
+    if (t) u.grudgeId = 0;
+    else t = keepGrudge(st, u) || startGrudge(st, u);
     u.targetId = t ? t.id : 0;
   }
 
@@ -481,7 +695,7 @@ function updateUnit(st, u, enemies) {
       halt(u);
       if (s.attack === 'blast') {
         st.events.push({ type: 'explode', team: u.team, src: u.type, x: u.x, z: u.z, r: s.splash, big: true });
-        splash(st, u.x, u.z, s.splash, u.team, u.type, u.dmgMul, { ax: u.x, az: u.z });
+        splash(st, u.x, u.z, s.splash, u.team, u.type, dmgMulOf(u), { ax: u.x, az: u.z, attId: u.id });
         kill(st, u, null, 0, 0);
         return;
       }
@@ -510,13 +724,13 @@ function updateUnit(st, u, enemies) {
           const charging = u.dash > 0;
           const r = s.splash * (u.enraged ? 1.25 : 1);
           st.events.push({ type: 'slam', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, r, charge: charging });
-          splash(st, t.x, t.z, r, u.team, u.type, u.dmgMul * (charging ? 1.5 : 1), { ax: u.x, az: u.z });
+          splash(st, t.x, t.z, r, u.team, u.type, dmgMulOf(u) * (charging ? 1.5 : 1), { ax: u.x, az: u.z, attId: u.id });
           u.dash = 0;
         } else {
           const backstab = u.type === 'sneak' && t.targetId && t.targetId !== u.id;
           const base = s.dmg * (backstab ? BACKSTAB : 1);
           if (backstab) st.events.push({ type: 'backstab', id: u.id, team: u.team, x: t.x, z: t.z });
-          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: u.dmgMul * groundMult(st, u.x, u.z), base }), u.team, u.type, u.x, u.z);
+          hurt(st, t, computeDamage(u.type, t.type, { dmgMul: dmgMulOf(u) * groundMult(st, u.x, u.z), base }), u.team, u.type, u.x, u.z, u.id);
         }
       }
       return;
@@ -540,12 +754,12 @@ function updateUnit(st, u, enemies) {
       halt(u);
       if (s.attack === 'blast') {
         st.events.push({ type: 'explode', team: u.team, src: u.type, x: u.x, z: u.z, r: s.splash, big: true });
-        hurtFort(st, enemyTeam, s.dmg * u.dmgMul * 2.5, u.type);
+        hurtFort(st, enemyTeam, s.dmg * dmgMulOf(u) * 2.5, u.type);
         kill(st, u, null, 0, 0);
       } else if (u.cd <= 0) {
         u.cd = Math.round((s.cooldown || 30) * u.cdMul);
         if (s.attack === 'rocket') fireShell(st, u, efort.x, efort.z, 0, 0);
-        else hurtFort(st, enemyTeam, s.dmg * u.dmgMul, u.type);
+        else hurtFort(st, enemyTeam, s.dmg * dmgMulOf(u), u.type);
       }
       return;
     }
@@ -599,6 +813,8 @@ function integrate(st) {
   }
   for (const u of units) {
     if (!u.alive || u.carriedBy) continue;
+    if (!u.touching) u.pushT = 0;
+    u.touching = false;
     for (const o of st.barricades) pushOut(u, o.x, o.z, o.r);
     for (const team of ['blue', 'red']) { const f = st.forts[team]; pushOut(u, f.x, f.z, f.r); }
     u.x = clamp(u.x, -FIELD.halfX, FIELD.halfX);
@@ -612,13 +828,48 @@ function pushOut(u, x, z, r) {
   const d2 = dx * dx + dz * dz;
   if (d2 >= min * min) return;
   const d = Math.sqrt(d2) || 0.001;
-  u.x = x + (dx / d) * min;
-  u.z = z + (dz / d) * min;
+  const nx = dx / d, nz = dz / d;
+  u.x = x + nx * min;
+  u.z = z + nz * min;
+  u.touching = true;
+  u.pushT++;
+  // Slide around, but only when genuinely stuck: a unit pressing head-on into a wall sits in
+  // perfect equilibrium with its seek steering forever (e.g. the boss marching z=0 into a
+  // barricade on the centre line). Brief brawl jostles never reach the threshold, so the
+  // nudge can't perturb normal fighting. The drift always goes to the unit's deterministic
+  // flank side so it can't oscillate; it stops the moment the unit isn't pressing in.
+  if (u.pushT > 45) {
+    const into = -(u.vx * nx + u.vz * nz);
+    if (into > 0) {
+      const slide = Math.min(into, 2) * 0.6 * (u.flankSide || 1);
+      u.vx += -nz * slide;
+      u.vz += nx * slide;
+    }
+  }
+}
+
+/** Spike pits chew on enemies standing in them (in 0.5 s chunks, so the event feed stays readable). */
+function updateTraps(st) {
+  for (let i = st.traps.length - 1; i >= 0; i--) {
+    const t = st.traps[i];
+    if (--t.ticks <= 0) {
+      st.traps.splice(i, 1);
+      st.events.push({ type: 'trapGone', team: t.team, x: t.x, z: t.z });
+      continue;
+    }
+    if (st.tick % 15 !== 0) continue;
+    const dmg = t.dps / 2;
+    for (const u of st.units) {
+      if (!u.alive || u.team === t.team || u.carriedBy) continue;
+      const dx = u.x - t.x, dz = u.z - t.z;
+      if (dx * dx + dz * dz <= t.r * t.r) hurt(st, u, dmg, t.team, 'trap', t.x, t.z);
+    }
+  }
 }
 
 function updatePhase(st) {
   if (st.mode === 'versus') {
-    if (st.income && st.tick % WF_HZ === 0) { st.coins.blue += st.income; st.coins.red += st.income; }
+    if (st.income && st.tick % WF_HZ === 0) { st.coins.blue += st.income; st.coins.red += st.incomeRed; }
     return;
   }
   if (st.phase === 'prep') {
@@ -650,7 +901,8 @@ function updatePhase(st) {
   st.stats.wavesCleared = st.wave;
   for (const u of st.units) if (u.alive && u.team === 'blue') u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.25);
   st.events.push({ type: 'waveClear', wave: st.wave, reward });
-  if (st.wave >= FINAL_WAVE) { end(st, 'blue'); return; }
+  const finalWave = st.finalWave || FINAL_WAVE;
+  if (st.wave >= finalWave) { end(st, 'blue'); return; }
   st.phase = 'prep';
   st.prepTicks = PREP_BETWEEN;
 }
@@ -685,6 +937,7 @@ export function stepBattle(st, commands = []) {
     updateUnit(st, u, u.team === 'blue' ? red : blue);
   }
   updateShells(st);
+  updateTraps(st);
   integrate(st);
   st.units = st.units.filter(u => u.alive);
 
@@ -706,19 +959,29 @@ export function battleHash(st) {
   const mix = v => { h ^= (v | 0); h = Math.imul(h, 0x01000193); };
   mix(st.tick); mix(st.wave); mix(st.coins.blue); mix(st.coins.red);
   mix(Math.round(st.forts.blue.hp * 10)); mix(Math.round(st.forts.red.hp * 10));
-  mix(st.units.length); mix(st.shells.length);
+  mix(st.units.length); mix(st.shells.length); mix(st.traps.length); mix(st.finalWave || 0);
   // Battleground state: a broken barricade or a flipped stance must show up in the hash,
   // or two peers could silently disagree about the board after a reconnect.
   mix(st.barricades.length);
   for (const b of st.barricades) if (b.hp > 0) mix(Math.round(b.hp * 10));
-  mix(st.stance?.blue === 'defense' ? 2 : st.stance?.blue === 'charge' ? 3 : 1);
-  mix(st.stance?.red === 'defense' ? 2 : st.stance?.red === 'charge' ? 3 : 1);
-  mix(Math.round(st.rally.blue.x * 100)); mix(Math.round(st.rally.blue.z * 100));
-  mix(Math.round(st.rally.red.x * 100)); mix(Math.round(st.rally.red.z * 100));
+  for (const t of st.traps) {
+    mix(Math.round(t.x * 100)); mix(Math.round(t.z * 100)); mix(t.ticks);
+    mix(t.team === 'blue' ? 1 : 2);
+  }
+  // Commander-visible state also desyncs battles: a rally/stance the peer never got changes
+  // every order that follows, so it belongs in the hash.
+  const phaseCode = st.phase === 'prep' ? 1 : st.phase === 'battle' ? 2 : st.phase === 'won' ? 3 : 4;
+  mix(phaseCode); mix(st.prepTicks); mix(st.spawnQueue.length);
+  for (const team of ['blue', 'red']) {
+    const r = st.rally[team];
+    mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100));
+    const s = st.stance && st.stance[team];
+    mix(s === 'defense' ? 2 : s === 'charge' ? 3 : 1);
+  }
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
-    mix(u.carrying); mix(u.carriedBy);
+    mix(u.carrying); mix(u.carriedBy); mix(u.rageT || 0);
   }
   return h >>> 0;
 }

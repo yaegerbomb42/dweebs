@@ -39,7 +39,12 @@ export class Match {
     this.suddenDeath = false;
     this.roundWinner = null;
     this.matchWinner = null;
-    this.events = null; // { onKO, onRespawn, onCountdown, onGo, onSuddenDeath, onRoundEnd, onMatchEnd }
+    this._firstGrabDone = false;
+    this._lastGaspTime = 0;
+    this._lastAwwTime = 0;
+    this._lastChantTime = 0;
+    this._lastLaughTime = 0;
+    this.events = null; // { onKO, onRespawn, onCountdown, onGo, onSuddenDeath, onRoundEnd, onMatchEnd, onCrowdGasp, onCrowdAww, onCrowdChant, onCrowdLaugh }
   }
 
   startMatch(dweebs) {
@@ -47,12 +52,28 @@ export class Match {
     this.round = 0;
     this.roundWins = new Map(dweebs.map(d => [d, 0]));
     this.matchWinner = null;
+    this._firstGrabDone = false;
+    this._lastGaspTime = 0;
+    this._lastAwwTime = 0;
+    this._lastChantTime = 0;
+    this._lastLaughTime = 0;
     for (const d of dweebs) {
       d.kos = 0; d.falls = 0; d.damageDealt = 0; d.totalKos = 0; d.totalFalls = 0;
       d.trickshots = 0; d.maxAir = 0; d.stylePeak = 0; d.koedBy = null;
+      d.darwin = 0; // Darwin award points (derby mode)
     }
     // Highlight reel for the results screen
     this.highlights = { launch: 0, launchBy: null, launchOn: null };
+  }
+
+  /** Award Darwin points to a dweeb (derby mode). Updates both the dweeb and the darwinPoints map. */
+  awardDarwin(d, points, label) {
+    if (!d) return;
+    d.darwin = (d.darwin || 0) + points;
+    d.darwinRound = (d.darwinRound || 0) + points;
+    this.darwinPoints.set(d, d.darwin);
+    // Emit event for HUD feedback
+    this.events?.onDarwinAward?.(d, points, label);
   }
 
   /** Called by main once the stage + Dweebs have been reset for a new round. */
@@ -65,10 +86,15 @@ export class Match {
     this.blastSide = BLAST_SIDE;
     this.roundWinner = null;
     this.playerOutAt = null;
+    this._firstGrabDone = false;
+    this._lastGaspTime = 0;
+    this._lastAwwTime = 0;
+    this._lastChantTime = 0;
+    this._lastLaughTime = 0;
     this.phase = Phase.COUNTDOWN;
     for (const d of this.dweebs) {
       d.stocks = this.settings.stocks;
-      d.kos = 0;
+      d.darwinRound = 0; d.kos = 0;
       d.falls = 0;
       d.hillScore = 0;
     }
@@ -118,7 +144,8 @@ export class Match {
     }
 
     if (this.phase !== Phase.PLAYING) return;
-    if (this.settings.mode === 'adventure') return;
+    // Adventure and the Dweebscape vault have no blast zones, stocks or clock.
+    if (this.settings.mode === 'adventure' || this.settings.mode === 'escape') return;
 
     this.timer -= dt;
     if (!this.suddenDeath && this.timer <= this.settings.suddenDeathAt) {
@@ -152,6 +179,22 @@ export class Match {
 
     if (this.settings.mode === 'hill') this._hillTick();
 
+    // Crowd reactions: near-KO (last stock + high %) / comeback chant
+    for (const d of this.dweebs) {
+      if (d.eliminated || d.out) continue;
+      const pct = d.percent || 0;
+      const isLastStock = d.stocks <= 1;
+      if (isLastStock && pct >= BALANCE.crowd.chantComebackPct && this.time - this._lastChantTime > 8) {
+        // Comeback situation: last stock at high percent
+        this._lastChantTime = this.time;
+        this.events?.onCrowdChant?.(d.getPosition());
+      } else if (isLastStock && pct >= 80 && this.time - this._lastGaspTime > 6) {
+        // Near-KO: last stock, high percent
+        this._lastGaspTime = this.time;
+        this.events?.onCrowdGasp?.(d.getPosition());
+      }
+    }
+
     // Round over? Teams: the round ends when at most one team still has dweebs standing.
     const standing = this.dweebs.filter(d => !d.eliminated);
     const teamsAlive = new Set(standing.map(d => d.team ?? 0)).size;
@@ -175,9 +218,17 @@ export class Match {
     h.launch = launch;
     h.launchOn = victim;
     h.launchBy = victim.lastHitBy && this.time - victim.lastHitTime < 0.1 ? victim.lastHitBy : null;
+    // Crowd gasp on huge launch
+    if (launch >= BALANCE.crowd.gaspLaunch && this.time - this._lastGaspTime > 2) {
+      this._lastGaspTime = this.time;
+      this.events?.onCrowdGasp?.(victim.getPosition());
+    }
   }
 
   _ko(d, kind, pos) {
+    // Remember how fast they were falling before knockOut() parks the body (Darwin METEOR bonus)
+    const kv = d.body?.linvel?.();
+    d.koSpeedY = kv ? kv.y : 0;
     const credited = d.lastHitBy && this.time - d.lastHitTime < KO_CREDIT_WINDOW && d.lastHitBy !== d ? d.lastHitBy : null;
     if (credited) {
       credited.kos++;
@@ -189,12 +240,51 @@ export class Match {
       this.events?.onKO?.(d, credited, kind, pos);
       return;
     }
+    const wasLastStock = d.stocks <= 1;
     d.stocks--;
     d.falls++;
     d.totalFalls = (d.totalFalls || 0) + 1;
     if (d.stocks <= 0) d.eliminate();
     else d.knockOut(RESPAWN_DELAY);
     this.events?.onKO?.(d, credited, kind, pos);
+
+    // Crowd reactions based on KO context
+    const isSelfKO = !credited;
+    const isLava = kind === 'splash';
+    const isExplosion = kind === 'star' && pos.y > 10; // rough heuristic for explosion KO
+    const victimPct = d.percent || 0;
+
+    if (isSelfKO) {
+      // Self-KO: aww
+      if (this.time - this._lastAwwTime > 3) {
+        this._lastAwwTime = this.time;
+        this.events?.onCrowdAww?.(pos);
+      }
+    } else if (isLava) {
+      // Lava dunk: gasp
+      if (this.time - this._lastGaspTime > 2) {
+        this._lastGaspTime = this.time;
+        this.events?.onCrowdGasp?.(pos);
+      }
+    } else if (wasLastStock) {
+      // Last stock KO: chant
+      if (this.time - this._lastChantTime > 4) {
+        this._lastChantTime = this.time;
+        this.events?.onCrowdChant?.(pos);
+      }
+    } else if (victimPct >= BALANCE.crowd.chantComebackPct) {
+      // High-percent KO (comeback): chant
+      if (this.time - this._lastChantTime > 4) {
+        this._lastChantTime = this.time;
+        this.events?.onCrowdChant?.(pos);
+      }
+    } else {
+      // Normal KO: gasp
+      if (this.time - this._lastGaspTime > 2) {
+        this._lastGaspTime = this.time;
+        this.events?.onCrowdGasp?.(pos);
+      }
+    }
   }
 
   /**
@@ -229,7 +319,10 @@ export class Match {
     const ranked = this.roundStandings();
     const winner = ranked[0];
     this.roundWinner = winner;
-    this.roundWins.set(winner, (this.roundWins.get(winner) || 0) + 1);
+    // Team Battle: the whole surviving squad banks the round, not just its healthiest member.
+    const squad = this.settings.mode === 'teams' && winner.team != null
+      ? this.dweebs.filter(d => d.team === winner.team) : [winner];
+    for (const m of squad) this.roundWins.set(m, (this.roundWins.get(m) || 0) + 1);
     if (this.roundWins.get(winner) >= this.settings.roundsToWin) this.matchWinner = winner;
     this.phase = Phase.ROUND_END;
     this.phaseTimer = 4;
@@ -238,6 +331,11 @@ export class Match {
 
   /** Order for this round: most stocks, then lowest damage. Hill: most points, then KOs. */
   roundStandings() {
+    if (this.settings.mode === 'derby') {
+      // Dumb Ways to Die: the round goes to the most spectacular deaths, then survival
+      return [...this.dweebs].sort((a, b) => ((b.darwinRound || 0) - (a.darwinRound || 0)) ||
+        ((b.stocks || 0) - (a.stocks || 0)));
+    }
     if (this.settings.mode === 'hill') {
       return [...this.dweebs].sort((a, b) =>
         ((b.hillScore || 0) - (a.hillScore || 0)) || ((b.totalKos || 0) - (a.totalKos || 0)));
@@ -250,8 +348,15 @@ export class Match {
     });
   }
 
-  /** Match order: round wins, then total KOs, then fewest falls. */
+  /** Match order: round wins, then total KOs, then fewest falls. Derby: Darwin points first. */
   standings() {
+    if (this.settings.mode === 'derby') {
+      return [...this.dweebs].sort((a, b) =>
+        ((b.darwin || 0) - (a.darwin || 0)) ||
+        (this.roundWins.get(b) - this.roundWins.get(a)) ||
+        ((b.totalKos || 0) - (a.totalKos || 0)) ||
+        ((a.totalFalls || 0) - (b.totalFalls || 0)));
+    }
     return [...this.dweebs].sort((a, b) =>
       (this.roundWins.get(b) - this.roundWins.get(a)) ||
       ((b.totalKos || 0) - (a.totalKos || 0)) ||
