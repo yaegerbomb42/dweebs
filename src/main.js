@@ -19,11 +19,11 @@ import { CombatSystem, DEFAULT_LOFT } from './combat/CombatSystem.js';
 import { Bot } from './ai/Bot.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { Match, Phase } from './game/Match.js';
+import { EmoteSystem } from './game/Emotes.js';
 import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
-import { EmoteSystem } from './game/Emotes.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
 import { Sky, Water } from './render/Sky.js';
@@ -184,8 +184,8 @@ async function init() {
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
-  emotes = new EmoteSystem({ hud, combat, arena, audio });
   match = new Match();
+  emotes = new EmoteSystem({ hud, combat, arena, audio });
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
 
@@ -1076,9 +1076,9 @@ const matchEvents = {
     audio.musicIntense = true;
   },
   onKO(d, credited, kind, pos) {
+    emotes?.onKO(d, credited);
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
-    emotes?.onKO(d, credited);
     if (deathCinema) {
       let cause = 'VAPORIZED IN THE VOID';
       if (kind === 'splash') cause = 'DROWNED IN THE LAGOON';
