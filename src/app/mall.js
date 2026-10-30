@@ -39,6 +39,7 @@ export const MALL_MODES = [
       { id: 'app-btn-derby', label: '☠️ Derby', title: 'Dumb Ways to Die', launch: { mode: 'derby', arena: 'stadium' }, difficulty: 2 },
       { id: 'app-btn-walldrop', label: '🧱 Wall Drop', title: 'Wall Drop PVP', launch: { mode: 'walldrop', arena: 'stadium' }, difficulty: 3 },
       { id: 'app-btn-brawl', label: '🥊 Brawl', title: 'Knockout Brawl', launch: { mode: 'brawl', arena: 'stadium' }, difficulty: 2 },
+      { id: 'app-btn-training', label: '🧪 Training', title: 'Training Lab', launch: { mode: 'training', arena: 'stadium' }, difficulty: 1 },
     ],
     launch: { id: 'app-btn-classic', label: 'PLAY BRAWLER', difficulty: 2, launch: { mode: 'derby', arena: 'stadium' } },
   },
