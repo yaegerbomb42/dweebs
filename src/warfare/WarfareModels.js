@@ -40,6 +40,8 @@ function shared() {
   mat.bomb = toonMat({ color: 0x2a2438 });
   mat.spark = new THREE.MeshBasicMaterial({ color: 0xffd23f });
   mat.mask = toonMat({ color: 0x2b2b3a });
+  mat.pit = toonMat({ color: 0x241a12 });
+  mat.spike = toonMat({ color: 0x9a9aa8 });
   mat.shadow = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false });
   mat.retreat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
 }
@@ -176,6 +178,32 @@ export function buildRing(color) {
   m.rotation.x = -Math.PI / 2;
   noOutline(m);
   return m;
+}
+
+/** Spike pit trap: a dark toy pit ringed with plastic spikes. */
+export function buildTrap(r) {
+  shared();
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 18), mat.pit);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.03;
+  noOutline(disc);
+  g.add(disc);
+  const rim = new THREE.Mesh(new THREE.RingGeometry(r - 0.18, r + 0.12, 18), mat.spike);
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.04;
+  noOutline(rim);
+  g.add(rim);
+  const spikeGeo = new THREE.ConeGeometry(0.14, 0.7, 5);
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    const s = new THREE.Mesh(spikeGeo, mat.spike);
+    s.position.set(Math.cos(a) * (r - 0.35), 0.3, Math.sin(a) * (r - 0.35));
+    s.rotation.z = -Math.cos(a) * 0.35;
+    s.rotation.x = Math.sin(a) * 0.35;
+    g.add(s);
+  }
+  return g;
 }
 
 export function sharedGeo() { shared(); return geo; }

@@ -80,7 +80,7 @@ describe('Adversarial Stress Test 1: High-Frequency Preset Switching & Scene Gra
 
   it('survives 300 rapid random preset applications and mutations without scene graph leaks', () => {
     const presetKeys = Object.keys(ARCHETYPE_PRESETS);
-    expect(presetKeys.length).toBe(4);
+    expect(presetKeys.length).toBe(6); // 4 originals + sky_corsair + siege_turtle
 
     for (let i = 0; i < 300; i++) {
       if (i % 2 === 0) {
@@ -93,8 +93,9 @@ describe('Adversarial Stress Test 1: High-Frequency Preset Switching & Scene Gra
         expect(BODY_SHAPES).toContain(mutant.shape);
       }
 
-      // Group children count must remain strictly invariant (pedestal, ring, lights, model root)
-      expect(lab.group.children.length).toBe(4);
+      // Group children count must remain strictly invariant
+      // (pedestal, ring, lights, dust, holo, scan, model root)
+      expect(lab.group.children.length).toBe(7);
       expect(lab.modelInstance).toBeDefined();
       expect(lab.modelInstance.root).toBe(lab.currentModelRoot);
 
