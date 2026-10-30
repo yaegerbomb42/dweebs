@@ -638,7 +638,7 @@ export class DweebWarfare {
       }
       if (k === 'm') { this.toggleMute(); return; }
       if (this.phase !== 'playing') return;
-      const n = '123456'.indexOf(e.key);
+      const n = '1234567'.indexOf(e.key);
       if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
       else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
       else if (k === 'e') { this.callSupply(); e.preventDefault(); }

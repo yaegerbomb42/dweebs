@@ -109,7 +109,7 @@ body.warfare-active canvas{touch-action:none}
 @media (max-width:640px){.wf-card{width:84px}.wf-card .h{display:none}.wf-title{font-size:40px}.wf-hints{grid-template-columns:1fr}.wf-fort{width:120px}}
 `;
 
-const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣', medic: '⚕️', netter: '🕸️' };
+const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣', medic: '⚕️', netter: '🕸️', sapper: '⛏️' };
 const ICON_ALL = { ...ICON, sneak: '🗡️', brute: '🦍', boss: '⚙️' };
 
 /** One-line preview of wave N's composition, e.g. "🛡️×3 🚀×2 ⚙️ BOSS". Pure — unit-testable. */
@@ -141,7 +141,7 @@ export class WarfareHud {
           <ul class="wf-hints">
             <li><b>Click the board</b> to plant your rally flag. Your army holds there.</li>
             <li><b>Keys 1–5</b> (or tap a card) recruit units at your fort with coins.</li>
-            <li><b>Counters:</b> Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield · Stealer/Sneak ▶ Medic · Medic fears Kami.</li>
+            <li><b>Counters:</b> Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield · Stealer/Sneak ▶ Medic · Medic fears Kami · Sapper ▶ Rocket (burrows under walls).</li>
             <li><b>Powers:</b> Q barrage · E air-drop · R stance · <b>T war horn</b> · <b>F fortify</b> · <b>Y spike pit</b> (aim with a click).</li>
             <li><b>Stealers</b> drag enemies home to convert them, and flip kami fuses.</li>
             <li><b>Medics</b> pulse-heal the most wounded ally in range.</li>
@@ -263,7 +263,7 @@ export class WarfareHud {
       <div class="wf-screen wf-hidden" data-s="pause">
         <div class="wf-panel">
           <h1 class="wf-title">PAUSED</h1>
-          <p class="wf-sub">Counters: Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield</p>
+          <p class="wf-sub">Counters: Shield ▶ Rocket ▶ Stealer ▶ Kami ▶ Shield, Sapper ▶ Rocket (burrows)</p>
           <div class="wf-modes"><button data-a="resume">RESUME</button><button class="alt" data-a="restart">RESTART</button><button class="alt" data-a="quit">QUIT TO MENU</button></div>
         </div>
       </div>

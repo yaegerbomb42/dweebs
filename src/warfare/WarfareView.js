@@ -195,6 +195,7 @@ export class WarfareView {
       e.x = u.x; e.z = u.z;
       e.vx = u.vx; e.vz = u.vz;
       e.carried = !!u.carriedBy;
+      e.burrow = u.burrow > 0;
       e.carrying = !!u.carrying;
       e.retreat = u.state === 'retreat';
       e.netted = u.net > 0;
@@ -381,6 +382,9 @@ export class WarfareView {
         case 'warhorn': fx.shockwave(ev.x, ev.z, 12, 0xffd23f); fx.number(ev.x, 3.4, ev.z, 'WAR HORN!', 'word'); fx.addShake(0.3); break;
         case 'repair': fx.number(ev.x, 3.2, ev.z, `+${ev.amount} FORT`, 'word'); fx.shockwave(ev.x, ev.z, 6, 0x5ee06a); break;
         case 'trap': fx.puff(ev.x, ev.z); break;
+        case 'burrow': fx.dustCloud(ev.x, ev.z, 1.5); fx.number(ev.x, 2.2, ev.z, 'BURROW!', 'word'); break;
+        case 'tunnel': fx.dustCloud(ev.x, ev.z, 1.0); break;
+        case 'surface': fx.shockwave(ev.x, ev.z, 2.5, 0x8b6b4a); fx.dustCloud(ev.x, ev.z, 2); fx.number(ev.x, 2.5, ev.z, 'SURFACE!', 'crit'); break;
         default: break;
       }
     }
@@ -419,7 +423,8 @@ export class WarfareView {
       } else {
         e.struggle = 0;
         const bob = sp > 0.5 ? Math.abs(Math.sin(t * (8 + sp))) * 0.14 : 0;
-        root.position.y = e.y + bob;
+        e.sink = lerp(e.sink || 0, e.burrow ? 1 : 0, Math.min(1, dt * 12));
+        root.position.y = e.y + bob - e.sink * 1.25;
         e.leanX *= Math.max(0, 1 - dt * 6); e.leanZ *= Math.max(0, 1 - dt * 6);
         tilt.rotation.z = (sp > 0.5 ? Math.sin(t * (8 + sp)) * 0.12 : 0) - e.leanX * 0.5;
         tilt.rotation.x = e.leanZ * 0.5;
