@@ -288,6 +288,20 @@ const BUILDERS = {
     k.add(Cyl(0.06, 0.06, 0.18, 6), 0xffd23f);
   },
 
+  trampoline(k) {
+    const blue = 0x3fa9ff, darkBlue = 0x2f7fd6, mat = 0x2d2a3a, star = 0xffd23f;
+    k.add(Tor(0.62, 0.09, 6, 20), blue, { r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.58, 0.58, 0.03, 16), mat, { p: [0, 0.09, 0] });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * PI * 2 + PI / 6;
+      k.add(Cyl(0.07, 0.08, 0.1, 6), darkBlue, { p: [Math.cos(a) * 0.48, -0.08, Math.sin(a) * 0.48] });
+    }
+    k.add(Cyl(0.17, 0.17, 0.012, 5), star, { p: [0, 0.11, 0], r: [0, PI / 2, 0] });
+    k.add(Cyl(0.1, 0.1, 0.014, 5), 0xfff3a0, { p: [0, 0.11, 0], r: [0, PI / 2 + PI / 5, 0] });
+    k.eye([-0.2, 0.13, 0.5], [-0.3, 0.35, 1], 0.065);
+    k.eye([0.2, 0.13, 0.5], [0.3, 0.35, 1], 0.065);
+  },
+
   trafficCone(k) {
     const o = 0xff7a1a, r = y => 0.13 - (y + 0.25) / 0.54 * 0.105;
     k.add(B(0.3, 0.05, 0.3, 0.015), o, { p: [0, -0.275, 0] });

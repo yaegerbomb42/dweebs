@@ -1891,6 +1891,7 @@ export class CombatSystem {
     this._updateThrownDweebs(dt);
     this._updateBananaPeels();
     this._updateHazards();
+    this._updateBouncers(dt);
     this._updatePickups();
     this._updateRideables(dt);
   }
@@ -1989,6 +1990,67 @@ export class CombatSystem {
       this.fx.hud?.popup('POW!', { x: pos.x, y: pos.y + 0.6, z: pos.z }, 'big', 0xffd23f);
       this.arena.spawnDebris(pos, obj.def.color ?? 0xd4a86a, 10, obj.def.material, obj.def.breakColors);
       this.arena.removeObject(obj);
+    }
+  }
+
+  _updateBouncers(dt) {
+    const mats = [];
+    for (const obj of this.arena.objects) {
+      if (!obj.def?.bouncy || obj.isGrabbed || obj.broken || !obj.body) continue;
+      const rot = obj.body.rotation();
+      _rq.set(rot.x, rot.y, rot.z, rot.w);
+      const up = _p.set(0, 1, 0).applyQuaternion(_rq);
+      const p = obj.getPosition();
+      mats.push({
+        obj, x: p.x, z: p.z, top: p.y + (obj.def.dims.halfHeight ?? 0.12),
+        radius: obj.def.dims.radius ?? 0.7, upright: up.y >= Math.cos(35 * Math.PI / 180),
+      });
+    }
+
+    for (const d of this.dweebs) {
+      if (d.bounceCd > 0) d.bounceCd = Math.max(0, d.bounceCd - dt);
+      const p = d.getPosition();
+
+      let over = false;
+      for (const m of mats) {
+        if (Math.hypot(p.x - m.x, p.z - m.z) < m.radius * 0.95) { over = true; break; }
+      }
+      if (d.grounded && !over) d.trampChain = 0;
+      if (!d.active || d.grabbedBy) continue;
+
+      for (const m of mats) {
+        if (!m.upright) continue;
+        if (Math.hypot(p.x - m.x, p.z - m.z) >= m.radius * 0.95) continue;
+        if (p.y < m.top + 0.2 || p.y > m.top + 1.0) continue;
+        const v = d.body.linvel();
+        if (v.y > 0.5 || d.bounceCd > 0) continue;
+
+        d.trampChain = (d.trampChain || 0) + 1;
+        const chain = d.trampChain;
+        const boost = d.jumpBuffer > 0 ? 1.25 : 1;
+        d.body.setLinvel({ x: v.x, y: m.obj.def.bouncy.vel * boost, z: v.z }, true);
+        d.bounceCd = m.obj.def.bouncy.cd;
+        d.landSquash = -0.4;
+        const text = chain >= 5 ? 'SUPER BOING!!' : chain >= 2 ? 'BOING BOING!' : 'BOING!';
+        this.fx.hud?.popup?.(text, { x: p.x, y: p.y + 1, z: p.z }, chain > 1 ? 'big' : 'small', 0x3fa9ff);
+        m.obj.pop?.(0.5);
+        if (typeof this.addStyle === 'function') this.addStyle(d, 2 + chain, 'TRAMPOLINE');
+        break;
+      }
+    }
+
+    for (const m of mats) {
+      if (!m.upright) continue;
+      for (const obj of this.arena.objects) {
+        if (obj === m.obj || obj.isDebris || obj.isGrabbed || obj.broken || !obj.body) continue;
+        const p = obj.getPosition();
+        if (Math.hypot(p.x - m.x, p.z - m.z) >= m.radius * 0.95) continue;
+        if (p.y < m.top + 0.2 || p.y > m.top + 1.0) continue;
+        const v = obj.body.linvel();
+        if (v.y > 0) continue;
+        obj.body.setLinvel({ x: v.x, y: m.obj.def.bouncy.propVel, z: v.z }, true);
+        m.obj.pop?.(0.35);
+      }
     }
   }
 
