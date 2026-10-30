@@ -762,6 +762,18 @@ export class Dweeb {
       } else {
         this.rig.rotation.x = 0;
       }
+      // Emotes (game/Emotes.js)
+      if (this.emoteT > 0) {
+        const e = 1 - this.emoteT / (this.emoteMax || 1), w = time * 12;
+        switch (this.emote) {
+          case 'taunt': rx = arm.side === 1 ? -1.6 + Math.sin(w * 1.5) * 0.25 : 0.4; rz = arm.side * (arm.side === 1 ? 0.2 : 1.2); break;
+          case 'cheer': rx = -2.9 + Math.sin(w + arm.side) * 0.3; rz = arm.side * 0.5; break;
+          case 'dance': rx = -1.4 + Math.sin(w * 0.8 + arm.side * 1.6) * 1.2; rz = arm.side * (0.9 + Math.sin(w * 0.8) * 0.5); break;
+          case 'sweat': rx = -0.6 + Math.sin(w * 2) * 0.05; rz = arm.side * 0.1; break;
+          case 'gg': rx = arm.side === 1 ? -2.2 + Math.sin(w * 0.9) * 0.4 : 0.2; rz = arm.side * 0.6; break;
+          case 'flex': rx = -1.5; rz = arm.side * (1.6 + Math.sin(w * 0.7) * 0.15 + e * 0.2); break;
+        }
+      }
       if (this.charging > 0 && arm.side === 1) {
         rx = 0.6 + this.charging * 0.9;
         rz = 0.9;
@@ -783,6 +795,17 @@ export class Dweeb {
       arm.pivot.rotation.z = THREE.MathUtils.lerp(arm.pivot.rotation.z, rz, 1 - Math.exp(-22 * dt));
     }
 
+    // Emote body: dance spins, bows, flex puffs up, sweat trembles, taunt wiggles
+    if (this.emoteT > 0 && this.bodyGroup) {
+      const e = 1 - this.emoteT / (this.emoteMax || 1), w = time * 12;
+      if (this.emote === 'dance') this.bodyGroup.rotation.y = e * Math.PI * 4;
+      else if (this.emote === 'taunt') this.bodyGroup.rotation.y = Math.sin(w * 1.4) * 0.6;
+      else this.bodyGroup.rotation.y = 0;
+      if (this.emote === 'gg') this.bodyGroup.rotation.x += Math.sin(Math.min(1, e * 2) * Math.PI) * 0.5;
+      if (this.emote === 'flex') this.rig.scale.multiplyScalar(1 + Math.sin(Math.min(1, e * 1.5) * Math.PI) * 0.18);
+      if (this.emote === 'sweat') this.rig.position.x = Math.sin(time * 60) * 0.02;
+      if (this.emote === 'cheer' && this.grounded) this.rig.position.y += Math.abs(Math.sin(w * 0.8)) * 0.25;
+    } else if (this.bodyGroup && this.bodyGroup.rotation.y !== 0) this.bodyGroup.rotation.y = 0;
     animateDweebFace(this, dt, time);
 
     // Hit flash (white) and invulnerability blink

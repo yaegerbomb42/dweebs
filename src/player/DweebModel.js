@@ -781,6 +781,7 @@ export function animateDweebFace(d, dt, time) {
     d.idleMood = r < 0.6 ? L.mood : r < 0.85 ? (L.mood === 'grumpy' ? 'calm' : 'grumpy') : 'smug';
   }
   d.mood = d.gloatTimer > 0 ? 'smug' : d.percent >= 100 ? 'worried' : d.idleMood;
+  if (d.emoteT > 0 && d.emoteMood) d.mood = d.emoteMood;
   const m = MOODS[d.mood];
   const browTarget = screaming || gritting ? 1.15 : m.brow;
   d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);

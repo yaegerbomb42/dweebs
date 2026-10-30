@@ -23,6 +23,7 @@ import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
+import { EmoteSystem } from './game/Emotes.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
 import { Sky, Water } from './render/Sky.js';
@@ -98,6 +99,7 @@ let haptics;
 let physics, arena, sky, water, particles, audio, cam, combat, match, fx, hud, deathCinema = null;
 let trails, bursts, decals, aimGuide;
 let dweebs = [], bots = [], player = null, controller = null;
+let emotes = null; // 1–6 quick emotes (game/Emotes.js)
 let paused = false;
 let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
@@ -182,6 +184,7 @@ async function init() {
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
+  emotes = new EmoteSystem({ hud, combat, arena, audio });
   match = new Match();
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
@@ -1022,6 +1025,7 @@ function startRound() {
     }
   });
   match.beginRound();
+  if (match.round === 1 && !currentMeadowlands) hud.feed('<b>EMOTES</b> · 1 Taunt · 2 Cheer · 3 Dance · 4 Sweat · 5 GG · 6 Flex');
   hud.setRound(match.round, winsHtml());
   controller.enabled = false;
   cam.targetDistance = 9;
@@ -1074,6 +1078,7 @@ const matchEvents = {
   onKO(d, credited, kind, pos) {
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
+    emotes?.onKO(d, credited);
     if (deathCinema) {
       let cause = 'VAPORIZED IN THE VOID';
       if (kind === 'splash') cause = 'DROWNED IN THE LAGOON';
@@ -1369,6 +1374,7 @@ function loop() {
     }
     if (match.running) {
       for (const b of bots) b.update(dt, dweebs);
+      if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled; emotes.update(dt); }
       for (const b of builderBots) b.update(dt, dweebs);
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
