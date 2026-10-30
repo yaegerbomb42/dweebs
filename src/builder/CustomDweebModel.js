@@ -367,6 +367,7 @@ export const APPENDAGE_EFFECTS = {
   ram_plates: { armor: 0.25, speed: -0.1 },
   shock_gloves: { mass: 0.15, speed: 0.05 },
   satellite: { speed: 0.15, armor: -0.05 },
+  bouncy_belly: { armor: 0.1, speed: -0.05 },   // padded belly soaks hits, a little extra heft
 };
 
 /** Additive stat deltas per foot type. */
