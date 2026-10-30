@@ -262,6 +262,24 @@ export const ARENAS = [
     gravity: 1,
     magnetPulse: true,
   },
+  {
+    id: 'bubblewrap',
+    name: 'Bubble Wrap Ring',
+    tag: 'POPPY',
+    blurb: 'The whole floor is bubble wrap. Every step pops, every slam pops a crater. It re-inflates. Somehow.',
+    color: 0xbfe6ff,
+    icon: '🫧',
+    traction: 1.05,
+    slide: 1,
+    bumpers: 1,
+    pendulums: 1,
+    lava: false,
+    crust: false,
+    conveyors: false,
+    wind: false,
+    gravity: 1,
+    bubbleWrap: true,
+  },
 ];
 
 export const DEFAULT_ARENA = 'stadium';
