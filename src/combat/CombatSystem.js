@@ -78,6 +78,12 @@ export class CombatSystem {
     d.charging = 0;
     if (!d.canAct) return;
 
+    // Shooter weapon (melonCannon): lob an exploding melon instead of swinging
+    if (d.held?.kind === 'object' && d.held.ref?.def?.isShooter) {
+      this._fireShooter(d, charge);
+      return;
+    }
+
     if (d.held && !(d.held.kind === 'object' && d.held.ref.isWeapon)) {
       if (d.held.kind === 'object' && d.held.ref.def.gadget) {
         this.useGadget(d, charge);
@@ -189,6 +195,98 @@ export class CombatSystem {
       // A whiffed jab breaks the streak: the super-smash meter wants consecutive LANDED punches.
       if (!weapon) d.punchStreak = 0;
     }
+  }
+
+  /** Fire a shooter weapon (melonCannon): lob an exploding melon with a cooldown and live cap. */
+  _fireShooter(d, charge) {
+    const SHOOTER_CD = 0.55;
+    const MAX_LIVE_MELONS = 6;
+
+    // Cooldown check
+    if (d._shooterCd > 0) {
+      return;
+    }
+
+    // Cap live melons
+    let liveMelons = 0;
+    for (const obj of this.arena.objects) {
+      if (!obj.isDebris && !obj.broken && obj.key === 'explodingMelon') liveMelons++;
+    }
+    if (liveMelons >= MAX_LIVE_MELONS) {
+      this.fx.hud.popup('RELOADING', d.getPosition(), 'small', 0xff6a3c);
+      return;
+    }
+
+    // Set cooldown
+    d._shooterCd = SHOOTER_CD;
+
+    // Muzzle point: ~1.2m in front at chest height (yaw from dweeb's forward)
+    const pos = d.getPosition();
+    const f = d.forward;
+    const muzzle = {
+      x: pos.x + f.x * 1.2,
+      y: pos.y + 0.8, // chest height
+      z: pos.z + f.z * 1.2,
+    };
+
+    // Spawn the exploding melon
+    const melon = this.arena.spawnItem('explodingMelon', muzzle);
+    if (!melon) return;
+
+    // Release from kinematic (like throwHeld does)
+    this._releaseObject(melon);
+
+    // Velocity: forward*(14 + charge*10) with upward y 6 + charge*4
+    const horizSpeed = 14 + charge * 10;
+    const upSpeed = 6 + charge * 4;
+    const vel = {
+      x: f.x * horizSpeed,
+      y: upSpeed,
+      z: f.z * horizSpeed,
+    };
+    melon.body.setLinvel(vel, true);
+
+    // Set up exactly like a freshly thrown object (copy throwHeld)
+    melon.thrownBy = d;
+    melon.thrownTime = 2.2;
+    melon.lastSpeed = Math.hypot(vel.x, vel.y, vel.z);
+    melon.throwOrigin = { ...muzzle };
+    melon.prevPos = null;
+    melon.bounces = 0;
+    melon.skips = 0;
+    melon.banked = false;
+    melon.jumpShot = !d.grounded;
+    melon.superYeet = false;
+    melon.hitList.clear();
+    melon.hitList.add(d);
+
+    // Small recoil impulse backwards
+    const recoil = 2.5;
+    const v = d.body.linvel();
+    d.body.setLinvel({ x: v.x - f.x * recoil, y: v.y, z: v.z - f.z * recoil }, true);
+
+    // FX: muzzle burst
+    this.fx.particles.emit(muzzle, {
+      count: 12,
+      colors: [0x5ee06a, 0xffd23f, 0xffffff],
+      speed: 5,
+      up: 3,
+      size: 0.12,
+      life: 0.35,
+      gravity: 0,
+    });
+    this.fx.particles.ring(muzzle, { color: 0x5ee06a, size: 2.5, life: 0.25 });
+
+    // Popup 'THOOM!'
+    this.fx.hud.popup('THOOM!', muzzle, 'small', 0x5ee06a);
+
+    // Launch/whoosh sound
+    this.fx.audio.playWhoosh(this.fx._pan(muzzle), 0.7);
+
+    // Attack animation/cooldown for the shooter
+    d.attackAnim = 0.22;
+    d.attackCooldown = SHOOTER_CD;
+    d.swingT = 0.3;
   }
 
   // ═══ New moves: parry, slam, drop-kick, gadgets ═══
@@ -1025,6 +1123,8 @@ export class CombatSystem {
       }
       d.hazardCd = Math.max(0, (d.hazardCd || 0) - dt);
       if (d.swingT > 0) d.swingT -= dt;
+      // Shooter weapon cooldown
+      if (d._shooterCd > 0) d._shooterCd = Math.max(0, d._shooterCd - dt);
 
       if (d.isCharging) {
         if (!d.canAct) { d.isCharging = false; d.charging = 0; }
