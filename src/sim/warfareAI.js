@@ -10,17 +10,21 @@ import { stats, COUNTER_OF, RECRUITABLE, otherTeam } from './warfareUnits.js';
 
 /** Per-type preference bonus (metres of "closeness") for attacking a given enemy type. */
 export const PREFERENCES = Object.freeze({
-  rocket: { shield: -6, stealer: 3, sneak: 3, kami: 2 },
-  stealer: { rocket: 8, kami: 7, sneak: 3, shield: -5 },
-  kami: { shield: 6, brute: 7, boss: 5, rocket: 2 },
-  sneak: { rocket: 10, stealer: 3, shield: -6 },
-  shield: { kami: 2, stealer: 1 },
-  brute: { shield: 2 },
+  rocket: { shield: -6, stealer: 3, sneak: 3, kami: 2, netter: 1 },
+  stealer: { rocket: 8, kami: 7, sneak: 3, shield: -5, netter: -4 },
+  kami: { shield: 6, brute: 7, boss: 5, rocket: 2, netter: -5 },
+  sneak: { rocket: 10, stealer: 3, shield: -6, netter: -3 },
+  shield: { kami: 2, stealer: 1, netter: 4 },
+  brute: { shield: 2, netter: 3 },
   boss: {},
+  netter: { stealer: 6, kami: 6, rocket: -4, shield: -3 },
+  medic: { kami: 3, sneak: 2, stealer: 1 },
 });
 
 const CLUSTER_WEIGHT = { rocket: 2.5, kami: 1.5, boss: 1, brute: 0.5 };
 const STICKY = 2.5;
+/** Decoys are irresistible bait: enemies divert even from a sticky, clustered target. */
+export const DECOY_BAIT = 30;
 
 /** How many of `units` stand within r of (x,z). */
 export function countNear(units, x, z, r) {
@@ -45,11 +49,12 @@ export function pickTarget(u, enemies) {
   const aggro = s.aggro;
   let best = null, bestScore = Infinity;
   for (const e of enemies) {
-    if (!e.alive || e.carriedBy || e.team === u.team || e === u) continue;
+    if (!e.alive || e.carriedBy || e.burrow > 0 || e.team === u.team || e === u) continue;
     const dx = e.x - u.x, dz = e.z - u.z;
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d > aggro) continue;
     let score = d - (pref[e.type] || 0);
+    if (e.decoy) score -= DECOY_BAIT;
     if (s.attack === 'grab' && !stats(e.type).grabbable) score += 12; // stealers tackle heavies only as a last resort
     if (cw) score -= cw * countNear(enemies, e.x, e.z, 3.4);
     score -= 3 * (1 - e.hp / e.maxHp);            // finish off the wounded

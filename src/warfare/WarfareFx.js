@@ -76,6 +76,15 @@ export class WarfareFx {
     this.addShake(big ? 0.55 : 0.18);
   }
 
+  /** Balloon decoy bursting: a rubbery shockwave, a puff and a burst of plastic shards. */
+  balloonPop(x, z, team = 'blue') {
+    this.shockwave(x, z, 4.2, TEAM_COLORS[team] || 0xffd23f);
+    const mats = [this.shardMats[team] || this.shardMats.brass, this.shardMats.brass, this.shardMats.wood];
+    for (let i = 0; i < 14; i++) this._shard(x, 1.2, z, mats[i % mats.length], 7);
+    this.puff(x, z);
+    this.addShake(0.2);
+  }
+
   shockwave(x, z, r, color = 0xffffff) {
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false });
     const ring = new THREE.Mesh(waveGeo, mat);
@@ -103,6 +112,44 @@ export class WarfareFx {
   /** Tan dust cloud kicked up by artillery and collapsing barricades (pooled particles). */
   dustCloud(x, z, r = 6) {
     this.particles.dust({ x, y: 0.5, z }, Math.max(4, Math.round(6 + r * 1.6)));
+  }
+
+  /** Magnet Crane sparks: a ring of electric arcs pulling toward the center. */
+  magnetSparks(x, z, innerR, outerR) {
+    const mat = new THREE.LineBasicMaterial({ color: 0x44aaff, transparent: true, opacity: 0.9 });
+    const segments = 16;
+    for (let i = 0; i < segments; i++) {
+      const angle = (i / segments) * Math.PI * 2;
+      const startR = innerR + Math.random() * (outerR - innerR) * 0.3;
+      const endR = innerR + (outerR - innerR) * (0.4 + Math.random() * 0.5);
+      const points = [];
+      const steps = 5;
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const r = startR + (endR - startR) * t;
+        const a = angle + (Math.random() - 0.5) * 0.3 * (1 - t);
+        const y = 0.3 + t * 1.5 + Math.sin(t * Math.PI) * 0.8;
+        points.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.Line(geo, mat.clone());
+      line.position.set(x, 0, z);
+      this._add(line, 0.6 + Math.random() * 0.3, (it) => {
+        line.material.opacity = 0.9 * (it.life / it.max);
+        line.scale.setScalar(it.life / it.max);
+      });
+    }
+    // Central pulse
+    const pulseMat = new THREE.MeshBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false });
+    const pulseGeo = new THREE.RingGeometry(innerR * 0.5, innerR * 0.8, 20);
+    const pulse = new THREE.Mesh(pulseGeo, pulseMat);
+    pulse.rotation.x = -Math.PI / 2;
+    pulse.position.set(x, 0.08, z);
+    this._add(pulse, 0.5, (it) => {
+      const p = 1 - it.life / it.max;
+      pulse.scale.setScalar(1 + p * 2);
+      pulseMat.opacity = 0.7 * (1 - p);
+    });
   }
 
   /** Scorched crater decal stamped where a shell lands. Oldest decals are recycled. */

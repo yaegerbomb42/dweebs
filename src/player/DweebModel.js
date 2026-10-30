@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { toonMat, noOutline } from '../render/Toon.js';
+import { BALANCE } from '../game/Balance.js';
 
 const INK = 0x14101c;
 const cache = new Map();
@@ -152,6 +153,64 @@ const MOODS = {
   smug:    { brow: 0.45, mouth: -0.8 },
   worried: { brow: -0.8, mouth: 0.9 },
 };
+
+const IDLE_TABLE = {
+  cube: ['lookAround', 'nod'],
+  spiky: ['tentacleWave', 'lookAround'],
+  blob: ['jiggle', 'lookAround'],
+  stalky: ['stalkLook', 'lookAround'],
+  peep: ['squint', 'lookAround'],
+  tri_cloud: ['drift', 'lookAround'],
+  bunny: ['earFlick', 'footTap'],
+  puddle: ['jiggle', 'drift'],
+  blockhead: ['nod', 'lookAround'],
+  gumball: ['shimmy', 'lookAround'],
+  bumpy: ['shimmy', 'jiggle'],
+  cyclops: ['wideEye', 'lookAround'],
+  starry: ['twirl', 'bounce'],
+  blink: ['checkWrist', 'lookAround'],
+  bean: ['lean', 'lookAround'],
+  tadpole: ['tailWag', 'lookAround'],
+  floppy: ['earFlick', 'lookAround'],
+  chonk: ['flex', 'stomp'],
+  ghosty: ['glance', 'drift'],
+  triclops: ['lookAround', 'wideEye'],
+  rolling_eye: ['headRoll', 'lookAround'],
+  sherbet: ['shimmy', 'twirl'],
+  antenna: ['antennaTwitch', 'lookAround'],
+  boing: ['footTap', 'springBounce'],
+  boxer: ['shadowbox', 'bounce'],
+  plunger: ['pump', 'lookAround'],
+};
+
+const QUIRK_FACE = {
+  lookAround: { mood: 'calm' },
+  nod: { mood: 'calm' },
+  tentacleWave: { mood: 'calm' },
+  jiggle: { mood: 'calm' },
+  stalkLook: { mood: 'calm' },
+  squint: { mood: 'grumpy' },
+  drift: { mood: 'calm' },
+  earFlick: { mood: 'calm' },
+  footTap: { mood: 'calm' },
+  shimmy: { mood: 'smug', gloat: true },
+  wideEye: { mood: 'worried' },
+  twirl: { mood: 'smug', gloat: true },
+  bounce: { mood: 'grumpy' },
+  checkWrist: { mood: 'smug', gloat: true },
+  lean: { mood: 'calm' },
+  tailWag: { mood: 'calm' },
+  flex: { mood: 'smug', gloat: true },
+  stomp: { mood: 'grumpy' },
+  glance: { mood: 'smug', gloat: true },
+  headRoll: { mood: 'smug', gloat: true },
+  antennaTwitch: { mood: 'calm' },
+  springBounce: { mood: 'grumpy' },
+  shadowbox: { mood: 'grumpy' },
+  pump: { mood: 'grumpy' },
+};
+
+const idleRand = (min, max) => min + Math.random() * (max - min);
 
 function rng(seed) {
   let s = seed >>> 0;
@@ -321,6 +380,20 @@ function frownGeo() {
   const g = new THREE.ShapeGeometry(s, 6);
   g.translate(0, -0.025, 0);
   return g;
+}
+
+function faceStarGeo(r = 0.05) {
+  const s = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const a = (i * Math.PI) / 5 - Math.PI / 2;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const x = Math.cos(a) * rad;
+    const y = Math.sin(a) * rad;
+    if (i === 0) s.moveTo(x, y);
+    else s.lineTo(x, y);
+  }
+  s.closePath();
+  return new THREE.ShapeGeometry(s, 5);
 }
 
 function screamMouth() {
@@ -659,6 +732,62 @@ export function buildDweebModel(d, darken) {
   d.screamMouth.visible = false;
   d.bodyGroup.add(d.screamMouth);
 
+  // ─── Combat face props (hidden until a face state needs them) ───
+  const topEye = L.eyes.reduce((best, e) => (e.y + e.r > best.y + best.r ? e : best), L.eyes[0]);
+  const rightEye = L.eyes.reduce((best, e) => (e.x > best.x ? e : best), L.eyes[0]);
+
+  const sweatX = Math.min(0.36, rightEye.x + rightEye.r * 0.95);
+  const sweatY = rightEye.y + rightEye.r * 0.55;
+  const sweatZ = surfaceZ(sweatX, sweatY) + 0.035;
+  const sweat = new THREE.Mesh(
+    cached('sweatDrop', () => {
+      const g = new THREE.SphereGeometry(0.034, 8, 6);
+      g.scale(0.78, 1.35, 0.72);
+      g.translate(0, -0.018, 0);
+      return g;
+    }),
+    new THREE.MeshBasicMaterial({ color: 0x8fe9ff })
+  );
+  sweat.position.set(sweatX, sweatY, sweatZ);
+  sweat.userData.baseX = sweatX;
+  sweat.userData.baseY = sweatY;
+  sweat.userData.baseZ = sweatZ;
+  sweat.visible = false;
+  noOutline(sweat);
+  d.bodyGroup.add(sweat);
+  d.faceSweat = sweat;
+
+  const starY = topEye.y + topEye.r + 0.16;
+  const stars = new THREE.Group();
+  stars.position.set(0, starY, surfaceZ(0, topEye.y) + 0.06);
+  stars.userData.baseY = starY;
+  const starMat = new THREE.MeshBasicMaterial({ color: 0xffe45c, side: THREE.DoubleSide });
+  const starGeo = cached('faceStar', faceStarGeo);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const s = new THREE.Mesh(starGeo, starMat);
+    s.position.set(Math.cos(a) * 0.24, Math.sin(a) * 0.068, 0);
+    stars.add(s);
+  }
+  stars.visible = false;
+  noOutline(stars);
+  d.bodyGroup.add(stars);
+  d.faceStars = stars;
+
+  const tongue = new THREE.Mesh(
+    cached('faceTongue', () => {
+      const g = new THREE.CapsuleGeometry(0.028, 0.075, 3, 8);
+      g.translate(0, -0.028, 0);
+      return g;
+    }),
+    new THREE.MeshBasicMaterial({ color: 0xff6f91 })
+  );
+  tongue.position.set(0.02, L.mouthY - 0.07, mz + 0.014);
+  tongue.visible = false;
+  noOutline(tongue);
+  d.bodyGroup.add(tongue);
+  d.faceTongue = tongue;
+
   // ─── Limbs & Arms ───
   const armLen = 0.32;
   const armGeo = cached('arm', () => {
@@ -768,12 +897,25 @@ const lerpK = (dt, rate) => 1 - Math.exp(-rate * dt);
 /** Face, appendages & physics-reacting ears/tentacles. Once per frame. */
 export function animateDweebFace(d, dt, time) {
   const L = d.layout;
-  const knocked = d.ragdolling;
-  const screaming = knocked || d.hitstun > 0.15 || !!d.grabbedBy || d.swimFlail > 0;
-  const gritting = !screaming && d.charging > 0;
+  if (!L) return;
+
+  // Derived combat face state. Presentation only: all of these read existing combat fields.
+  const knocked = !!d.ragdolling;
+  const grabbed = !!d.grabbedBy;
+  const heldDweeb = d.held?.kind === 'dweeb';
+  const strain = !grabbed && (heldDweeb || (d.grabSettle ?? 0) > 0);
+  const hurt = !knocked && !grabbed && !strain && d.hitstun > 0.15;
+  const focus = !knocked && !grabbed && !strain && !hurt && (d.charging ?? 0) > 0;
+  const flailing = !knocked && !grabbed && !strain && !hurt && !focus && (d.swimFlail ?? 0) > 0;
+  const faceState = knocked ? 'dizzy' : grabbed ? 'panic' : strain ? 'strain' : hurt ? 'hurt'
+    : focus ? 'focus' : flailing ? 'panic' : 'idle';
+  const screaming = knocked || grabbed || hurt || flailing;
+  const gritting = focus;
+  const agitated = screaming || strain;
 
   if (d.kos > d._seenKOs) { d._seenKOs = d.kos; d.gloatTimer = 2.5; }
   d.gloatTimer -= dt;
+  if (d.emoteT > 0 && d.emoteMood) { d.idleMood = d.emoteMood; d.moodTimer = Math.max(d.moodTimer, 0.3); } // emote face
   d.moodTimer -= dt;
   if (d.moodTimer < 0) {
     d.moodTimer = 2.5 + Math.random() * 5;
@@ -781,27 +923,99 @@ export function animateDweebFace(d, dt, time) {
     d.idleMood = r < 0.6 ? L.mood : r < 0.85 ? (L.mood === 'grumpy' ? 'calm' : 'grumpy') : 'smug';
   }
   d.mood = d.gloatTimer > 0 ? 'smug' : d.percent >= 100 ? 'worried' : d.idleMood;
-  const m = MOODS[d.mood];
-  const browTarget = screaming || gritting ? 1.15 : m.brow;
-  d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);
-  d._mouthCurve += (m.mouth - d._mouthCurve) * lerpK(dt, 10);
+  if (d.reactT > 0 && !(d.reactDelay > 0)) d.mood = d.reactKind === 'cheer' ? 'smug' : d.reactKind === 'dread' || d.reactKind === 'wince' ? 'worried' : d.mood;
+  const m = MOODS[d.mood] ?? MOODS.calm;
 
-  // Eyes: tracking, blinking, scream squint, X-eyes
+  let browTarget = m.brow;
+  if (faceState === 'panic') browTarget = -0.75;      // scared brows up, not angry
+  else if (faceState === 'dizzy') browTarget = -0.2;
+  else if (agitated || gritting) browTarget = 1.15;  // strain / hurt / focus: brows down
+  d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);
+
+  let mouthTarget = m.mouth;
+  if (faceState === 'panic') mouthTarget = 0.55;
+  else if (faceState === 'strain') mouthTarget = 0.85 + Math.sin(time * 17) * 0.18;
+  else if (faceState === 'hurt' || faceState === 'focus' || faceState === 'dizzy') mouthTarget = 1;
+  d._mouthCurve += (mouthTarget - d._mouthCurve) * lerpK(dt, faceState === 'idle' ? 10 : 16);
+
+  // Eyes: tracking, blinking, panic widening, hurt squint, dizzy X-eyes
   d.blinkTimer -= dt;
   let blink = 1;
   if (d.blinkTimer < 0) {
     blink = 0.1;
     if (d.blinkTimer < -0.1) d.blinkTimer = 1.5 + Math.random() * 3.5;
   }
-  const lookX = Math.max(-0.35, Math.min(0.35, d.velocity.x * 0.04)) + Math.sin(time * 1.7 + d.index) * 0.12;
-  const lookY = Math.max(-0.3, Math.min(0.3, d.velocity.y * 0.03));
-  const squeeze = screaming && !knocked;
 
-  for (const eye of d.eyes) {
-    eye.group.visible = !screaming;
-    eye.lid.visible = squeeze;
-    eye.xEye.visible = knocked;
-    eye.group.scale.y = blink * (gritting ? 0.8 : 1);
+  let lookX = Math.max(-0.35, Math.min(0.35, d.velocity.x * 0.04)) + Math.sin(time * 1.7 + d.index) * 0.12;
+  let lookY = Math.max(-0.3, Math.min(0.3, d.velocity.y * 0.03));
+  if (faceState === 'panic') {
+    // Lock onto whoever is holding us (fall back to a panicked darting look).
+    const holder = d.grabbedBy;
+    const holderPos = typeof holder?.getPosition === 'function' ? holder.getPosition() : null;
+    const selfPos = typeof d.getPosition === 'function' ? d.getPosition() : d.mesh?.position;
+    if (holderPos && selfPos) {
+      const dx = holderPos.x - selfPos.x;
+      const dy = holderPos.y - selfPos.y;
+      const dz = holderPos.z - selfPos.z;
+      const c = Math.cos(d.yaw || 0), s = Math.sin(d.yaw || 0);
+      const right = dx * c - dz * s;
+      const forward = dx * s + dz * c;
+      const dist = Math.hypot(right, forward) || 1;
+      lookX = Math.max(-0.6, Math.min(0.6, (right / dist) * 0.6)) * (forward < 0 ? 0.5 : 1);
+      lookY = Math.max(-0.5, Math.min(0.5, dy * 0.7));
+    } else {
+      lookX = Math.sin(time * 26) * 0.3;
+      lookY = Math.sin(time * 21) * 0.25;
+    }
+  } else if (faceState === 'dizzy') {
+    lookX = Math.sin(time * 9) * 0.2;
+    lookY = Math.cos(time * 7) * 0.2;
+  } else if (faceState === 'strain') {
+    lookX = Math.sin(time * 30) * 0.08;
+    lookY = -0.08;
+  }
+
+  // Bystander reaction (game/Reactions.js): eyes snap to the event, eyes go wide, mouth reacts.
+  // Combat faces (panic/dizzy/strain/hurt/focus) take priority over reactions.
+  const reacting = faceState === 'idle' && d.reactT > 0 && !(d.reactDelay > 0) && d.reactPos;
+  let eyeWide = 1;
+  if (reacting) {
+    const p = d.mesh.position, rp = d.reactPos;
+    const dx = rp.x - p.x, dz = rp.z - p.z;
+    const sy = Math.sin(d.yaw), cy = Math.cos(d.yaw);
+    const side = dx * cy - dz * sy, fwd = dx * sy + dz * cy;
+    const ang = Math.atan2(side, Math.max(0.2, fwd));
+    lookX = Math.max(-0.42, Math.min(0.42, -ang * 0.45));
+    lookY = Math.max(-0.3, Math.min(0.3, (rp.y - p.y) * 0.08));
+    eyeWide = d.reactKind === 'gasp' || d.reactKind === 'flinch' ? 1.3 : d.reactKind === 'dread' ? 1.15 : 1;
+    blink = 1;
+  }
+
+  const eyeCount = d.eyes?.length ?? 0;
+  for (let i = 0; i < eyeCount; i++) {
+    const eye = d.eyes[i];
+    let visible = true, lid = false, xEye = false;
+    let sx = 1, sy = blink, sz = 1;
+
+    if (faceState === 'dizzy') {
+      visible = false; xEye = true;
+    } else if (faceState === 'panic') {
+      sx = sz = 1.16; sy = 1.12;                 // wide, unblinking eyes
+    } else if (faceState === 'hurt') {
+      if (eyeCount > 1 && i === 0) { visible = false; lid = true; } // one squeezed shut
+      else sy = blink * 0.35;                    // …and one squinted
+    } else if (faceState === 'strain') {
+      sy = Math.min(blink, 0.72);                // gritted effort squint
+    } else if (gritting) {
+      sy = blink * 0.78;
+    } else if (eyeWide > 1) {
+      sy = blink * eyeWide; sx = sz = 1 + (eyeWide - 1) * 0.6;
+    }
+
+    eye.group.visible = visible;
+    eye.lid.visible = lid;
+    eye.xEye.visible = xEye;
+    eye.group.scale.set(sx, sy, sz);
     eye.pupil.position.x = lookX * eye.r;
     eye.pupil.position.y = lookY * eye.r;
   }
@@ -809,34 +1023,450 @@ export function animateDweebFace(d, dt, time) {
   for (const b of d.brows) {
     const a = d._browAnger, base = b.userData.base;
     b.rotation.z = b.userData.side * 0.42 * a;
-    b.position.set(base.x, base.y - 0.03 * a + (squeeze ? -0.02 : 0), base.z);
+    b.position.set(base.x, base.y - 0.03 * a + (screaming ? -0.02 : 0), base.z);
   }
 
-  // Mouths
-  d.mouth.visible = !screaming && !gritting;
+  // Mouths: tiny O (panic), wobbling grimace (strain), gritted teeth (hurt/focus), tongue out (dizzy)
+  const showScream = faceState === 'panic' || faceState === 'hurt' || faceState === 'focus' || faceState === 'dizzy';
+  d.mouth.visible = !showScream;
   d.mouth.scale.y = d._mouthCurve;
-  d.screamMouth.visible = screaming || gritting;
-  if (d.screamMouth.visible) {
-    const open = gritting ? 0.35 + d.charging * 0.15 : 1.3 + Math.sin(time * 38) * 0.1;
-    d.screamMouth.scale.set(gritting ? 1.3 : 1.45, open, 1);
+  d.mouth.scale.x = faceState === 'strain' ? 1.1 + Math.sin(time * 17) * 0.06 : 1;
+  d.screamMouth.visible = showScream;
+  d.screamMouth.rotation.z = 0;
+  if (showScream) {
+    if (faceState === 'panic') {
+      const o = 0.5 + Math.sin(time * 20) * 0.04;
+      d.screamMouth.scale.set(o * 1.1, o, 1);
+      d.screamMouth.rotation.z = Math.sin(time * 18) * 0.05;
+    } else if (faceState === 'hurt') {
+      d.screamMouth.scale.set(1.25, 0.5 + Math.sin(time * 30) * 0.04, 1);
+    } else if (faceState === 'focus') {
+      d.screamMouth.scale.set(1.15, 0.34 + (d.charging ?? 0) * 0.12, 1);
+    } else {
+      d.screamMouth.scale.set(1.35, 0.7 + Math.sin(time * 10) * 0.08, 1);
+      d.screamMouth.rotation.z = Math.sin(time * 6) * 0.12;
+    }
+  }
+
+  // Bystander reaction mouth (only on an otherwise idle face).
+  const oMouth = faceState === 'idle' && d.reactT > 0 && !(d.reactDelay > 0) && (d.reactKind === 'gasp' || d.reactKind === 'flinch' || d.reactKind === 'cheer');
+  if (oMouth) {
+    d.mouth.visible = false;
+    d.screamMouth.visible = true;
+    d.screamMouth.scale.set(0.8, d.reactKind === 'cheer' ? 0.9 + Math.sin(time * 20) * 0.15 : 0.75, 1);
+  }
+
+  // Sweat drop: panic & effort. Slides down the temple then pops back.
+  if (d.faceSweat) {
+    const show = faceState === 'panic' || faceState === 'strain';
+    d.faceSweat.visible = show;
+    if (show) {
+      const rate = faceState === 'panic' ? 1.8 : 1.1;
+      const t = (time * rate) % 1;
+      d.faceSweat.position.set(
+        d.faceSweat.userData.baseX + Math.sin(time * 9) * 0.006,
+        d.faceSweat.userData.baseY - t * 0.13,
+        d.faceSweat.userData.baseZ
+      );
+      d.faceSweat.scale.setScalar(0.7 + Math.sin(t * Math.PI) * 0.45);
+      d.faceSweat.rotation.z = Math.sin(time * 12) * 0.2;
+    }
+  }
+
+  // Dizzy stars: orbit and twinkle over the head while ragdolling.
+  if (d.faceStars) {
+    const show = faceState === 'dizzy';
+    d.faceStars.visible = show;
+    if (show) {
+      d.faceStars.rotation.z = time * 2.2;
+      d.faceStars.position.y = d.faceStars.userData.baseY + Math.sin(time * 4) * 0.02;
+      d.faceStars.children.forEach((s, i) => {
+        const pulse = Math.abs(Math.sin(time * 5 + i * 2.1));
+        s.scale.setScalar(0.55 + pulse * 0.55);
+      });
+    }
+  }
+
+  // Tongue: lolls out when dizzy, bitten at the corner while charging.
+  if (d.faceTongue) {
+    const show = faceState === 'dizzy' || faceState === 'focus';
+    d.faceTongue.visible = show;
+    if (show) {
+      if (faceState === 'dizzy') {
+        d.faceTongue.position.set(0.02, L.mouthY - 0.09, d.mouth.position.z + 0.012);
+        d.faceTongue.rotation.z = Math.sin(time * 8) * 0.25;
+        d.faceTongue.scale.set(1, 1 + Math.sin(time * 9) * 0.1, 1);
+      } else {
+        d.faceTongue.position.set(0.068, L.mouthY + 0.005, d.mouth.position.z + 0.016);
+        d.faceTongue.rotation.z = -0.5 + Math.sin(time * 5) * 0.06;
+        d.faceTongue.scale.set(0.55, 0.5, 0.6);
+      }
+    }
   }
 
   // Appendage dynamic physics wobble (ears, stalks, tails, antenna)
   if (d.wiggleItems) {
-    const speedMult = screaming ? 2.5 : 1.0;
+    const speedMult = screaming ? 2.5 : strain ? 1.8 : focus ? 1.2 : 1.0;
     for (const item of d.wiggleItems) {
       const axis = item.axis || 'z';
-      const rot = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
-      item.obj.rotation[axis] = rot;
+      const idle = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
+      const sign = Math.sign(item.amp) || 1;
+      let push = 0;
+      if (drv) push = axis === 'x' ? -drv.fwd * 0.004 : (drv.side * 0.003 + drv.up * 0.0015) * sign - drv.fwd * 0.0015;
+      item.a = item.a || 0; item.v = item.v || 0;
+      const k = 160, c = 7;
+      item.v += (k * (idle + THREE.MathUtils.clamp(push, -0.6, 0.6) - item.a) - c * item.v) * h;
+      item.a = THREE.MathUtils.clamp(item.a + item.v * h, -1.1, 1.1);
+      item.obj.rotation[axis] = item.a;
     }
   }
 
   // Tentacles
   if (d.tentacles) {
-    const amp = screaming ? 0.16 : 0.05, spd = screaming ? 14 : 3.2;
+    const amp = screaming ? 0.16 : strain ? 0.1 : 0.05, spd = screaming ? 14 : strain ? 7 : 3.2;
     for (const t of d.tentacles) {
       const p = time * spd + t.userData.phase;
       t.rotation.set(Math.sin(p) * amp, Math.sin(p * 0.7) * amp, Math.cos(p * 1.1) * amp);
     }
   }
+}
+
+function resetQuirkPose(d) {
+  if (d.arms) {
+    for (const arm of d.arms) {
+      arm.idleX = 0;
+      arm.idleZ = 0;
+    }
+  }
+  if (d.legs) {
+    for (const leg of d.legs) leg.idleX = 0;
+  }
+  const p = d._quirkPose;
+  if (!p) return;
+  if (d.rig) {
+    d.rig.rotation.y -= p.rigY || 0;
+    d.rig.rotation.z -= p.rigZ || 0;
+  }
+  if (d.bodyGroup) {
+    d.bodyGroup.rotation.y -= p.bodyY || 0;
+    d.bodyGroup.rotation.z -= p.bodyZ || 0;
+  }
+  d._quirkPose = null;
+}
+
+function endQuirk(d) {
+  resetQuirkPose(d);
+  d.quirk = null;
+  d.quirkTimer = 0;
+  d.quirkDuration = 0;
+  d.idleTimer = 0;
+  d.idleWait = idleRand(BALANCE.idle.minWait, BALANCE.idle.maxWait);
+  if (d.quirkGloat) {
+    d.gloatTimer = 0;
+    d.quirkGloat = false;
+  }
+  if (d.layout) d.idleMood = d.layout.mood;
+}
+
+function startQuirk(d) {
+  const table = IDLE_TABLE[d.type] || IDLE_TABLE.cube;
+  const id = table[Math.floor(Math.random() * table.length)] || 'lookAround';
+  const face = QUIRK_FACE[id] || QUIRK_FACE.lookAround;
+  d.quirk = id;
+  d.quirkDuration = idleRand(BALANCE.idle.minDuration, BALANCE.idle.maxDuration);
+  d.quirkTimer = d.quirkDuration;
+  d.idleTimer = 0;
+  d.idleMood = face.mood;
+  d.moodTimer = Math.max(d.moodTimer || 0, d.quirkDuration + BALANCE.idle.moodHold);
+  if (face.gloat) {
+    d.gloatTimer = Math.max(d.gloatTimer || 0, d.quirkDuration);
+    d.quirkGloat = true;
+  }
+}
+
+function applyQuirkPose(d, id, q, env) {
+  const I = BALANCE.idle;
+  const nArm = d.arms ? d.arms.length : 0;
+  const nLeg = d.legs ? d.legs.length : 0;
+  const sideSign = (d.index || 0) % 2 === 0 ? 1 : -1;
+  const o = {
+    armX: new Array(nArm).fill(0),
+    armZ: new Array(nArm).fill(0),
+    legX: new Array(nLeg).fill(0),
+    rigY: 0, rigZ: 0, bodyX: 0, bodyY: 0, bodyZ: 0,
+    bobY: 0, wiggle: 0, tent: 0, eyeX: 0, eyeY: 0,
+  };
+
+  switch (id) {
+    case 'lookAround': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.bodyY = s * I.bodyAmp * 1.6;
+      o.rigY = s * I.rigAmp;
+      o.eyeX = s * I.eyeAmp;
+      break;
+    }
+    case 'glance': {
+      const s = sideSign;
+      o.bodyY = s * I.bodyAmp * 2;
+      o.rigY = s * I.rigAmp * 1.2;
+      o.eyeX = s * I.eyeAmp * 1.5;
+      break;
+    }
+    case 'headRoll': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.bodyZ = s * I.bodyAmp * 1.8;
+      o.rigZ = s * I.rigAmp;
+      o.eyeX = Math.sin(q * Math.PI * 4) * I.eyeAmp;
+      o.eyeY = Math.cos(q * Math.PI * 4) * I.eyeAmp * 0.5;
+      break;
+    }
+    case 'shadowbox': {
+      const s = Math.sin(q * Math.PI * 6);
+      if (nArm >= 2) {
+        o.armX[0] = (-1 + s * 0.5) * I.armAmp;
+        o.armX[1] = (-1 - s * 0.5) * I.armAmp;
+      }
+      o.bobY = Math.abs(s) * I.bobAmp;
+      o.bodyY = s * I.bodyAmp * 0.6;
+      break;
+    }
+    case 'footTap': {
+      const s = Math.max(0, Math.sin(q * Math.PI * 12));
+      if (nLeg > 0) o.legX[nLeg - 1] = s * I.legAmp * 1.6;
+      o.bobY = s * I.bobAmp * 0.6;
+      o.rigZ = Math.sin(q * Math.PI * 12) * I.rigAmp * 0.5;
+      break;
+    }
+    case 'springBounce': {
+      const s = Math.sin(q * Math.PI * 4);
+      for (let i = 0; i < nLeg; i++) o.legX[i] = s * I.legAmp * 0.6;
+      o.bobY = Math.abs(s) * I.bobAmp * 2;
+      o.bodyX = s * I.bodyAmp * 0.5;
+      break;
+    }
+    case 'bounce': {
+      const s = Math.abs(Math.sin(q * Math.PI * 4));
+      o.bobY = s * I.bobAmp * 2;
+      o.bodyX = Math.sin(q * Math.PI * 8) * I.bodyAmp * 0.5;
+      break;
+    }
+    case 'flex': {
+      const s = 0.5 + 0.5 * Math.sin(q * Math.PI * 4);
+      for (let i = 0; i < nArm; i++) {
+        const side = d.arms[i].side || 1;
+        o.armX[i] = -s * I.armAmp * 0.7;
+        o.armZ[i] = side * s * I.armAmp * 0.5;
+      }
+      o.bodyX = -s * I.bodyAmp * 0.9;
+      o.bobY = s * I.bobAmp * 0.5;
+      break;
+    }
+    case 'checkWrist': {
+      if (nArm > 0) {
+        const i = Math.min(1, nArm - 1);
+        const side = d.arms[i].side || 1;
+        o.armX[i] = -1.7 * I.armAmp;
+        o.armZ[i] = -side * I.armAmp * 0.8;
+      }
+      o.bodyY = sideSign * I.bodyAmp * 0.8;
+      o.bodyZ = sideSign * I.bodyAmp * 0.6;
+      o.eyeX = sideSign * I.eyeAmp * 0.6;
+      break;
+    }
+    case 'tentacleWave': {
+      const s = Math.sin(q * Math.PI * 4);
+      o.tent = I.tentacleAmp * 2;
+      o.wiggle = I.wiggleAmp * 1.2;
+      o.rigZ = s * I.rigAmp;
+      o.bobY = Math.sin(q * Math.PI * 2) * I.bobAmp;
+      break;
+    }
+    case 'jiggle': {
+      const s = Math.sin(q * Math.PI * 14);
+      o.bodyZ = s * I.bodyAmp * 1.4;
+      o.rigZ = s * I.rigAmp;
+      o.bobY = Math.abs(s) * I.bobAmp * 0.8;
+      o.wiggle = I.wiggleAmp * 0.7;
+      break;
+    }
+    case 'shimmy': {
+      const s = Math.sin(q * Math.PI * 8);
+      o.rigZ = s * I.rigAmp * 1.5;
+      o.bodyZ = s * I.bodyAmp * 0.8;
+      if (nArm >= 2) {
+        o.armX[0] = s * I.armAmp * 0.3;
+        o.armX[1] = -s * I.armAmp * 0.3;
+      }
+      break;
+    }
+    case 'nod': {
+      const s = Math.sin(q * Math.PI * 8);
+      o.bodyX = s * I.bodyAmp * 1.5;
+      o.bobY = Math.abs(s) * I.bobAmp * 0.5;
+      break;
+    }
+    case 'lean': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.rigZ = s * I.rigAmp * 2;
+      o.bodyZ = s * I.bodyAmp;
+      break;
+    }
+    case 'drift': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.bobY = s * I.bobAmp * 2;
+      o.rigZ = s * I.rigAmp;
+      o.bodyY = Math.sin(q * Math.PI) * I.bodyAmp;
+      break;
+    }
+    case 'earFlick': {
+      const s = Math.sin(q * Math.PI * 10);
+      o.wiggle = (0.5 + 0.5 * Math.abs(s)) * I.wiggleAmp * 2;
+      o.bobY = Math.abs(s) * I.bobAmp * 0.5;
+      o.bodyZ = s * I.bodyAmp * 0.5;
+      break;
+    }
+    case 'stalkLook': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.wiggle = I.wiggleAmp * 1.5;
+      o.bodyY = s * I.bodyAmp;
+      o.eyeX = s * I.eyeAmp;
+      break;
+    }
+    case 'squint': {
+      const s = 0.5 + 0.5 * Math.sin(q * Math.PI * 2);
+      o.bodyX = s * I.bodyAmp * 1.4;
+      o.bobY = -s * I.bobAmp;
+      o.eyeY = -s * I.eyeAmp * 0.5;
+      break;
+    }
+    case 'wideEye': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.bodyX = -I.bodyAmp;
+      o.eyeY = s * I.eyeAmp * 0.6;
+      o.eyeX = Math.sin(q * Math.PI * 4) * I.eyeAmp * 0.5;
+      break;
+    }
+    case 'twirl': {
+      const s = Math.sin(q * Math.PI * 2);
+      o.rigY = s * 0.25;
+      o.bodyY = s * I.bodyAmp * 2;
+      o.bobY = Math.abs(s) * I.bobAmp * 2;
+      break;
+    }
+    case 'tailWag': {
+      const s = Math.sin(q * Math.PI * 8);
+      o.wiggle = I.wiggleAmp * 2;
+      o.rigY = s * I.rigAmp;
+      o.bobY = Math.abs(s) * I.bobAmp * 0.5;
+      break;
+    }
+    case 'stomp': {
+      const s = Math.sin(q * Math.PI * 6);
+      if (nLeg > 0) o.legX[0] = Math.max(0, s) * I.legAmp * 1.2;
+      if (nLeg > 1) o.legX[1] = Math.max(0, -s) * I.legAmp * 1.2;
+      o.bobY = Math.abs(s) * I.bobAmp;
+      o.bodyZ = s * I.bodyAmp * 0.5;
+      break;
+    }
+    case 'antennaTwitch': {
+      o.wiggle = I.wiggleAmp * 2.5;
+      o.bodyY = Math.sin(q * Math.PI * 4) * I.bodyAmp * 0.5;
+      break;
+    }
+    case 'pump': {
+      const s = Math.sin(q * Math.PI * 6);
+      for (let i = 0; i < nArm; i++) o.armX[i] = (-1 + s * 0.5) * I.armAmp;
+      o.bobY = Math.abs(s) * I.bobAmp;
+      break;
+    }
+  }
+
+  if (d.arms) {
+    for (let i = 0; i < nArm; i++) {
+      d.arms[i].idleX = o.armX[i] * env;
+      d.arms[i].idleZ = o.armZ[i] * env;
+    }
+  }
+  if (d.legs) {
+    for (let i = 0; i < nLeg; i++) d.legs[i].idleX = o.legX[i] * env;
+  }
+  if (d.rig) {
+    d.rig.rotation.y += o.rigY * env;
+    d.rig.rotation.z += o.rigZ * env;
+    if (o.bobY) d.rig.position.y += o.bobY * env;
+  }
+  if (d.bodyGroup) {
+    if (o.bodyX) d.bodyGroup.rotation.x += o.bodyX * env;
+    d.bodyGroup.rotation.y += o.bodyY * env;
+    d.bodyGroup.rotation.z += o.bodyZ * env;
+  }
+  if (d.wiggleItems && o.wiggle) {
+    for (const item of d.wiggleItems) {
+      const axis = item.axis || 'z';
+      const phase = item.obj.userData?.phase || 0;
+      item.obj.rotation[axis] += Math.sin(q * Math.PI * 10 + phase) * o.wiggle * env;
+    }
+  }
+  if (d.tentacles && o.tent) {
+    for (const t of d.tentacles) {
+      const p = q * Math.PI * 8 + (t.userData?.phase || 0);
+      t.rotation.x += Math.sin(p) * o.tent * env;
+      t.rotation.y += Math.cos(p * 0.8) * o.tent * env;
+      t.rotation.z += Math.sin(p * 1.1) * o.tent * env;
+    }
+  }
+  if (d.eyes && (o.eyeX || o.eyeY)) {
+    for (const eye of d.eyes) {
+      if (!eye.pupil) continue;
+      eye.pupil.position.x += o.eyeX * env * eye.r;
+      eye.pupil.position.y += o.eyeY * env * eye.r;
+    }
+  }
+
+  d._quirkPose = {
+    rigY: o.rigY * env,
+    rigZ: o.rigZ * env,
+    bodyY: o.bodyY * env,
+    bodyZ: o.bodyZ * env,
+  };
+}
+
+/** Small per-type idle tells. Additive on top of animateDweebFace; purely cosmetic. */
+export function animateDweebIdle(d, dt, time) {
+  if (!d) return;
+  const I = BALANCE.idle;
+  if (typeof d.idleTimer !== 'number') d.idleTimer = 0;
+  if (typeof d.idleWait !== 'number') d.idleWait = idleRand(I.minWait, I.maxWait);
+  if (typeof d.quirkTimer !== 'number') d.quirkTimer = 0;
+  if (typeof d.quirkDuration !== 'number') d.quirkDuration = 0;
+
+  const speed = d.velocity ? Math.hypot(d.velocity.x || 0, d.velocity.z || 0) : 0;
+  const holding = d.moveInput && typeof d.moveInput.lengthSq === 'function'
+    ? d.moveInput.lengthSq() > 0.01
+    : false;
+  const ready = d.active !== false && !!d.grounded && !d.grabbedBy && !d.ragdolling &&
+    (d.hitstun || 0) <= 0 && (d.proneTimer || 0) <= 0 &&
+    speed < I.speedThreshold && !(d.charging > 0) &&
+    !d.held && !(d.attackAnim > 0) && !holding;
+
+  if (!ready) {
+    if (d.quirk || d._quirkPose) endQuirk(d);
+    d.idleTimer = 0;
+    return;
+  }
+
+  if (d.quirk) {
+    d.quirkTimer -= dt;
+    if (d.quirkTimer <= 0) {
+      endQuirk(d);
+      return;
+    }
+    resetQuirkPose(d);
+    const q = Math.max(0, Math.min(1, 1 - d.quirkTimer / Math.max(0.001, d.quirkDuration)));
+    applyQuirkPose(d, d.quirk, q, Math.sin(Math.PI * q));
+    return;
+  }
+
+  d.idleTimer += dt;
+  if (d.idleTimer >= d.idleWait) startQuirk(d);
 }

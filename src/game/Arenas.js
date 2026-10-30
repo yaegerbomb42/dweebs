@@ -262,6 +262,43 @@ export const ARENAS = [
     gravity: 1,
     magnetPulse: true,
   },
+  {
+    id: 'bubblewrap',
+    name: 'Bubble Wrap Ring',
+    tag: 'POPPY',
+    blurb: 'The whole floor is bubble wrap. Every step pops, every slam pops a crater. It re-inflates. Somehow.',
+    color: 0xbfe6ff,
+    icon: '🫧',
+    traction: 1.05,
+    slide: 1,
+    bumpers: 1,
+    pendulums: 1,
+    lava: false,
+    crust: false,
+    conveyors: false,
+    wind: false,
+    gravity: 1,
+    bubbleWrap: true,
+  },
+  // ─── Brutalist Foundry: custom multi-level concrete geometry ───
+  {
+    id: 'brutalist',
+    name: 'Brutalist Foundry',
+    tag: 'CONCRETE',
+    blurb: 'Raw concrete, rusted steel, and hard angles. Three levels of foundry floor — the pit shows no mercy.',
+    color: 0x8a8f94,
+    icon: '🏭',
+    traction: 1,
+    slide: 1,
+    bumpers: 1,
+    pendulums: 1,
+    lava: false,
+    crust: false,
+    conveyors: false,
+    wind: false,
+    gravity: 1,
+    isBrutalist: true, // custom geometry — see src/world/BrutalistArena.js
+  },
 ];
 
 export const DEFAULT_ARENA = 'stadium';

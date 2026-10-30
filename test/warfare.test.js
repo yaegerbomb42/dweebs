@@ -17,6 +17,7 @@ const unit = (o) => ({ id: 1, team: 'blue', type: 'shield', x: 0, z: 0, vx: 0, v
 describe('warfare units', () => {
   it('every unit has sane stats and a recruitable counter', () => {
     for (const [type, s] of Object.entries(UNIT_TYPES)) {
+      if (type === 'decoy') continue; // commander-power balloon, not a fighting unit
       expect(s.hp, type).toBeGreaterThan(0);
       expect(s.speed, type).toBeGreaterThan(0);
       expect(s.cost, type).toBeGreaterThan(0);
@@ -37,7 +38,7 @@ describe('warfare units', () => {
 
 describe('warfare balance (real equal-cost duels)', () => {
   it.each([
-    ['shield', 'rocket'], ['rocket', 'stealer'], ['stealer', 'kami'], ['kami', 'shield'],
+    ['shield', 'rocket'], ['rocket', 'stealer'], ['stealer', 'kami'], ['kami', 'shield'], ['sapper', 'rocket'],
   ])('%s beats %s cost-for-cost', (a, b) => {
     expect(wins(a, b)).toBeGreaterThanOrEqual(4);
     expect(SEEDS.filter(seed => duel(b, a, { seed }).winner === 'red').length).toBeGreaterThanOrEqual(4);
@@ -46,11 +47,13 @@ describe('warfare balance (real equal-cost duels)', () => {
     for (const a of RECRUITABLE) {
       const others = RECRUITABLE.filter(b => b !== a);
       const beatenBy = others.filter(b => wins(b, a) >= 4);
-      const beats = others.filter(b => wins(a, b) >= 4);
       expect(beatenBy.length, `${a} is never beaten`).toBeGreaterThan(0);
+      // Support units (healers) aren't duelists — they're meant to be protected, not to win 1v1s.
+      if (UNIT_TYPES[a].attack === 'heal') continue;
+      const beats = others.filter(b => wins(a, b) >= 4);
       expect(beats.length, `${a} beats nothing`).toBeGreaterThan(0);
     }
-  });
+  }, 30000); // 7 recruitables = 42+ full duels; slow CI runners need more than the 5s default
   it('counters hold at a bigger budget too', () => {
     expect(wins('shield', 'rocket', 500)).toBeGreaterThanOrEqual(3);
     expect(wins('kami', 'shield', 500)).toBeGreaterThanOrEqual(4);
