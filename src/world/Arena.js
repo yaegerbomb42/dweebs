@@ -36,6 +36,7 @@ const START_ITEMS = [
   ['crate', 8.5, 1, -1],
   ['explosiveBarrel', -8, 1, 5],
   ['watermelon', 1.5, 1, 9],
+  ['whoopeeCushion', -3.5, 1, 3.5],
   ['bananaPeel', 2.7, 1, 8.1],
   ['bananaPeel', -2.7, 1, 8.1],
   ['toyRocket', -1, 1, -9],
@@ -56,6 +57,7 @@ export const DROP_ITEMS = [
   { key: 'giantRubberDuck', w: 6 }, { key: 'trafficCone', w: 6 }, { key: 'box', w: 6 }, { key: 'poolRing', w: 5 },
   { key: 'teddyBear', w: 5 }, { key: 'pinata', w: 5 }, { key: 'piggyBank', w: 4 }, { key: 'gumballMachine', w: 4 },
   { key: 'fishBowl', w: 4 }, { key: 'boombox', w: 4 }, { key: 'lamp', w: 4 }, { key: 'giantDie', w: 4 },
+  { key: 'whoopeeCushion', w: 4 },
   { key: 'partyBalloon', w: 4 },
   { key: 'bananaPeel', w: 4 },
   // mid: solid throwables and furniture

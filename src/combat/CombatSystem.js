@@ -26,6 +26,7 @@ export const DEFAULT_LOFT = 0.2;  // throw elevation (rad) when nobody's aiming
 const CATCH = { radius: 2.2, nearRadius: 3.2, approach: 0.25, minSpeed: 0.01 };
 const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
+const WHOOPEE = BALANCE.whoopee;
 /** Giant Swing: hold attack while carrying a Dweeb. Rates in rad/s. */
 const GIANT_SWING = {
   startCharge: 0.3,   // charge level at which the wind-up becomes a swing
@@ -1872,6 +1873,7 @@ export class CombatSystem {
     this._updateFuses(dt);
     this._updateBurning(dt);
     this._updateProjectiles(dt);
+    this._updateWhoopee(dt);
     this._updateThrownDweebs(dt);
     this._updateBananaPeels();
     this._updateHazards();
@@ -2143,6 +2145,80 @@ export class CombatSystem {
       d.body.setLinvel({ x: v.x * 0.2, y: 3, z: v.z * 0.2 }, true);
       return;
     }
+  }
+
+  /** Whoopee Cushions: armed cushions fire when a Dweeb steps/lands on them or a thrown prop smacks them. */
+  _updateWhoopee(dt) {
+    for (const obj of this.arena.objects) {
+      if (!obj.def?.whoopee || obj.isDebris || obj.broken || !obj.body || !obj.mesh) continue;
+      if (obj.thrownBy) obj.whoopeeOwner = obj.thrownBy;
+      // Re-inflate: flat → puffed over the last 0.6 s of the refill
+      if (obj.whoopeeT > 0) {
+        obj.whoopeeT -= dt;
+        const k = Math.min(1, Math.max(0, 1 - obj.whoopeeT / 0.6));
+        obj.mesh.scale.set(1 + (1 - k) * 0.18, 0.28 + k * 0.72, 1 + (1 - k) * 0.18);
+        if (obj.whoopeeT <= 0) { obj.mesh.scale.set(1, 1, 1); obj.pop(0.3); }
+        continue;
+      }
+      if (obj.isGrabbed) continue;
+      const pp = obj.getPosition();
+      let trigger = null;
+      for (const d of this.dweebs) {
+        if (!d.active || d.grabbedBy || d.held || d.ledge || d.freezeTimer > 0) continue;
+        const dp = d.getPosition();
+        const dy = dp.y - pp.y;
+        if (dy < -0.2 || dy > 0.95) continue;
+        if (Math.hypot(pp.x - dp.x, pp.z - dp.z) > WHOOPEE.radius) continue;
+        const vy = d.body.linvel().y;
+        if (!d.grounded && vy > -1) continue; // jumping over it doesn't count; landing on it does
+        trigger = d;
+        break;
+      }
+      let smackedBy = null;
+      if (!trigger) {
+        for (const o of this.arena.objects) {
+          if (o === obj || !o.thrownBy || !o.body || o.isDebris || o.broken) continue;
+          const op = o.getPosition();
+          if (Math.abs(op.y - pp.y) > 0.8 || Math.hypot(op.x - pp.x, op.z - pp.z) > WHOOPEE.radius + 0.25) continue;
+          const v = o.body.linvel();
+          if (Math.hypot(v.x, v.y, v.z) < WHOOPEE.thrownSpeed) continue;
+          smackedBy = o.thrownBy;
+          break;
+        }
+        if (!smackedBy) continue;
+      }
+      this._fireWhoopee(obj, pp, trigger, smackedBy || obj.whoopeeOwner || null);
+    }
+  }
+
+  _fireWhoopee(obj, pp, sitter, culprit) {
+    obj.whoopeeT = WHOOPEE.refill;
+    obj.mesh.scale.set(1.25, 0.28, 1.25);
+    obj.body.applyImpulse({ x: 0, y: 0.6, z: 0 }, true);
+    if (sitter) {
+      const v = sitter.body.linvel();
+      sitter.body.setLinvel({ x: v.x * 0.5, y: WHOOPEE.up, z: v.z * 0.5 }, true);
+      sitter.hitstun = Math.max(sitter.hitstun, 0.2);
+      sitter.charging = 0; sitter.isCharging = false; sitter.diveTimer = 0; sitter.slamActive = false;
+      sitter.flipSpin = Math.max(sitter.flipSpin || 0, 0.6);
+      if (culprit && culprit !== sitter) { sitter.lastHitBy = culprit; sitter.lastHitTime = this.time; }
+    }
+    for (const d of this.dweebs) {
+      if (d === sitter || !d.active || d.grabbedBy || d.held || d.ledge || d.freezeTimer > 0 || d.invulnTimer > 0) continue;
+      const dp = d.getPosition();
+      const dx = dp.x - pp.x, dz = dp.z - pp.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > WHOOPEE.gasRadius || Math.abs(dp.y - pp.y) > 2) continue;
+      const f = 1 - dist / WHOOPEE.gasRadius;
+      const nx = dist > 0.01 ? dx / dist : 1, nz = dist > 0.01 ? dz / dist : 0;
+      const v = d.body.linvel();
+      d.body.setLinvel({ x: v.x + nx * WHOOPEE.gasPush * f, y: Math.max(v.y, 2.5 * f), z: v.z + nz * WHOOPEE.gasPush * f }, true);
+      d.hitstun = Math.max(d.hitstun, WHOOPEE.gasStun * f);
+      d.isCharging = false; d.charging = 0;
+      if (culprit && culprit !== d) { d.lastHitBy = culprit; d.lastHitTime = this.time; }
+    }
+    if (culprit && culprit !== sitter && sitter) this.addStyle?.(culprit, 8, 'PRANKED');
+    this.fx.whoopee?.(pp, sitter);
   }
 
   /** Boomerang props curve out, then home back to the thrower; a clean catch re-grabs and pays style. */

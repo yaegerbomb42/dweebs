@@ -154,6 +154,14 @@ export const OBJECT_DEFS = {
     material: 'fruit', mass: 1.4, grabbable: true, throwable: true,
     breakable: true, breakForce: 600, damage: 0.6, color: 0x337733,
   },
+  whoopeeCushion: {
+    name: 'Whoopee Cushion',
+    shape: 'box', dims: { hx: 0.26, hy: 0.07, hz: 0.26 },
+    visualScale: [0.52, 0.14, 0.52],
+    material: 'rubber', mass: 0.25, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.05, color: 0xff5fa2,
+    whoopee: true,
+  },
   bananaPeel: {
     name: 'Banana Peel',
     shape: 'box', dims: { hx: 0.18, hy: 0.045, hz: 0.14 },

@@ -116,6 +116,16 @@ export const BALANCE = {
     max: 0.18,
   },
 
+  // Whoopee Cushion trap: step (or land) on it and it lets rip
+  whoopee: {
+    radius: 0.62,          // metres from the cushion centre that counts as sitting on it
+    up: 11.5,              // vertical launch for the Dweeb that triggered it
+    gasRadius: 3.2,        // stink cloud shove radius
+    gasPush: 6.5,          // horizontal shove at the cushion, falling off to 0 at gasRadius
+    gasStun: 0.3,
+    refill: 4.5,           // seconds flat before it re-inflates and arms again
+    thrownSpeed: 7,        // a thrown prop or Dweeb landing on it this fast also sets it off
+  },
   // Signature idle quirks: a small per-type tell while a Dweeb stands still between fights.
   // Purely cosmetic, so these only control timing and how far each rig part moves.
   idle: {

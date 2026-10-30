@@ -354,6 +354,14 @@ const BUILDERS = {
     k.eye([0.065, 0.05, 0.17], [0.35, 0.2, 1], 0.048);
   },
 
+  whoopeeCushion(k) {
+    const pink = 0xff5fa2, dark = 0xd93d82;
+    k.add(Ico(0.26, 2), pink, { p: [0, 0.01, -0.02], s: [1, 0.26, 1] });
+    k.add(Cyl(0.05, 0.065, 0.12, 8), dark, { p: [0, 0.0, 0.27], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.055, 0.018, 5, 10), dark, { p: [0, 0.0, 0.335] });
+    k.eye([-0.07, 0.065, 0.06], [-0.2, 1, 0.35], 0.04);
+    k.eye([0.07, 0.065, 0.06], [0.2, 1, 0.35], 0.04);
+  },
   bananaPeel(k) {
     const skin = 0xffd93b, flesh = 0xfff1b8, tip = 0x6a4a2a;
     const flap = (a, len, lift, r) => {

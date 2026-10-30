@@ -622,6 +622,28 @@ export class AudioManager {
     osc.stop(t + 0.35); vib.stop(t + 0.35);
   }
 
+  /** Whoopee cushion: a wobbling low buzz through a lowpass, with a rubbery flutter */
+  playWhoopee(pan = 0, pitch = 1) {
+    if (!this._ok) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.32);
+    const dur = 0.55 + Math.random() * 0.25;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(120 * pitch, t);
+    osc.frequency.linearRampToValueAtTime(85 * pitch, t + dur * 0.6);
+    osc.frequency.linearRampToValueAtTime(140 * pitch, t + dur);
+    const flutter = this.ctx.createOscillator(); flutter.type = 'square'; flutter.frequency.value = 22 + Math.random() * 10;
+    const flAmt = this.ctx.createGain(); flAmt.gain.value = 28 * pitch;
+    flutter.connect(flAmt).connect(osc.frequency);
+    const lp = this.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650; lp.Q.value = 6;
+    const g = this._env(t, 0.02, dur, 0.5);
+    osc.connect(lp).connect(g).connect(out);
+    osc.start(t); flutter.start(t);
+    osc.stop(t + dur + 0.6); flutter.stop(t + dur + 0.6);
+    this._noiseBurst(out, t, dur * 0.8, 0.12, { type: 'bandpass', freq: 380, Q: 2 });
+  }
+
   /** Big launch: rising whistle + wind */
   playLaunch(pan = 0) {
     if (!this._ok) return;
