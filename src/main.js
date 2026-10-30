@@ -40,6 +40,7 @@ import { BuildingManager } from './adventure/building.js';
 import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
 import { MimicLab } from './mimic/MimicLab.js';
+import { assignTeams, teamById, TeamRings } from './game/Teams.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
 import { BuildADweebLab } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
@@ -479,6 +480,8 @@ function toMenu() {
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
   match.phase = Phase.MENU;
+  teamRings?.dispose();
+  teamRings = null;
   clearRematch();
   spectateTarget = null;
   arena.hazardsActive = false;
@@ -961,6 +964,17 @@ function startMatch() {
   cam.lock();
 }
 
+let teamRings = null;
+let lastBonkAt = 0;
+/** A teammate's hit bounced off: say so (throttled) instead of silently eating the input. */
+function friendlyBonk(victim, attacker) {
+  if (!attacker?.isPlayer && !victim.isPlayer) return;
+  const now = performance.now();
+  if (now - lastBonkAt < 900) return;
+  lastBonkAt = now;
+  hud.popup('TEAMMATE!', victim.getPosition(), 'small', victim.teamColor ?? 0xffffff);
+}
+
 function startRound() {
   const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
   if (arena.dropWall) {
@@ -1019,8 +1033,20 @@ function startRound() {
       // Set team indicator color: even index = Team Pink, odd index = Team Cyan
       d.team = i % 2 === 0 ? 'pink' : 'cyan';
       d.teamColor = i % 2 === 0 ? 0xff4d5e : 0x3fa9ff;
+    } else {
+      // Teams must not leak from a Wall Drop match into a free-for-all (friendly fire is off).
+      d.team = null;
     }
+    d.onFriendlyBonk = friendlyBonk;
   });
+  if (modeDef.isTeams) assignTeams(dweebs);
+  teamRings?.dispose();
+  teamRings = (modeDef.isTeams || modeDef.hasWallDrop) ? new TeamRings(scene) : null;
+  if (modeDef.isTeams && player?.team) {
+    const t = teamById(player.team);
+    const mates = dweebs.filter(o => o !== player && o.team === player.team).map(o => o.name).join(' + ');
+    hud.feed(`You're <b style="color:#${t.color.toString(16).padStart(6, '0')}">TEAM ${t.name}</b>${mates ? ` with ${mates}` : ''} · no friendly fire`, 'style');
+  }
   match.beginRound();
   hud.setRound(match.round, winsHtml());
   controller.enabled = false;
@@ -1118,7 +1144,10 @@ const matchEvents = {
     audio.setCharge(0);
     const you = winner.isPlayer;
     const banners = winBanners({ winner, match, isMatch: false });
-    hud.announce(you ? 'YOU WIN THE ROUND!' : `${winner.name.toUpperCase()} WINS!`, you ? 'go small' : 'small', 2.5);
+    const squad = currentMode === 'teams' ? teamById(winner.team) : null;
+    const yourSquad = squad && player?.team === winner.team;
+    if (squad) hud.announce(yourSquad ? 'YOUR TEAM WINS THE ROUND!' : `TEAM ${squad.name} WINS!`, yourSquad ? 'go small' : 'small', 2.5);
+    else hud.announce(you ? 'YOU WIN THE ROUND!' : `${winner.name.toUpperCase()} WINS!`, you ? 'go small' : 'small', 2.5);
     if (you) audio.playVictory(); else audio.playCheer(1);
     arena.excite(1.5);
 
@@ -1386,6 +1415,7 @@ function loop() {
     combat.update(dt, match.time);
     updateDrops(dt);
     match.update(dt);
+    teamRings?.update(dt, dweebs);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
       for (const d of dweebs) deathCinema.recordFrame(d, match.time);
     }

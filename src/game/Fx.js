@@ -140,6 +140,17 @@ export class Fx {
     if (d.isPlayer) this.hud.popup('ARMED!', pos, 'small', d.color);
   }
 
+  /** Team Battle: a teammate got chucked on purpose — a friendly boost, not a hit. */
+  teamLaunch(mate, thrower) {
+    const pos = mate.getPosition();
+    const c = mate.teamColor ?? thrower?.color ?? 0xffd23f;
+    this.particles.ring(pos, { color: c, size: 3.5, life: 0.45 });
+    this.particles.sparkle?.(pos, c);
+    this.hud.popup('TEAM LAUNCH!', { x: pos.x, y: pos.y + 1, z: pos.z }, 'small', c);
+    this.audio.playWhoosh?.(this._pan(pos), 1);
+    this.arena.excite(0.4);
+  }
+
   superYeet(victim, attacker) {
     const pos = victim.getPosition();
     this.particles.confetti(pos, 80);

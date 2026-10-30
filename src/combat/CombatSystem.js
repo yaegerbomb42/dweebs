@@ -498,6 +498,15 @@ export class CombatSystem {
       t.setGrabbed(null);
       t.body.setTranslation({ x: pos.x + f.x * 0.9, y: pos.y + 0.9, z: pos.z + f.z * 0.9 }, true);
       _tmp.set(f.x, 0.55, f.z);
+      if (t.team != null && t.team === d.team) {
+        // Team Battle: chucking a teammate is a free, damage-less TEAM LAUNCH across the stage.
+        const s = 11 + charge * 6;
+        t.body.setLinvel({ x: f.x * s, y: 8 + charge * 3, z: f.z * s }, true);
+        t.invulnTimer = Math.max(t.invulnTimer, 0.5);
+        this.fx.teamLaunch?.(t, d);
+        this.fx.throw(d);
+        return true;
+      }
       const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1), p * (yeet ? SUPER : 1));
       const launch = t.receiveHit({ dir: _tmp, ...atk, attacker: d, time: this.time });
       t.invulnTimer = 0;

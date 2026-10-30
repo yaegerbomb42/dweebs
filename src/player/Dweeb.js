@@ -847,6 +847,11 @@ export class Dweeb {
    */
   receiveHit({ dir, damage, base, growth, attacker = null, time = 0, freeze = 0, noParry = false }) {
     if (!this.active || this.invulnTimer > 0) return 0;
+    // No friendly fire: a teammate's punch, throw or bomb bonks off harmlessly.
+    if (attacker && attacker !== this && this.team != null && attacker.team === this.team) {
+      this.onFriendlyBonk?.(this, attacker);
+      return 0;
+    }
 
     // Timed parry: no damage, and the attacker eats a recoil hit instead.
     if (!noParry && this.parryTimer > 0) return this._counter(dir, attacker, time);

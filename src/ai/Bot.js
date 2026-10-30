@@ -168,6 +168,7 @@ export class Bot {
     let best = null, bestScore = -Infinity;
     for (const o of dweebs) {
       if (o === d || !o.active) continue;
+      if (d.team != null && o.team === d.team) continue; // never pick on a teammate
       const op = o.getPosition();
       const dist = Math.hypot(op.x - pos.x, op.z - pos.z);
       let score = -dist;
