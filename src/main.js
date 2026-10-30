@@ -478,6 +478,7 @@ function toMenu() {
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+  if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   match.phase = Phase.MENU;
   clearRematch();
   spectateTarget = null;
@@ -515,7 +516,6 @@ function startWarfare(submode = 'defense') {
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
   if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
-  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
   colony = null;
@@ -680,7 +680,6 @@ function startBuildLab() {
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
   if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
-  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
   colony = null;
@@ -983,6 +982,12 @@ function startRound() {
   bursts.clear();
   decals.clear();
   $('round-screen').classList.add('hidden');
+
+  // Mimic & Mutate Lab owns its own toy arena while the round runs.
+  if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
+  if (modeDef.isMimic) {
+    currentMimicLab = new MimicLab(physics, scene, { fx, hud, audio, arena });
+  }
 
   // Spawn batteries if in escape mode
   // Spawn arcing cannons and bouncy melons in Wall Drop mode
@@ -1368,8 +1373,13 @@ function loop() {
       colony.update(dt, currentMeadowlands);
     }
     if (match.running) {
-      for (const b of bots) b.update(dt, dweebs);
-      for (const b of builderBots) b.update(dt, dweebs);
+      if (currentMode === 'mimic') {
+        // The bots are copycat pupils here: they watch and get yeeted, they don't brawl.
+        for (const d of dweebs) if (!d.isPlayer) d.moveInput.set(0, 0);
+      } else {
+        for (const b of bots) b.update(dt, dweebs);
+        for (const b of builderBots) b.update(dt, dweebs);
+      }
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
     for (const d of dweebs) d.preStep(dt);
@@ -1384,6 +1394,9 @@ function loop() {
     }
     handleImpacts();
     combat.update(dt, match.time);
+    if (currentMimicLab && currentMode === 'mimic') {
+      currentMimicLab.update(dt, player, dweebs, combat);
+    }
     updateDrops(dt);
     match.update(dt);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {

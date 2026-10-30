@@ -5,7 +5,7 @@
 // and hilariously mutate that action.
 
 import * as THREE from 'three';
-import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
+import { toonMat, noOutline } from '../render/Toon.js';
 
 export const MUTATION_TYPES = [
   { id: 'overachiever', name: 'OVER-ACHIEVER', blurb: 'Winds up 300% too hard and spins like a tornado!' },
@@ -15,42 +15,102 @@ export const MUTATION_TYPES = [
 ];
 
 export class MimicLab {
-  constructor(physicsWorld, scene) {
+  constructor(physicsWorld, scene, options = {}) {
     this.physicsWorld = physicsWorld;
     this.scene = scene;
+    this.hud = options.hud || null;
+    this.fx = options.fx || null;
+    this.audio = options.audio || null;
+    this.arena = options.arena || null;   // props are real arena items: grab / throw / explode all work
+    this.combat = null;
+    this.items = [];
     this.group = new THREE.Group();
     this.scene.add(this.group);
 
     this.colliders = [];
+    this.bodyIds = [];
     this.props = [];
     this.clock = 0;
     this.lastAction = null;
     this.activeMutation = null;
     this.mutationCooldown = 0;
+    this.chain = 0;
+    this.chainTimer = 0;
+    this.hintEl = null;
+    this.hintTimer = null;
+
+    // Edge-detection state for real player demonstrations.
+    this._wasJumpRising = false;
+    this._wasDiving = false;
+    this._wasRagdolling = false;
+    this._prevHitstun = 0;
+    this._prevHeld = null;
 
     this._buildAmphitheater();
     this._spawnToyTrunk();
+    this._showHint();
+  }
+
+  _trackBody(result) {
+    if (result?.id != null) this.bodyIds.push(result.id);
+    return result;
+  }
+
+  _showHint() {
+    if (typeof document === 'undefined' || !document.body) return;
+    const el = document.createElement('div');
+    el.textContent = "Do something dumb. They'll copy it... badly.";
+    el.style.cssText = [
+      'position:fixed',
+      'left:50%',
+      'bottom:118px',
+      'transform:translateX(-50%)',
+      'z-index:35',
+      'padding:8px 16px',
+      'border-radius:999px',
+      'background:rgba(23,23,23,.78)',
+      'border:2px solid rgba(250,204,21,.75)',
+      'color:#fef9c3',
+      'font:700 14px/1.3 "Nunito",system-ui,sans-serif',
+      'letter-spacing:.02em',
+      'text-align:center',
+      'pointer-events:none',
+      'text-shadow:0 2px 0 rgba(0,0,0,.45)',
+      'box-shadow:0 6px 18px rgba(0,0,0,.28)',
+    ].join(';');
+    document.body.appendChild(el);
+    this.hintEl = el;
+    this.hintTimer = setTimeout(() => {
+      this.hintEl?.remove();
+      this.hintEl = null;
+      this.hintTimer = null;
+    }, 7000);
+  }
+
+  _announce(text, style = 'trick', duration = 1.8) {
+    if (this.hud?.announce) {
+      this.hud.announce(text, style, duration);
+      return;
+    }
+    const announcer = document.getElementById('announcer');
+    if (announcer) {
+      announcer.className = `show ${style}`;
+      announcer.innerHTML = text;
+    }
   }
 
   _buildAmphitheater() {
     const floorMat = toonMat({ color: 0xfef08a, flatShading: true });
     const woodMat = toonMat({ color: 0x78350f, flatShading: true });
 
-    // Central circular arena floor (r = 18)
-    const floor = new THREE.Mesh(new THREE.CylinderGeometry(18, 18.5, 0.8, 24), floorMat);
-    floor.position.y = -0.4;
-    this.group.add(floor);
-    if (this.physicsWorld) {
-      this.physicsWorld.createFixedCylinder(0, -0.4, 0, 18, 0.4, 'toy');
-    }
-
+    // The stadium stage is the lab floor; everything here is decoration on top of it.
     // Checkered center testing rug
     const rug = new THREE.Mesh(
       new THREE.CircleGeometry(6, 16),
       new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.5, flatShading: true })
     );
     rug.rotation.x = -Math.PI / 2;
-    rug.position.y = 0.02;
+    rug.position.y = 0.03;
     this.group.add(rug);
     noOutline(rug);
 
@@ -65,10 +125,6 @@ export class MimicLab {
       bleacher.rotation.x = Math.PI / 2;
       bleacher.position.y = height;
       this.group.add(bleacher);
-
-      if (this.physicsWorld) {
-        this.physicsWorld.createFixedCylinder(0, height, 0, radius, 0.35, 'wood');
-      }
     }
 
     // Sunny overhead lab lighting
@@ -87,120 +143,100 @@ export class MimicLab {
     trunk.position.set(trunkX, 0.7, trunkZ);
     this.group.add(trunk);
     if (this.physicsWorld) {
-      this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood');
+      this._trackBody(this.physicsWorld.createStaticBox(trunkX, 0.7, trunkZ, 2.1, 0.7, 1.1, 'wood'));
     }
 
-    // Spawn starting fun physics sandbox props
-    this._spawnProp('watermelon', 0, 1.5, -8, 'fruit', 2.0);
-    this._spawnProp('bowlingBall', -2.5, 1.5, -7, 'metal', 4.5);
-    this._spawnProp('crate', 2.5, 1.5, -7, 'wood', 3.0);
-    this._spawnProp('rubberChicken', -1.2, 1.5, -6, 'rubber', 0.8);
-    this._spawnProp('explosiveBarrel', 1.5, 1.5, -6, 'toy', 2.5, true);
-    this._spawnProp('giantDie', -3.5, 1.5, -5, 'toy', 2.0);
+    // Starting toys, as real arena items so the player can grab, throw and blow them up
+    for (const [key, x, z] of [['watermelon', 0, -8], ['bowlingBall', -2.5, -7], ['crate', 2.5, -7],
+      ['rubberChicken', -1.2, -6], ['explosiveBarrel', 1.5, -6], ['giantDie', -3.5, -5]]) this._spawnItem(key, x, 1.6, z);
   }
 
-  _spawnProp(name, x, y, z, material, mass, isExplosive = false) {
-    let geo;
-    let mat = toonMat({ color: PALETTE.red, flatShading: true });
-    if (name === 'watermelon') {
-      geo = new THREE.SphereGeometry(0.65, 8, 8);
-      mat = toonMat({ color: 0x16a34a, flatShading: true });
-    } else if (name === 'bowlingBall') {
-      geo = new THREE.SphereGeometry(0.6, 12, 12);
-      mat = toonMat({ color: 0x1e293b, flatShading: true });
-    } else if (name === 'crate' || name === 'giantDie') {
-      geo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
-      mat = toonMat({ color: name === 'giantDie' ? 0xffffff : 0xca8a04, flatShading: true });
-    } else if (name === 'rubberChicken') {
-      geo = new THREE.CylinderGeometry(0.2, 0.35, 1.2, 6);
-      mat = toonMat({ color: PALETTE.yellow, flatShading: true });
-    } else {
-      geo = new THREE.CylinderGeometry(0.55, 0.55, 1.3, 8);
-      mat = toonMat({ color: PALETTE.red, flatShading: true });
-    }
-
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    this.group.add(mesh);
-
-    let body = null;
-    if (this.physicsWorld) {
-      const b = this.physicsWorld.createDynamicBody(x, y, z, 'sphere', { radius: 0.6 }, { material, mass });
-      body = b.body;
-    }
-
-    this.props.push({ name, mesh, body, isExplosive });
+  _spawnItem(key, x, y, z) {
+    if (!this.arena) return null;
+    try {
+      const o = this.arena.spawnItem(key, { x, y, z });
+      if (o) this.items.push(o);
+      return o;
+    } catch { return null; }
   }
 
   update(dt, player, dweebs = [], combat = null) {
     this.clock += dt;
+    if (combat) this.combat = combat;
+    if (this.arena) this.items = this.items.filter(o => this.arena.objects.includes(o));
     this.mutationCooldown = Math.max(0, this.mutationCooldown - dt);
-
-    // Sync props physics
-    for (const p of this.props) {
-      if (p.body && p.mesh) {
-        const t = p.body.translation();
-        const r = p.body.rotation();
-        p.mesh.position.set(t.x, t.y, t.z);
-        p.mesh.quaternion.set(r.x, r.y, r.z, r.w);
-      }
+    if (this.chainTimer > 0) {
+      this.chainTimer = Math.max(0, this.chainTimer - dt);
+      if (this.chainTimer <= 0) this.chain = 0;
     }
 
-    if (!player || !player.body) return;
+    if (!player || !player.body || !player.active) return;
 
-    // Detect Player Actions
-    const playerVel = player.body.linvel();
-    const speed = Math.hypot(playerVel.x, playerVel.z);
-
-    // 1. High Jump Action Detected
-    if (playerVel.y > 9.0 && this.mutationCooldown <= 0) {
-      this.triggerDemonstration('HIGH JUMP / DIVE', dweebs);
+    // Jump (the Dweeb sets jumpRising for both ground jumps and double jumps).
+    if (player.jumpRising && !this._wasJumpRising) {
+      this.triggerDemonstration(player.jumpsLeft === 0 ? 'DOUBLE JUMP' : 'BIG JUMP', dweebs);
     }
+    this._wasJumpRising = !!player.jumpRising;
 
-    // 2. Heavy Throw Action Detected (checked via any prop moving fast away from player)
-    for (const p of this.props) {
-      if (p.body) {
-        const pv = p.body.linvel();
-        const pSpeed = Math.hypot(pv.x, pv.y, pv.z);
-        if (pSpeed > 14.0 && this.mutationCooldown <= 0) {
-          this.triggerDemonstration(`MEGA THROW (${p.name.toUpperCase()})`, dweebs);
-          break;
+    // Ground dive.
+    const diving = player.diveTimer > 0;
+    if (diving && !this._wasDiving) this.triggerDemonstration('FLYING DIVE', dweebs);
+    this._wasDiving = diving;
+
+    // Getting launched: a fresh hit bumps hitstun; big ones also start a ragdoll.
+    const launched = player.hitstun > this._prevHitstun + 0.05;
+    if (launched || (player.ragdolling && !this._wasRagdolling)) {
+      this.triggerDemonstration('GETTING LAUNCHED', dweebs);
+    }
+    this._prevHitstun = player.hitstun || 0;
+    this._wasRagdolling = !!player.ragdolling;
+
+    // Grab / throw transitions. A drop (Q) throws nothing, so only count fast releases.
+    const held = player.held;
+    if (held && !this._prevHeld) {
+      this.triggerDemonstration(`GRAB (${held.kind === 'dweeb' ? 'A PUPIL' : 'A TOY'})`, dweebs);
+    } else if (!held && this._prevHeld) {
+      const ref = this._prevHeld.ref;
+      if (ref?.body) {
+        const v = ref.body.linvel();
+        if (Math.hypot(v.x, v.y, v.z) > 7) {
+          this.triggerDemonstration(`MEGA THROW (${this._prevHeld.kind === 'dweeb' ? 'PUPIL' : 'TOY'})`, dweebs);
         }
       }
     }
-
-    // 3. Punch / Attack Action Detected
-    if (player.punchTime !== undefined && player.punchTime < 0.15 && this.mutationCooldown <= 0) {
-      this.triggerDemonstration('MEGA BONK / PUNCH', dweebs);
-    }
-
-    // 4. Drop Kick / Slam Action Detected
-    if ((player.dropKicking || player.groundSlamming) && this.mutationCooldown <= 0) {
-      this.triggerDemonstration('FLYING DROP-KICK', dweebs);
-    }
+    this._prevHeld = held ? { kind: held.kind, ref: held.ref } : null;
   }
 
-  triggerDemonstration(actionName, dweebs) {
-    this.lastAction = actionName;
-    this.mutationCooldown = 6.0;
+  triggerDemonstration(actionName, dweebs = []) {
+    if (this.mutationCooldown > 0) return false;
 
-    // Pick random mutation archetype
-    const mut = MUTATION_TYPES[Math.floor(Math.random() * MUTATION_TYPES.length)];
+    this.lastAction = actionName;
+    this.mutationCooldown = 2.5;
+
+    // Chain hype: repeated demos inside the 7s window build a bigger MIMIC combo.
+    this.chain = this.chainTimer > 0 ? Math.min(9, this.chain + 1) : 1;
+    this.chainTimer = 7.0;
+
+    // At chain 3+, the pupils attempt the spectacular mutations only.
+    const pool = this.chain >= 3
+      ? MUTATION_TYPES.filter(m => m.id === 'swarm' || m.id === 'substitute')
+      : MUTATION_TYPES;
+    const mut = pool[Math.floor(Math.random() * pool.length)] || MUTATION_TYPES[0];
     this.activeMutation = mut;
 
-    // Show on Announcer HUD
-    const announcer = document.getElementById('announcer');
-    if (announcer) {
-      announcer.className = 'show trick';
-      announcer.innerHTML = `MIMIC: ${mut.name}!<small>${mut.blurb}</small>`;
-    }
+    const style = this.chain >= 3 ? 'danger' : 'trick';
+    this._announce(
+      `MIMIC x${this.chain}!<small>${actionName} → ${mut.name}: ${mut.blurb}</small>`,
+      style,
+      2.0
+    );
+    this.audio?.playCheer?.(Math.min(1, 0.3 + this.chain * 0.12));
 
-    // Choose 1 or 2 Dweeb pupils to execute the mutated copycat action
-    const pupils = dweebs.filter(d => !d.isPlayer);
-    if (pupils.length === 0) return;
+    // Choose a Dweeb pupil to execute the mutated copycat action.
+    const pupils = dweebs.filter(d => !d.isPlayer && d.active && d.body);
+    if (pupils.length === 0) return true;
 
     const pupil = pupils[Math.floor(Math.random() * pupils.length)];
-    if (!pupil.body) return;
 
     if (mut.id === 'overachiever') {
       // Wind up and blast upward into the stratosphere!
@@ -208,12 +244,17 @@ export class MimicLab {
       if (pupil.onBounce) pupil.onBounce();
     } else if (mut.id === 'clumsy') {
       // Trip, tumble, and ragdoll
-      pupil.body.setLinvel({ x: 0, y: 4.0, z: 0 }, true);
-      pupil.ragdolling = true;
-      pupil.hitstun = 2.5;
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 3, y: 5.0, z: (Math.random() - 0.5) * 3 }, true);
+      pupil.startRagdoll?.(1.8, 10);
     } else if (mut.id === 'substitute') {
-      // Blast forward carrying an explosive
-      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 16, y: 8.0, z: (Math.random() - 0.5) * 16 }, true);
+      // Swapped the prop for an explosive barrel… with the fuse already lit
+      const pp = pupil.getPosition();
+      const barrel = this._spawnItem('explosiveBarrel', pp.x, pp.y + 1.6, pp.z);
+      if (barrel?.body) {
+        barrel.body.setLinvel({ x: (Math.random() - 0.5) * 6, y: 6, z: (Math.random() - 0.5) * 6 }, true);
+        this.combat?.lightFuse?.(barrel, pupil, 1.4);
+      }
+      pupil.body.setLinvel({ x: (Math.random() - 0.5) * 10, y: 7.0, z: (Math.random() - 0.5) * 10 }, true);
     } else if (mut.id === 'swarm') {
       // Launch all pupils in a comedic fountain burst!
       for (const p of pupils) {
@@ -226,14 +267,43 @@ export class MimicLab {
         }
       }
     }
+    return true;
   }
 
   dispose() {
-    this.scene.remove(this.group);
-    for (const c of this.colliders) {
-      if (this.physicsWorld && c.body) {
-        this.physicsWorld.world.removeRigidBody(c.body);
-      }
+    if (this.hintTimer) {
+      clearTimeout(this.hintTimer);
+      this.hintTimer = null;
     }
+    if (this.hintEl) {
+      this.hintEl.remove();
+      this.hintEl = null;
+    }
+
+    // Remove every body this lab created, not just the dynamic props.
+    if (this.physicsWorld) {
+      for (const id of this.bodyIds) this.physicsWorld.removeBody(id);
+    }
+    this.bodyIds.length = 0;
+
+    // Legacy collider entries (if any code pushed them manually).
+    for (const c of this.colliders) {
+      if (!this.physicsWorld || !c?.body) continue;
+      if (c.id) this.physicsWorld.removeBody(c.id);
+      else this.physicsWorld.world.removeRigidBody(c.body);
+    }
+    this.colliders.length = 0;
+    this.props.length = 0;
+    if (this.arena) for (const o of this.items) if (this.arena.objects.includes(o)) this.arena.removeObject(o);
+    this.items = [];
+
+    this.group.traverse(obj => {
+      if (!obj.isMesh) return;
+      obj.geometry?.dispose?.();
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) m?.dispose?.();
+    });
+    this.group.clear();
+    this.scene.remove(this.group);
   }
 }
