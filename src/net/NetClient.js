@@ -20,7 +20,7 @@
 
 import {
   PROTOCOL_VERSION, SIM_HZ, INPUT_REDUNDANCY, EMPTY_INPUT, EventKind,
-  makeCodec, AUTHORITATIVE_EVENTS, sanitizeInput,
+  makeCodec, AUTHORITATIVE_EVENTS, sanitizeInput, normSlot,
 } from './protocol.js';
 import { InputHistory, CorrectionSmoother, INTERP_TICKS, sampleBuffer, MIN_SNAP_M, SMOOTH_MS } from './prediction.js';
 import { addNetSimulation, parseNetFlags } from './lagSim.js';
@@ -66,6 +66,8 @@ export class NetClient {
       connect: '(opts) => this',
       join: '() => this',
       setReady: '(ready:boolean) => void',
+      setRematch: '(want:boolean) => void      // vote for another round after the match',
+      spectate: '() => this                   // watch without a slot: no input, no votes',
       setInput: '({moveX,moveY,jump,attack,grab,dodge,special,down,aimYaw,aimLoft,charge}) => void',
       update: '(dtSeconds) => void',
       renderEntities: '() => [{id,x,y,z,yaw,mine}]   // remote dweebs are ~100ms behind',
@@ -88,6 +90,7 @@ export class NetClient {
    * @param {string} [opts.url]             ws://… (defaults to ?server= or host:8787)
    * @param {string} [opts.room]            4-letter code
    * @param {boolean} [opts.create]         create the room if it does not exist
+   * @param {boolean} [opts.spectate]       watch instead of joining (no slot, no input)
    * @param {string} [opts.name] [opts.type] [opts.color] [opts.token]
    * @param {object} [opts.net]             {lag, loss, jitter} to inject
    * @param {(c:NetClient) => void} [opts.onTick]       once per rendered frame
@@ -101,6 +104,7 @@ export class NetClient {
     this.url = opts.url || defaultUrl(q);
     this.room = (opts.room || '').toUpperCase();
     this.create = !!opts.create;
+    this.spectateOnConnect = !!opts.spectate;
     this.name = opts.name || 'dweeb';
     this.type = opts.type || 'cube';
     this.color = opts.color || '#8ec7ff';
@@ -115,6 +119,7 @@ export class NetClient {
 
     this.sock = null;
     this.slot = -1;
+    this.spectating = false;   // watching a room: snapshots render, nothing is predicted
     this.status = 'idle';
     this.connected = false;
     this.ready = false;
@@ -152,8 +157,11 @@ export class NetClient {
     sock.onopen = () => {
       this.connected = true;
       this.setStatus('connected');
-      this.send({ t: 'hello', client: 'dweebs-web', clientTime: Date.now(), protocol: PROTOCOL_VERSION });
-      this.join();
+      // The codec rides in hello so the server answers in kind (see server/index.js);
+      // without it a --codec json server and a bin client could never talk.
+      this.send({ t: 'hello', client: 'dweebs-web', clientTime: Date.now(), protocol: PROTOCOL_VERSION, codec: this.codec.name });
+      if (this.spectateOnConnect) this.spectate();
+      else this.join();
       this.startPing();
     };
     sock.onclose = () => { this.connected = false; this.setStatus('disconnected'); this.stopTimers(); };
@@ -196,9 +204,48 @@ export class NetClient {
     this._joinRetry = setTimeout(retry, 800);
   }
 
-  setReady(v) { this.ready = !!v; this.send({ t: 'ready', ready: this.ready }); }
+  setReady(v) { if (this.spectating) return; this.ready = !!v; this.send({ t: 'ready', ready: this.ready }); }
+  /** Vote for a rematch (or withdraw the vote). Unanimous => the room resets to lobby. */
+  setRematch(want) { this.send({ t: 'rematch', want: !!want }); }
+  /**
+   * Watch the room without playing: no slot, no input, no votes. Snapshots are
+   * rendered as-is; nothing is predicted or reconciled.
+   */
+  spectate() {
+    this.send({
+      t: 'spectate', room: this.room, token: this.token,
+      name: this.name, type: this.type, color: this.color,
+    });
+    // The room might not exist yet (the spectator beat the host): retry until the
+    // server confirms, like the join retry. room_not_found is retried; other
+    // errors are terminal.
+    clearTimeout(this._spectateRetry);
+    const retry = () => {
+      if (this.status === 'spectating') return;
+      if (typeof this.status === 'string' && this.status.startsWith('error')
+        && this.status !== 'error:room_not_found') return;
+      if (this.sock && this.sock.readyState === 1) this.spectate();
+      else return;
+      this._spectateRetry = setTimeout(retry, 800);
+    };
+    this._spectateRetry = setTimeout(retry, 800);
+    return this;
+  }
+  /**
+   * The ready handshake's lost-frame recovery. The server only starts the match when
+   * every connected human is ready; if our ready frame was dropped, the room sits in
+   * the lobby forever while the UI shows us as ready. The server heartbeats the lobby
+   * state, so any disagreement is eventually visible — and we close the loop by
+   * re-sending ready until the server agrees. Idempotent server-side, so a duplicate
+   * is harmless.
+   */
+  _confirmReady(m) {
+    if (m.phase !== 'lobby' || !this.ready || this.slot < 0) return;
+    const me = (m.players || []).find(p => p.slot === this.slot && !p.bot);
+    if (me && !me.ready) this.send({ t: 'ready', ready: true });
+  }
   leave() { this.send({ t: 'leave' }); }
-  close() { this.stopTimers(); clearTimeout(this._joinRetry); if (this.sock) this.sock.close(); }
+  close() { this.stopTimers(); if (this.sock) this.sock.close(); }
   setStatus(s) { this.status = s; this.onStatus(s); }
 
   send(m) {
@@ -217,7 +264,7 @@ export class NetClient {
     }, PING_INTERVAL_MS));
   }
 
-  stopTimers() { for (const t of this._timers) clearInterval(t); this._timers = []; clearTimeout(this._joinRetry); }
+  stopTimers() { for (const t of this._timers) clearInterval(t); this._timers = []; clearTimeout(this._joinRetry); clearTimeout(this._spectateRetry); }
 
   // ---------------------------------------------------------------- clock sync --
 
@@ -268,14 +315,26 @@ export class NetClient {
   handle(m) {
     switch (m.t) {
       case 'welcome':
-        this.slot = m.you;
+        // normSlot: the binary wire cannot hold the greeting's you=-1, so it arrives
+        // as 2^32-1 — normalize before anything treats it as a seat. And the greeting
+        // must never clobber a real slot: under jitter it can arrive after the join's
+        // welcome, and it carries the schema version and nothing else.
         clearTimeout(this._joinRetry);
-        if (m.you < 0 || !m.token) {
+        if (m.spectating) {
+          // The server confirmed the watch: no slot, no token, just the room.
+          this.spectating = true;
+          clearTimeout(this._spectateRetry);
+          this.room = m.room || this.room;
+          this.setStatus('spectating');
+          return;
+        }
+        if (normSlot(m.you) < 0 || !m.token) {
           // The pre-handshake greeting: it carries the schema version and nothing
           // else, and must never mark the client as joined (see the version gate).
           this.room = m.room || this.room;
           return;
         }
+        this.slot = normSlot(m.you);
         this.room = m.room || this.room;
         this.token = m.token || this.token;
         if (this.token && typeof localStorage !== 'undefined') {
@@ -286,6 +345,7 @@ export class NetClient {
       case 'room':
         this.roomState = m;
         this.onRoom(m);
+        this._confirmReady(m);
         return;
       case 'snapshot':
         return this.onSnapshot(m);
@@ -315,6 +375,17 @@ export class NetClient {
   }
 
   onSnapshot(m) {
+    // Spectators don't predict: they render the authoritative feed as-is. The
+    // interpolation buffer still smooths the 30 Hz snapshots for them.
+    if (this.spectating) {
+      if (m.tick <= this.serverTick && this.snapBuffer.length) return;
+      if (m.full || this.snapBuffer.length === 0) this.serverEntities = new Map();
+      for (const e of m.entities) this.serverEntities.set(e.id, e);
+      this.snapBuffer.push({ tick: m.tick, entities: m.entities.map(toMeters) });
+      if (this.snapBuffer.length > SNAP_BUFFER) this.snapBuffer.shift();
+      this.serverTick = Math.max(this.serverTick, m.tick);
+      return;
+    }
     // Jitter can reorder packets. Reconciling an older snapshot after a newer one
     // rewinds the sim and shows up as a rubber-band, so stale snapshots are dropped.
     if (m.tick <= this.serverTick && this.joined) return;
@@ -418,7 +489,7 @@ export class NetClient {
   // ----------------------------------------------------------------- ticking --
 
   /** Feed the current input every frame; it is sanitized before it goes anywhere. */
-  setInput(input) { this.input = sanitizeInput(input); }
+  setInput(input) { if (!this.spectating) this.input = sanitizeInput(input); }
 
   /**
    * @param {number} dt seconds since the last call (frame time)
@@ -462,7 +533,7 @@ export class NetClient {
    * packet is covered by the next one. That is the whole point of the redundancy.
    */
   sendInput(frame) {
-    if (this.slot < 0) return;
+    if (this.slot < 0 || this.spectating) return;
     const frames = [];
     for (let i = INPUT_REDUNDANCY - 1; i >= 0; i--) {
       const t = this.tick - i;
@@ -481,6 +552,8 @@ export class NetClient {
    */
   renderEntities() {
     const sampled = sampleBuffer(this.snapBuffer, this.renderTick);
+    // Spectators have no dweeb: everything in the feed renders, nobody is "mine".
+    if (this.spectating) return (sampled ? sampled.entities : []).map(e => ({ ...e, mine: false }));
     const meId = this.slot + 1;
     const out = [];
     for (const e of (sampled ? sampled.entities : [])) {

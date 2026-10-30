@@ -28,13 +28,20 @@ export const FULL_SNAPSHOT_EVERY = NET.fullSnapshotEvery;
 /** Binary opcodes, kept in sync with the JSON `t` names. */
 export const Op = Object.freeze({
   HELLO: 1, JOIN: 2, INPUT: 3, ACK: 4, PING: 5, PONG: 6, READY: 7, LEAVE: 8,
-  SETTINGS: 9, QUICK: 10,
+  SETTINGS: 9, QUICK: 10, SPECTATE: 11, REMATCH: 12,
   WELCOME: 16, ROOM: 17, SNAPSHOT: 18, EVENT: 19, ERROR: 20, ROOM_FULL: 21, ONLINE: 22, SERVER_FULL: 23,
 });
 export const OpName = Object.freeze(Object.fromEntries(
   Object.entries(Op).map(([k, v]) => [v, k.toLowerCase()])));
 export const Msg = Object.freeze(Object.fromEntries(
   Object.entries(Op).map(([k, v]) => [k.toLowerCase(), v])));
+
+/**
+ * A decoded welcome slot, normalized. The binary wire cannot hold -1, so the
+ * pre-handshake greeting (you: -1) arrives as 2^32-1. Anything outside the real
+ * slot range means "no slot" — callers must never treat 4294967295 as a seat.
+ */
+export const normSlot = you => (Number.isInteger(you) && you >= 0 && you < MAX_PLAYERS ? you : -1);
 
 /** Event kinds. AUTHORITATIVE_EVENTS drive the Hud/Announcer; the rest are cosmetic Fx. */
 export const EventKind = Object.freeze({
@@ -58,6 +65,7 @@ export const ERR = Object.freeze({
   BAD_VERSION: 'bad_version', ROOM_FULL: 'room_full', ROOM_NOT_FOUND: 'room_not_found',
   BAD_INPUT: 'bad_input', RATE_LIMIT: 'rate_limit', SLOT_EXPIRED: 'slot_expired',
   NOT_IN_ROOM: 'not_in_room', MALFORMED: 'malformed', SERVER_FULL: 'server_full', NOT_HOST: 'not_host',
+  ALREADY_IN_ROOM: 'already_in_room',
 });
 
 /** Room codes: 4 letters from a 24-letter alphabet = 331,776 combinations. */
@@ -164,7 +172,9 @@ const readInput = r => {
 
 /** Binary encoders, one per opcode. `m` is the canonical message object. */
 const ENC = {
-  [Op.HELLO]: (w, m) => { w.str(m.client).u32(m.clientTime).u16(m.protocol); },
+  // The codec rides at the END of hello so old decoders (which stop after
+  // `protocol`) keep working: extra trailing bytes are simply never read.
+  [Op.HELLO]: (w, m) => { w.str(m.client).u32(m.clientTime).u16(m.protocol).str(m.codec || ''); },
   [Op.JOIN]: (w, m) => { w.str(m.room).u8(m.create ? 1 : 0).str(m.token).str(m.name).str(m.type).str(m.color); },
   [Op.SETTINGS]: (w, m) => {
     w.str(String(m.stocks ?? '')).str(String(m.time ?? ''))
@@ -178,9 +188,11 @@ const ENC = {
   },
   [Op.READY]: (w, m) => { w.u8(m.ready ? 1 : 0); },
   [Op.LEAVE]: () => {},
+  [Op.SPECTATE]: (w, m) => { w.str(m.room).str(m.token).str(m.name).str(m.type).str(m.color); },
+  [Op.REMATCH]: (w, m) => { w.u8(m.want ? 1 : 0); },
   [Op.PING]: (w, m) => { w.u32(m.id).f32(m.clientTime); },
   [Op.PONG]: (w, m) => { w.u32(m.id).f32(m.clientTime).f32(m.serverTime); },
-  [Op.WELCOME]: (w, m) => { w.u16(m.protocol).u32(m.you).u32(m.tick).str(m.token).str(m.room).u8(m.rtt || 0); },
+  [Op.WELCOME]: (w, m) => { w.u16(m.protocol).u32(m.you).u32(m.tick).str(m.token).str(m.room).u8(m.rtt || 0).u8(m.spectating ? 1 : 0); },
   [Op.ROOM]: (w, m) => {
     w.str(m.room).str(String(m.phase ?? 'lobby')).u32(m.tick).u8(m.players.length);
     for (const p of m.players) {
@@ -192,7 +204,12 @@ const ENC = {
     // NOTE: host is slot+1 so that "no host" is encodable: 0 means none, slot s rides as s+1.
     w.str(m.code || m.room || '').u8(m.isPublic ? 1 : 0).u8((typeof m.host === 'number' && m.host >= 0 ? m.host : 7) + 1)
       .u8(Number(m.settings?.stocks) || 3).u16(Number(m.settings?.time) || 120).u8(m.settings?.items === false ? 0 : 1)
-      .u8(Number(m.settings?.bots) || 0);
+      .u8(Number(m.settings?.bots) || 0)
+      // Rematch votes ride at the very tail: want = connected humans voting yes,
+      // need = connected humans total. Old decoders stop at `bots` and never read this.
+      .u8(Number(m.rematch?.want) || 0).u8(Number(m.rematch?.need) || 0)
+      // Spectator count: same tail, same story for old decoders.
+      .u16(Number(m.spectators) || 0);
   },
   [Op.SNAPSHOT]: (w, m) => {
     w.u32(m.tick).u32(m.ack).u8(m.full ? 1 : 0).u32(m.serverTime).u16(m.entities.length);
@@ -216,12 +233,14 @@ const ENC = {
     const who = Array.isArray(m.who) ? m.who.slice(0, 32) : [];
     w.u8(who.length);
     for (const n of who) w.str(n);
+    // Spectator count rides at the tail; old decoders never read it.
+    w.u16(m.spectators || 0);
   },
   [Op.SERVER_FULL]: (w, m) => { w.u16(m.humans).u16(m.maxRooms); },
 };
 
 const DEC = {
-  [Op.HELLO]: r => ({ client: r.str(), clientTime: r.u32(), protocol: r.u16() }),
+  [Op.HELLO]: r => ({ client: r.str(), clientTime: r.u32(), protocol: r.u16(), codec: r.left > 0 ? r.str() : '' }),
   [Op.JOIN]: r => ({ room: r.str(), create: !!r.u8(), token: r.str(), name: r.str(), type: r.str(), color: r.str() }),
   [Op.SETTINGS]: r => ({ stocks: r.str(), time: r.str(), items: r.str(), bots: r.left > 0 ? r.str() : '' }),
   [Op.QUICK]: r => ({ token: r.str(), name: r.str(), type: r.str(), color: r.str() }),
@@ -232,9 +251,11 @@ const DEC = {
   },
   [Op.READY]: r => ({ ready: !!r.u8() }),
   [Op.LEAVE]: () => ({}),
+  [Op.SPECTATE]: r => ({ room: r.str(), token: r.str(), name: r.str(), type: r.str(), color: r.str() }),
+  [Op.REMATCH]: r => ({ want: !!r.u8() }),
   [Op.PING]: r => ({ id: r.u32(), clientTime: r.f32() }),
   [Op.PONG]: r => ({ id: r.u32(), clientTime: r.f32(), serverTime: r.f32() }),
-  [Op.WELCOME]: r => ({ protocol: r.u16(), you: r.u32(), tick: r.u32(), token: r.str(), room: r.str(), rtt: r.u8() }),
+  [Op.WELCOME]: r => ({ protocol: r.u16(), you: r.u32(), tick: r.u32(), token: r.str(), room: r.str(), rtt: r.u8(), spectating: r.left >= 1 ? !!r.u8() : false }),
   [Op.ROOM]: r => {
     const room = r.str(), phase = r.str(), tick = r.u32(), n = r.u8(), players = [];
     for (let i = 0; i < n; i++) {
@@ -245,7 +266,7 @@ const DEC = {
     }
     // The tail is optional on the wire: a decoder reading an older frame that ends
     // at the players gets the same defaults the JSON path produces.
-    let code = room, isPublic = false, host = -1, settings;
+    let code = room, isPublic = false, host = -1, settings, rematch, spectators = 0;
     if (r.left >= 2) {
       code = r.str(); isPublic = !!r.u8();
       // host rides as slot+1: 0 means no host, so subtract back (see ENC).
@@ -254,8 +275,12 @@ const DEC = {
         settings = { stocks: r.u8() || 3, time: r.u16() || 120, items: r.u8() !== 0 };
         settings.bots = r.left >= 1 ? r.u8() : 0;
       }
+      // Rematch votes at the very tail; absent on older frames.
+      if (r.left >= 2) rematch = { want: r.u8(), need: r.u8() };
+      // Spectator count after that; absent on older frames.
+      if (r.left >= 2) spectators = r.u16();
     }
-    return { room, phase, tick, players, code, isPublic, host, settings };
+    return { room, phase, tick, players, code, isPublic, host, settings, rematch, spectators };
   },
   [Op.SNAPSHOT]: r => {
     const tick = r.u32(), ack = r.u32(), full = !!r.u8(), serverTime = r.u32();
@@ -284,7 +309,7 @@ const DEC = {
     const humans = r.u16(), rooms = r.u16(), matches = r.u16(), openRooms = r.u16();
     const seatsPerRoom = r.u8(), maxRooms = r.u8(), n = r.u8(), who = [];
     for (let i = 0; i < n; i++) who.push(r.str());
-    return { humans, rooms, matches, openRooms, seatsPerRoom, maxRooms, who };
+    return { humans, rooms, matches, openRooms, seatsPerRoom, maxRooms, who, spectators: r.left >= 2 ? r.u16() : 0 };
   },
   [Op.SERVER_FULL]: r => ({ humans: r.u16(), maxRooms: r.u16() }),
 };

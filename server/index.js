@@ -13,13 +13,14 @@ import { randomUUID } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 import {
   PROTOCOL_VERSION, SIM_HZ, SNAPSHOT_HZ, MAX_PLAYERS, RECONNECT_HOLD_MS, NET,
-  makeRoomCode, isRoomCode, makeCodec, deltaEntities, FULL_SNAPSHOT_EVERY, ERR, Op,
+  makeRoomCode, isRoomCode, makeCodec, deltaEntities, FULL_SNAPSHOT_EVERY, ERR,
 } from '../src/net/protocol.js';
 import { InputBuffer } from '../src/net/inputBuffer.js';
 import { MockSim } from '../src/net/mockSim.js';
 import { SimAdapter } from '../src/sim/simAdapter.js';
 import { addNetSimulation, parseNetFlags } from '../src/net/lagSim.js';
 import { WarfareLobby, TURN_MS as WARFARE_TURN_MS } from './warfare.js';
+import { recordMatch, recentMatches } from './history.js';
 
 const TICK_MS = 1000 / SIM_HZ;
 const SNAP_EVERY = SIM_HZ / NET.snapshotHz;   // sim ticks per snapshot
@@ -95,6 +96,7 @@ class Room {
     this.matchStarted = false;
     this.slots = new Map();     // slot -> slot record (see addClient / fillBots)
     this.lobby = [];            // human slots; bots are implied by the free ones
+    this.spectators = new Map(); // sock -> {sock, codec, name, baseline} — watchers, not players
     for (let i = 0; i < MAX_PLAYERS; i++) this.slots.set(i, { slot: i, bot: true, ready: true, connected: true });
     // MockSim is ready synchronously; the real sim flips this on once Rapier is up.
     this.simPrepared = !this.useRealSim;
@@ -221,6 +223,7 @@ class Room {
     if (i < 0) return null;
     const fresh = {
       slot: i, id: randomUUID(), token: randomUUID(), bot: false, connected: true, ready: false,
+      wantRematch: false,
       name: String(name || 'dweeb').slice(0, 12) || 'dweeb',
       type: BOT_TYPES.includes(type) ? type : 'cube',
       color: /^#[0-9a-f]{6}$/i.test(color || '') ? color : BOT_COLORS[i % BOT_COLORS.length],
@@ -248,6 +251,7 @@ class Room {
     player.connected = false;
     player.sock = null;
     player.droppedAt = now;
+    player.wantRematch = false;   // a vote doesn't survive leaving; re-vote on return
   }
 
   sweepDropped(now) {
@@ -265,10 +269,15 @@ class Room {
   }
 
   roomState() {
+    const connected = this.lobby.filter(p => p.connected);
     return {
       t: 'room', room: this.code, phase: this.phase, tick: this.tick,
       code: this.code, isPublic: !!this.isPublic, host: this.hostSlot,
       settings: { ...this.settings },
+      // Rematch votes, room-level: want = connected humans voting yes, need =
+      // connected humans total. The UI shows "2/3 want a rematch".
+      rematch: { want: connected.filter(p => p.wantRematch).length, need: connected.length },
+      spectators: this.spectators.size,
       // Only real seats go out: humans plus the bots the host asked for. Empty
       // seats are not players, so the lobby never shows made-up names.
       players: this.seats().map(i => this.slots.get(i)).map(s => ({
@@ -278,13 +287,85 @@ class Room {
     };
   }
 
+  /**
+   * A rematch vote. Unanimous among connected humans (and at least one human) sends
+   * the room back to the lobby: same players, same room code, fresh sim, everyone
+   * unready. The client UI gates the button on match end; the server just counts.
+   * @returns {boolean} true if the vote triggered a reset
+   */
+  voteRematch(player, want) {
+    if (!player || this.phase !== 'playing') return false;
+    player.wantRematch = !!want;
+    const voters = this.lobby.filter(p => p.connected);
+    if (voters.length > 0 && voters.every(p => p.wantRematch)) {
+      this.resetToLobby();
+      return true;
+    }
+    this.broadcast(this.roomState());
+    return false;
+  }
+
+  /** Back to the lobby for another match: same room, same players, fresh world. */
+  resetToLobby() {
+    this.phase = 'lobby';
+    this.tick = 0;
+    this.snapCount = 0;
+    this.matchStarted = false;
+    for (const p of this.lobby) {
+      // Readiness is PRESERVED across a rematch: a unanimous rematch vote means
+      // everyone wants to play again, so the next match starts without another
+      // ready round. (Clearing it would just have the clients' _confirmReady
+      // re-send the stale ready anyway — same outcome, more round trips.)
+      p.wantRematch = false;
+      p.baseline = new Map();
+      p.buffer = new InputBuffer();
+    }
+    for (const s of this.spectators.values()) s.baseline = new Map();
+    // Rebuild the sim from the room's rules, exactly like a fresh room: the next
+    // READY starts the match the lobby is showing.
+    this.simSettingsKey = JSON.stringify(this.settings);
+    this.simPrepared = !this.useRealSim;
+    this._buildSim();
+    this._logKeyframe('rematch');
+    this.broadcast(this.roomState());
+    this.broadcastSnapshot();
+  }
+
   broadcast(msg) {
-    const data = this.codec.encode(msg);
-    for (const p of this.lobby) if (p.sock && p.sock.readyState === 1) p.sock.send(data);
+    // Per-player codec: the room has a default, but a client may have negotiated a
+    // different one in hello. Rooms are almost always uniform, so encode once per
+    // distinct codec rather than once per player. Spectators get the same room
+    // state (player list, rematch votes) — they watch the lobby too.
+    const byCodec = new Map();
+    const sendToSock = (sock, codec) => {
+      if (!sock || sock.readyState !== 1) return;
+      const c = codec || this.codec;
+      let data = byCodec.get(c);
+      if (!data) { data = c.encode(msg); byCodec.set(c, data); }
+      sock.send(data);
+    };
+    for (const p of this.lobby) sendToSock(p.sock, p.codec);
+    for (const s of this.spectators.values()) sendToSock(s.sock, s.codec);
+  }
+
+  /** Add a watcher. No slot, no input, no vote — just the room state and snapshots. */
+  addSpectator(sock, codec, { name } = {}) {
+    if (this.spectators.size >= MAX_PLAYERS) return null;
+    const spec = {
+      sock, codec: codec || this.codec,
+      name: String(name || 'watcher').slice(0, 12) || 'watcher',
+      baseline: new Map(),
+    };
+    this.spectators.set(sock, spec);
+    return spec;
+  }
+
+  dropSpectator(sock) {
+    this.spectators.delete(sock);
   }
 
   sendTo(p, msg) {
-    if (p.sock && p.sock.readyState === 1) p.sock.send(this.codec.encode(msg));
+    if (p.sock && p.sock.readyState === 1) p.sock.send((p.codec || this.codec).encode(msg));
   }
 
   /**
@@ -347,6 +428,15 @@ class Room {
       for (const e of evs) {
         if (e.kind === 'ko' || e.kind === 'round_end' || e.kind === 'round_start' || e.kind === 'match_end' || e.simType === 'roundEnd' || e.simType === 'matchEnd' || e.simType === 'ko' || e.simType === 'go')
           this._logKeyframe(`event:${e.simType || e.kind}`);
+        // A finished match goes into the recent-history ring for /status: the
+        // Play Online screen's "recent battles" without anyone needing an account.
+        if (e.kind === 'match_end' || e.simType === 'matchEnd') {
+          recordMatch({
+            room: this.code,
+            durationS: (Date.now() - (this.startedAt || Date.now())) / 1000,
+            players: this.lobby.map(p => p.name),
+          });
+        }
       }
       this.broadcast({
         t: 'event', tick: this.tick,
@@ -368,15 +458,20 @@ class Room {
     // frame — the whole room was one permanent full snapshot, at full bandwidth.
     this.snapCount++;
     const full = this.snapCount % (FULL_SNAPSHOT_EVERY / SNAP_EVERY) === 0;
-    for (const p of this.lobby) {
-      if (!p.sock || p.sock.readyState !== 1) continue;
-      const all = this.wireEntities(p.slot);     // per-receiver: only you get your velocity
-      const entities = full ? all : deltaEntities(p.baseline, all);
-      for (const e of entities) p.baseline.set(e.id, e);
-      p.sock.send(this.codec.encode({
-        t: 'snapshot', tick: this.tick, ack: p.buffer.lastTick, full, serverTime: Date.now(), entities,
+    const sendSnap = (sock, codec, slot, baseline, ack) => {
+      if (!sock || sock.readyState !== 1) return;
+      // Spectators (slot -1) get the world with nobody's velocity: they don't have
+      // a dweeb, and per-receiver velocity is a bandwidth cost with no viewer.
+      const all = this.wireEntities(slot);
+      const entities = full ? all : deltaEntities(baseline, all);
+      for (const e of entities) baseline.set(e.id, e);
+      sock.send((codec || this.codec).encode({
+        t: 'snapshot', tick: this.tick, ack, full, serverTime: Date.now(), entities,
       }));
-    }
+    };
+    // Per-receiver: only you get your velocity (wireEntities flags it on your dweeb).
+    for (const p of this.lobby) sendSnap(p.sock, p.codec, p.slot, p.baseline, p.buffer.lastTick);
+    for (const s of this.spectators.values()) sendSnap(s.sock, s.codec, -1, s.baseline, 0);
   }
 }
 
@@ -425,15 +520,16 @@ const perf = { windowStart: Date.now(), busyMs: 0, steps: 0, snapBytes: 0 };
 let lastOnline = null;
 
 const onlineState = () => {
-  let humans = 0, matches = 0, openRooms = 0;
+  let humans = 0, matches = 0, openRooms = 0, spectators = 0;
   const who = [];
   for (const r of rooms.values()) {
     humans += r.countOnline();
+    spectators += r.spectators.size;
     if (r.phase === 'playing') matches++; else openRooms++;
     if (who.length < MAX_PLAYERS) for (const p of r.lobby) if (p.connected && who.length < MAX_PLAYERS) who.push(p.name);
   }
   return {
-    t: 'online', humans, rooms: rooms.size, matches, openRooms,
+    t: 'online', humans, rooms: rooms.size, matches, openRooms, spectators,
     seatsPerRoom: MAX_PLAYERS, maxRooms: MAX_ROOMS,
     who: who.sort((a, b) => String(a).localeCompare(String(b))),
   };
@@ -442,11 +538,22 @@ const onlineState = () => {
 // Keep the last snapshot for /status, cheaply: building it costs one object per 2 s.
 setInterval(() => {
   lastOnline = onlineState();
-  const payload = onlineCodec.encode(lastOnline);
   for (const s of clients) {
     if (s.readyState === 1) {
-      try { s.send(payload); } catch { /* a closing socket is not a server error */ }
+      // Each connection gets the online count in the codec it negotiated: the shared
+      // binary payload would be an undecodable blob to a JSON client.
+      const codec = s.__codec || onlineCodec;
+      try { s.send(codec.encode(lastOnline)); } catch { /* a closing socket is not a server error */ }
     }
+  }
+  // Lobby heartbeat. The ready gate only opens when every connected human is ready,
+  // and a lost `ready` frame used to strand the room in the lobby forever: the client
+  // believed it was ready, the server disagreed, and no further room message ever
+  // arrived to reveal the disagreement. Heartbeating the lobby state closes that
+  // loop — the client re-sends ready until the server agrees (see NetClient).
+  for (const room of rooms.values()) {
+    if (room.phase !== 'lobby' || room.lobby.length === 0) continue;
+    try { room.broadcast(room.roomState()); } catch { /* never break the loop */ }
   }
 }, ONLINE_EVERY_MS);
 
@@ -492,6 +599,7 @@ const httpServer = createServer((req, res) => {
       uptimeS: Math.floor((Date.now() - STARTED_AT) / 1000),
       ...online,
       sim: USE_REAL_SIM ? 'real' : 'mock', codec: CODEC, warfare: warfare.stats,
+      recent: recentMatches(),
       perf: perfState(), rssMb: Math.round(process.memoryUsage().rss / 1048576),
     });
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -509,7 +617,8 @@ setInterval(() => { try { warfare.tick(); } catch (err) { console.error('[warfar
 wss.on('connection', (sock) => {
   sock.binaryType = 'arraybuffer';
   clients.add(sock);
-  const state = { room: null, player: null, codec: makeCodec(CODEC), window: { in: [], other: [] }, benchUntil: 0, rtt: 0 };
+  const state = { room: null, player: null, spectator: null, codec: makeCodec(CODEC), window: { in: [], other: [] }, benchUntil: 0, rtt: 0 };
+  sock.__codec = state.codec;   // the 2 s `online` broadcast encodes per connection
 
   // `addNetSimulation` replaces sock.send; incoming frames are gated in handle().
   if (NET_FLAGS.lag || NET_FLAGS.loss || NET_FLAGS.jitter) addNetSimulation(sock, NET_FLAGS);
@@ -523,7 +632,14 @@ wss.on('connection', (sock) => {
   sock.on('close', () => {
     warfare.drop(wfClient);
     clients.delete(sock);
-    if (state.room && state.player) {
+    if (state.spectator) {
+      state.spectator.room.dropSpectator(sock);
+      state.spectator = null;
+    }
+    // Only drop the slot this socket owned. A client that reconnected fast already
+    // reclaimed its slot on a NEW socket (player.sock !== this sock); dropping it
+    // here would yank a live player out of the room for a ghost disconnect.
+    if (state.room && state.player && state.player.sock === sock) {
       state.room.dropClient(state.player, Date.now());
       state.room.broadcast(state.room.roomState());
     }
@@ -555,18 +671,29 @@ wss.on('connection', (sock) => {
     const bytes = typeof data === 'string' ? data
       : data instanceof ArrayBuffer ? new Uint8Array(data)
         : new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength ?? data.length);
-    const isInput = typeof bytes !== 'string' && bytes.length > 0 && bytes[0] === Op.INPUT;
-    if (!rateOk(isInput)) return fail(ERR.RATE_LIMIT, 'slow down');
     // Warfare frames are JSON text starting with '{' (0x7b); brawler opcodes are all < 0x7b.
     const first = typeof bytes === 'string' ? bytes.charCodeAt(0) : bytes[0];
+    let m = null;
     if (first === 0x7b) {
       let wm;
       try { wm = JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)); } catch { wm = null; }
-      if (wm && typeof wm.wf === 'string') return warfare.handle(wfClient, wm);
+      if (wm && typeof wm.wf === 'string') {
+        // Warfare commands were never rate-limited: one client could flood turns.
+        if (!rateOk(false)) return fail(ERR.RATE_LIMIT, 'slow down');
+        return warfare.handle(wfClient, wm);
+      }
+      // A JSON-codec brawler client: '{' on the wire can only be JSON text, so a
+      // parsed object with a `t` is a message in that client's codec, not warfare.
+      if (wm && typeof wm.t === 'string') m = wm;
+      else return fail(ERR.MALFORMED, 'bad frame');
+    } else {
+      try { m = state.codec.decode(bytes); } catch { return fail(ERR.MALFORMED, 'bad frame'); }
     }
-    let m;
-    try { m = state.codec.decode(bytes); } catch { return fail(ERR.MALFORMED, 'bad frame'); }
     if (!m || !m.t) return fail(ERR.MALFORMED, 'no type');
+    // Classify AFTER decoding: a JSON input frame is text, so the old opcode peek
+    // filed it under "other" (40/s) and benched every JSON player for sending input
+    // at 60 Hz. The ws maxPayload already bounds decode work.
+    if (!rateOk(m.t === 'input')) return fail(ERR.RATE_LIMIT, 'slow down');
 
     switch (m.t) {
       case 'hello': {
@@ -574,19 +701,25 @@ wss.on('connection', (sock) => {
         // welcome — welcome means "you are in a room and here is your slot", and
         // sending one here would let a client think it had joined before it had.
         if (m.protocol !== PROTOCOL_VERSION) return fail(ERR.BAD_VERSION, `server speaks v${PROTOCOL_VERSION}`);
+        // Codec negotiation: the client announces the codec it speaks and the server
+        // answers in kind from here on. Default 'bin' keeps old clients working; the
+        // --codec flag now only sets the default, never a mandate.
+        state.codec = makeCodec(m.codec === 'json' ? 'json' : 'bin');
+        sock.__codec = state.codec;
         state.rtt = Math.min(255, Math.max(0, Date.now() - m.clientTime));
         return send({ t: 'room', room: '', phase: 'hello', tick: 0, players: [] });
       }
       case 'ping':
         return send({ t: 'pong', id: m.id, clientTime: m.clientTime, serverTime: Date.now() });
       case 'join': {
-        if (state.player) return fail(ERR.NOT_IN_ROOM, 'already in a room');
+        if (state.player) return fail(ERR.ALREADY_IN_ROOM, 'already in a room');
         const code = String(m.room || '').toUpperCase();
         if (!isRoomCode(code)) return fail(ERR.ROOM_NOT_FOUND, 'bad code');
         const room = rooms.get(code) || (m.create ? createRoom(code) : null);
         if (!room) return fail(ERR.ROOM_NOT_FOUND, 'no such room');
         const player = room.addClient(sock, m);
         if (!player) return send({ t: 'room_full', room: code });
+        player.codec = state.codec;   // the room encodes for each player in their codec
         state.room = room; state.player = player;
         send({
           t: 'welcome', protocol: PROTOCOL_VERSION, you: player.slot, tick: room.tick,
@@ -600,7 +733,7 @@ wss.on('connection', (sock) => {
         // PLAY NOW: the server picks the room, never the player. Answered with a
         // normal welcome + room state, so the client's path after this is identical
         // to a join-by-code — one UI path, two doors in.
-        if (state.player) return fail(ERR.NOT_IN_ROOM, 'already in a room');
+        if (state.player) return fail(ERR.ALREADY_IN_ROOM, 'already in a room');
         const room = findQuickRoom();
         if (!room) {
           const s = onlineState();
@@ -608,6 +741,7 @@ wss.on('connection', (sock) => {
         }
         const player = room.addClient(sock, m);
         if (!player) return send({ t: 'room_full', room: room.code });
+        player.codec = state.codec;
         state.room = room; state.player = player;
         send({
           t: 'welcome', protocol: PROTOCOL_VERSION, you: player.slot, tick: room.tick,
@@ -643,7 +777,38 @@ wss.on('connection', (sock) => {
         if (!state.player.buffer.push(m)) return fail(ERR.BAD_INPUT, 'bad input frame');
         return;
       }
+      case 'spectate': {
+        // Watch a room without taking a slot: no input, no ready vote, no rematch
+        // vote. The reply is a welcome with spectating=true (you=-1), then the
+        // normal room state and snapshots.
+        if (state.player || state.spectator) return fail(ERR.ALREADY_IN_ROOM, 'already in a room');
+        const code = String(m.room || '').toUpperCase();
+        if (!isRoomCode(code)) return fail(ERR.ROOM_NOT_FOUND, 'bad code');
+        const room = rooms.get(code);
+        if (!room) return fail(ERR.ROOM_NOT_FOUND, 'no such room');
+        const spec = room.addSpectator(sock, state.codec, m);
+        if (!spec) return fail(ERR.ROOM_FULL, 'no spectator seats left');
+        state.spectator = { room };
+        send({
+          t: 'welcome', protocol: PROTOCOL_VERSION, you: -1, tick: room.tick,
+          token: '', room: room.code, rtt: state.rtt, spectating: true,
+        });
+        room.broadcast(room.roomState());
+        room.broadcastSnapshot();
+        return;
+      }
+      case 'rematch': {
+        // One player's vote for another round. Unanimous among connected humans
+        // resets the room to the lobby (see Room.voteRematch).
+        if (!state.player || !state.room) return fail(ERR.NOT_IN_ROOM, 'join first');
+        state.room.voteRematch(state.player, m.want);
+        return;
+      }
       case 'leave': {
+        if (state.spectator) {
+          state.spectator.room.dropSpectator(sock);
+          state.spectator = null;
+        }
         if (state.room && state.player) {
           state.room.dropClient(state.player, Date.now());
           state.room.broadcast(state.room.roomState());
@@ -677,7 +842,13 @@ setInterval(() => {
       // T22: evict rooms with zero humans that have idled past ROOM_IDLE_MS.
       if (room.lobby.length === 0) {
         room.idleSince ??= nowMs;
-        if (nowMs - room.idleSince > ROOM_IDLE_MS) { rooms.delete(code); continue; }
+        if (nowMs - room.idleSince > ROOM_IDLE_MS) {
+          // Tell any watchers the room is gone before deleting it; otherwise their
+          // snapshots just stop and the client can't tell "closed" from "lagged".
+          if (room.spectators.size > 0) room.broadcast({ ...room.roomState(), phase: 'closed' });
+          rooms.delete(code);
+          continue;
+        }
       } else room.idleSince = 0;
       // A throw in one room must never kill the server tick loop (that is exactly how
       // the ready gate bug hid: an uncaught TypeError in an interval callback stops it).
