@@ -47,6 +47,7 @@ import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebM
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
 import { defaultUrl } from './net/NetClient.js';
+import { createQualityGovernor } from './app/performance.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
@@ -103,6 +104,9 @@ let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
 let rematch = null;
+let sun = null;
+let outlineEnabled = true;
+let qualityGovernor = null;
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
 
@@ -145,7 +149,7 @@ async function init() {
 
   // Lighting: warm sun + sky bounce
   scene.add(new THREE.HemisphereLight(0xdff3ff, 0x8a6a9a, 1.3));
-  const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
+  sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
   sun.position.set(18, 30, 12);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -157,6 +161,23 @@ async function init() {
   sky = new Sky(scene);
   water = new Water(scene, WATER_LEVEL);
   particles = new Particles(scene);
+
+  // Quality governor (adaptive performance)
+  const { loadSettings } = await import('./app/settings.js');
+  const s = loadSettings();
+  qualityGovernor = createQualityGovernor({
+    renderer,
+    getOutline: () => outlineEnabled,
+    setOutline: (on) => { outlineEnabled = on; },
+    particles,
+    sunLight: sun,
+    onChange: (level, label) => {
+      hud?.feed(`⚙️ Performance mode: ${label}`);
+    },
+  });
+  // Only enable auto mode if quality is set to 'auto'
+  qualityGovernor.setAuto(s.quality === 'auto', 0);
+  window.__dweebsGovernor = qualityGovernor;
 
   await loadStep(25, 'Teaching cubes to feel…');
   physics = new PhysicsWorld();
@@ -1333,8 +1354,11 @@ function loop() {
   const rawDt = Math.min(clock.getDelta(), 0.1);
   const inGame = match.phase !== Phase.MENU && match.phase !== Phase.RESULTS;
 
+  // Adaptive quality governor (only runs when quality === 'auto')
+  if (qualityGovernor) qualityGovernor.update(rawDt);
+
   if (paused) {
-    effect.render(scene, camera);
+    (outlineEnabled ? effect : renderer).render(scene, camera);
     return;
   }
 
@@ -1343,7 +1367,7 @@ function loop() {
     currentWarfare.update(rawDt);
     sky.update(rawDt);
     water.update(rawDt);
-    effect.render(scene, camera);
+    (outlineEnabled ? effect : renderer).render(scene, camera);
     return;
   }
 
@@ -1352,7 +1376,7 @@ function loop() {
     currentBuildLab.update(rawDt);
     sky.update(rawDt);
     water.update(rawDt);
-    effect.render(scene, camera);
+    (outlineEnabled ? effect : renderer).render(scene, camera);
     return;
   }
 
@@ -1580,7 +1604,7 @@ function loop() {
   water.update(rawDt);
   cam.update(rawDt);
   audio.updateLoops(rawDt, physics.rollSpeed, arena.cheer);
-  effect.render(scene, camera);
+  (outlineEnabled ? effect : renderer).render(scene, camera);
 }
 
 /** Turn physics impacts into sound, dust and breakage. */

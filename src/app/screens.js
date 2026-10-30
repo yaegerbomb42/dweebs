@@ -400,7 +400,7 @@ function buildSettings() {
           </div>
           <div class="app-col">
             <h3>Video &amp; motion</h3>
-            ${seg('quality', 'Quality', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']])}
+            ${seg('quality', 'Quality', [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']])}
             ${seg('reducedMotion', 'Reduced motion', [['false', 'Off'], ['true', 'On']])}
             <p class="app-note">Reduced motion turns off screen shake, hit-stop and confetti.</p>
             <h3>Input</h3>
