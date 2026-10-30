@@ -925,7 +925,8 @@ function startMatch() {
     audio.startMusic(false);
     controller.enabled = true;
     match.phase = Phase.PLAYING;
-    match.running = false; // Prevents brawler stocks, sudden death, countdowns, and blast zone KOs
+    // (match.running is a getter on Match: assigning it threw a TypeError in strict mode and
+    // aborted the rest of this setup. Adventure keeps phase PLAYING; the Meadowlands paths own KOs.)
     hud.clearTransient();
     trails.clear();
     bursts.clear();
