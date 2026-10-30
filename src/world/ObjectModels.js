@@ -354,6 +354,35 @@ const BUILDERS = {
     k.eye([0.065, 0.05, 0.17], [0.35, 0.2, 1], 0.048);
   },
 
+  bananaPeel(k) {
+    const skin = 0xffd93b, flesh = 0xfff1b8, tip = 0x6a4a2a;
+    const flap = (a, len, lift, r) => {
+      const pts = [
+        new THREE.Vector3(0, 0.02, 0),
+        new THREE.Vector3(Math.cos(a) * len * 0.35, lift, Math.sin(a) * len * 0.35),
+        new THREE.Vector3(Math.cos(a) * len * 0.72, lift * 0.85, Math.sin(a) * len * 0.72),
+        new THREE.Vector3(Math.cos(a) * len, lift * 0.25, Math.sin(a) * len),
+      ];
+      return paint(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, r, 5, false),
+        c => (c.y > lift * 0.55 ? flesh : skin),
+      );
+    };
+    const flaps = [
+      [0.35, 0.25, 0.075, 0.054],
+      [PI * 0.78, 0.23, 0.065, 0.05],
+      [PI * 1.28, 0.255, 0.08, 0.055],
+      [PI * 1.74, 0.19, 0.05, 0.043],
+    ];
+    for (const [a, len, lift, r] of flaps) k.add(flap(a, len, lift, r), 'vc');
+    k.add(Ico(0.095, 1), flesh, { p: [0, 0.045, 0], s: [1.25, 0.5, 1.1] });
+    for (const [a, len, lift] of [[0.35, 0.25, 0.075], [PI * 1.28, 0.255, 0.08]]) {
+      k.add(Ico(0.035, 0), tip, { p: [Math.cos(a) * len, lift * 0.25, Math.sin(a) * len], s: [1, 0.7, 1] });
+    }
+    k.eye([-0.042, 0.095, 0.072], [-0.25, 0.35, 1], 0.038);
+    k.eye([0.042, 0.095, 0.072], [0.25, 0.35, 1], 0.038);
+  },
+
   beachBall(k) {
     const cols = [0xff4d5e, W, 0x3fa9ff, W, 0xffd23f, W];
     k.add(paint(new THREE.SphereGeometry(0.3, 12, 9), c => Math.abs(c.y) > 0.25 ? W : cols[Math.floor(((Math.atan2(c.z, c.x) + PI) / (PI * 2)) * 6 + 0.001) % 6]), 'vc');
@@ -585,6 +614,33 @@ const BUILDERS = {
     k.eye([0.06, 0.0, 0.12], [0.4, 0.2, 1], 0.035);
   },
 
+  grappleGlove(k) {
+    const red = 0xff4d5e, metal = 0xc9d3e6, dark = 0x1b1030, yellow = 0xffd23f;
+    // Fist-sized glove with a coiled spring launcher on the back
+    k.add(B(0.44, 0.36, 0.4, 0.1), red, { p: [0, -0.02, 0.08] }); // fist
+    k.add(B(0.3, 0.22, 0.28, 0.08), red, { p: [0, -0.02, -0.12] }); // forearm cuff
+    k.add(Cyl(0.07, 0.07, 0.14, 8), yellow, { p: [0, 0.06, -0.18], r: [PI / 2, 0, 0] }); // spring barrel
+    k.add(Tor(0.075, 0.012, 4, 12), dark, { p: [0, 0.06, -0.11], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.075, 0.012, 4, 12), dark, { p: [0, 0.06, -0.25], r: [PI / 2, 0, 0] });
+    // Coil visual
+    for (let i = 0; i < 5; i++) {
+      const t = i / 5;
+      k.add(Tor(0.06, 0.01, 3, 8), yellow, {
+        p: [0, 0.06, -0.11 - t * 0.14],
+        r: [PI / 2, 0, 0]
+      });
+    }
+    // Trigger
+    k.add(B(0.08, 0.06, 0.12, 0.02), metal, { p: [0.2, -0.08, 0.02] });
+    // Hook muzzle
+    k.add(Cyl(0.035, 0.035, 0.06, 8), metal, { p: [0, 0.02, 0.28], r: [PI / 2, 0, 0] });
+    k.add(Cone(0.04, 0.07, 6), metal, { p: [0, 0.02, 0.31], r: [PI / 2, 0, 0] });
+    // Knuckle accents
+    for (const x of [-0.12, 0, 0.12]) k.add(Cyl(0.02, 0.02, 0.03, 6), dark, { p: [x, 0.13, 0.2] });
+    k.eye([-0.05, 0.08, 0.2], [-0.3, 0.2, 1], 0.03);
+    k.eye([0.05, 0.08, 0.2], [0.3, 0.2, 1], 0.03);
+  },
+
   toolbox(k) {
     k.add(B(0.4, 0.2, 0.24, 0.02), 0xff4d5e, { p: [0, -0.05, 0] });
     k.add(B(0.42, 0.07, 0.26, 0.02), 0xd92a3a, { p: [0, 0.085, 0] });
@@ -661,6 +717,54 @@ const BUILDERS = {
     k.sticker(S.textSticker('MIX\nTAPE', { bg: '#ffd23f', w: 160, h: 128 }), 0.11, 0.085, { p: [0, -0.06, 0.112] });
     [0xff4d5e, 0xffd23f, 0x5ee06a, 0x3fa9ff].forEach((c, i) => k.add(B(0.05, 0.03, 0.05, 0.01), c, { p: [-0.1 + i * 0.066, 0.1, 0.03] }));
     k.add(Cyl(0.008, 0.008, 0.3, 4), CHROME, { p: [0.27, 0.19, -0.05], r: [0, 0, -0.5] });
+  },
+
+  // ─── Element props ───
+  oilDrum(k) {
+    k.add(Cyl(0.3, 0.3, 0.8, 14), 0x2d2a3a);
+    for (const y of [-0.26, 0, 0.26]) k.add(Tor(0.302, 0.02, 4, 16), 0x4a4660, { p: [0, y, 0], r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.06, 0.06, 0.04, 8), CHROME, { p: [0.14, 0.41, 0.05] });
+    k.sticker(S.textSticker('OIL', { bg: '#ffd23f', w: 160, h: 96 }), 0.3, 0.18, { p: [0, 0.08, 0.305] });
+    k.add(Ico(0.07, 1), 0x1b140c, { p: [-0.12, 0.4, -0.08], s: [1.6, 0.25, 1.2] }); // drip on the lid
+  },
+
+  waterBalloon(k) {
+    k.add(Ico(0.24, 2), 0x3fa9ff, { s: [1, 1.08, 1] }, { transparent: true, opacity: 0.85 });
+    k.add(Cone(0.05, 0.07, 6), 0x2f8ae0, { p: [0, 0.27, 0], r: [PI, 0, 0] });
+    k.add(Tor(0.03, 0.012, 4, 8), 0x2f8ae0, { p: [0, 0.3, 0], r: [PI / 2, 0, 0] });
+    k.add(Ico(0.05, 1), 0xffffff, { p: [-0.09, 0.1, 0.17], s: [1, 1.4, 0.4] }, { transparent: true, opacity: 0.6 }); // shine
+  },
+
+  honeyJar(k) {
+    k.add(Lathe([[0, -0.22], [0.16, -0.22], [0.2, -0.1], [0.2, 0.08], [0.14, 0.17], [0.15, 0.2], [0, 0.2]], 12), 0xffb02e);
+    k.add(Cyl(0.16, 0.16, 0.05, 12), 0xd4a86a, { p: [0, 0.22, 0] });
+    for (let i = 0; i < 3; i++) k.add(Ico(0.035, 1), 0xffb02e, { p: [Math.cos(i * 2.1) * 0.15, 0.17 - i * 0.05, Math.sin(i * 2.1) * 0.15], s: [0.8, 1.6, 0.8] }); // drips
+    k.sticker(S.textSticker('HUNNY', { bg: '#f3e6cf', w: 192, h: 96 }), 0.24, 0.12, { p: [0, -0.04, 0.2] });
+  },
+
+  snowGlobe(k) {
+    k.add(Cyl(0.2, 0.24, 0.12, 12), 0xb56cff, { p: [0, -0.22, 0] });
+    k.add(Ico(0.24, 2), 0xcff6ff, { p: [0, 0.05, 0] }, { transparent: true, opacity: 0.35 });
+    k.add(Cone(0.09, 0.2, 6), 0x2f8f3a, { p: [0, 0.0, 0] }); // tiny tree
+    k.add(Ico(0.05, 1), 0xffffff, { p: [0.08, -0.08, 0.05] }); // snowman
+    k.add(Ico(0.035, 1), 0xffffff, { p: [0.08, -0.01, 0.05] });
+    for (let i = 0; i < 9; i++) k.add(Ico(0.012, 0), 0xffffff, { p: [Math.cos(i * 1.9) * 0.15, 0.05 + Math.sin(i * 3.1) * 0.12, Math.sin(i * 1.9) * 0.15] });
+  },
+
+  pepperBomb(k) {
+    k.add(Ico(0.13, 2), 0xff3b2f, { p: [0, -0.02, 0], s: [1, 1.9, 1] });
+    k.add(Cyl(0.03, 0.04, 0.1, 6), 0x2f8f3a, { p: [0, 0.27, 0], r: [0, 0, 0.4] });
+    k.add(Cone(0.08, 0.05, 6), 0x2f8f3a, { p: [0, 0.22, 0], r: [PI, 0, 0] });
+    k.eye([0.05, 0.05, 0.1], [0.4, 0.1, 1], 0.025);
+    k.eye([-0.05, 0.05, 0.1], [-0.4, 0.1, 1], 0.025);
+  },
+
+  staticCoil(k) {
+    k.add(Cyl(0.18, 0.2, 0.1, 12), 0x2d2a3a, { p: [0, -0.25, 0] });
+    k.add(Cyl(0.05, 0.05, 0.4, 8), CHROME, { p: [0, 0, 0] });
+    for (let i = 0; i < 5; i++) k.add(Tor(0.09, 0.015, 4, 12), 0xd98b3a, { p: [0, -0.14 + i * 0.07, 0], r: [PI / 2, 0, 0] }); // copper coil
+    k.add(Ico(0.1, 1), CHROME, { p: [0, 0.25, 0] });
+    k.add(Ico(0.05, 1), 0xfff35a, { p: [0, 0.25, 0] }, { transparent: true, opacity: 0.9 });
   },
 
   fishBowl(k) {
@@ -797,6 +901,16 @@ const BUILDERS = {
     k.add(Tor(0.03, 0.01, 3, 8, PI * 1.5), d, { p: [0, 0.05, -0.28], r: [0, PI / 2, 0] });
     k.eye([-0.07, 0.08, 0.22], [-0.3, 0.2, 1], 0.04);
     k.eye([0.07, 0.08, 0.22], [0.3, 0.2, 1], 0.04);
+  },
+
+  // ─── Piñata Loot Burst ───
+  candy(k) {
+    const wrapper = 0xfff8ee, twist = 0xff4d5e;
+    k.add(Ico(0.1, 0), 0xff4d5e); // candy core
+    k.add(Tor(0.12, 0.025, 6, 10), twist, { p: [0, -0.11, 0], r: [PI / 2, 0, 0] }); // bottom twist
+    k.add(Tor(0.12, 0.025, 6, 10), twist, { p: [0, 0.11, 0], r: [PI / 2, 0, 0] }); // top twist
+    k.add(B(0.24, 0.04, 0.24, 0.02), wrapper, { p: [0, -0.12, 0] }); // bottom wrapper
+    k.add(B(0.24, 0.04, 0.24, 0.02), wrapper, { p: [0, 0.12, 0] }); // top wrapper
   },
 };
 

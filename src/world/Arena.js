@@ -14,12 +14,14 @@ import { InteractiveObject } from './InteractiveObject.js';
 import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
 import { createModel } from './ObjectModels.js';
 import { OBJECT_DEFS } from './ObjectRegistry.js';
+import { StageHazards } from './StageHazards.js';
 import { BALANCE } from '../game/Balance.js';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { DEFAULT_ARENA, arenaById } from '../game/Arenas.js';
 import * as S from '../render/Stickers.js';
 
 export const CORE_RADIUS = 11;
+const _bwMat = new THREE.Matrix4();
 export const STAGE_RADIUS = 16;
 export const WATER_LEVEL = -5;
 const SEGMENTS = 16;
@@ -33,6 +35,8 @@ const START_ITEMS = [
   ['crate', 8.5, 1, -1],
   ['explosiveBarrel', -8, 1, 5],
   ['watermelon', 1.5, 1, 9],
+  ['bananaPeel', 2.7, 1, 8.1],
+  ['bananaPeel', -2.7, 1, 8.1],
   ['toyRocket', -1, 1, -9],
   ['giantDie', 6, 1, 6],
   ['rubberChicken', -6.5, 1, -6.5],
@@ -40,6 +44,7 @@ const START_ITEMS = [
   ['freezeRay', 3.5, 1, 4.5],
   ['magnet', -3.5, 1, -4.5],
   ['boxingGlove', 2.1, 1, -2.2],
+  ['grappleGlove', -2.1, 1, 2.2],
 ];
 // Sky drops, weighted: comedy props are common, KO-power items are rare (and capped, see RARE)
 export const DROP_ITEMS = [
@@ -49,15 +54,19 @@ export const DROP_ITEMS = [
   { key: 'teddyBear', w: 5 }, { key: 'pinata', w: 5 }, { key: 'piggyBank', w: 4 }, { key: 'gumballMachine', w: 4 },
   { key: 'fishBowl', w: 4 }, { key: 'boombox', w: 4 }, { key: 'lamp', w: 4 }, { key: 'giantDie', w: 4 },
   { key: 'partyBalloon', w: 4 },
+  { key: 'bananaPeel', w: 4 },
   // mid: solid throwables and furniture
   { key: 'crate', w: 5 }, { key: 'tire', w: 4 }, { key: 'tv', w: 3 }, { key: 'ladder', w: 3 }, { key: 'mattress', w: 3 },
   { key: 'shoppingCart', w: 3 }, { key: 'couch', w: 2 }, { key: 'bowlingBall', w: 3 }, { key: 'spikyBall', w: 3 },
   // rare: the KO makers
   { key: 'giantHammer', w: 1.5 }, { key: 'toyRocket', w: 1.5 }, { key: 'explosiveBarrel', w: 1.5 }, { key: 'anvil', w: 1 },
   // gadget weapons: uncommon, capped by the live-item guard rather than RARE
-  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 },
+  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'grappleGlove', w: 2 },
   // fast hands: low launch, huge cadence
   { key: 'boxingGlove', w: 3 },
+  // element props: combine them (water + tesla = shock, oil + pepper = inferno, snow twice = frozen)
+  { key: 'waterBalloon', w: 4 }, { key: 'oilDrum', w: 3 }, { key: 'honeyJar', w: 3 }, { key: 'snowGlobe', w: 3 },
+  { key: 'pepperBomb', w: 3 }, { key: 'staticCoil', w: 2.5 },
 ];
 // Rare items: at most `max` live at once, and at least `cd` seconds between drops of the same key
 const RARE = {
@@ -102,6 +111,7 @@ const POWERUPS = {
   magnet: { color: 0xff9a3c, icon: '◎', label: 'MAGNET' },
   sugar: { color: 0xff8fc0, icon: '🍬', label: 'SUGAR RUSH' },
   shield: { color: 0xffd23f, icon: '🛡', label: 'SHIELD' },
+  swap: { color: 0xb07cff, icon: '⇄', label: 'SWAP' },
 };
 
 /**
@@ -113,6 +123,9 @@ const POWERUPS = {
 export function ballPitMaterial() {
   return toonMat({ color: 0xffffff });
 }
+
+import { CrowdClaw } from './CrowdClaw.js';
+const CLAW_ARENAS = new Set(['stadium', 'colosseum', 'megastadium']);
 
 export class Arena {
   constructor(scene, physicsWorld) {
@@ -129,6 +142,8 @@ export class Arena {
     this.powerups = [];
     this.crowd = null;
     this.cheer = 0;
+    this.crowdGiftTimer = BALANCE.crowd.giftCooldown ?? 8;
+    this.fx = null;           // set by main.js so crowd gifts can pop FX
     this.time = 0;
     this.itemTimer = 6;
     this.powerupTimer = 10;
@@ -220,6 +235,8 @@ export class Arena {
   }
 
   _clearTheme() {
+    this.stageHazards?.dispose();
+    this.stageHazards = null;
     if (!this.themeGroup) return;
     this.scene.remove(this.themeGroup);
     this.themeGroup.traverse(o => {
@@ -233,6 +250,7 @@ export class Arena {
     this._fanBlades = null;
     this.megaPinwheels = [];
     this.ballPitZones = [];
+    this.bubbles = null;
   }
 
   _createArenaTheme() {
@@ -246,6 +264,155 @@ export class Arena {
     else if (def.id === 'moon') this._themeMoon(g);
     else if (def.id === 'gale') this._themeGale(g);
     else if (def.id === 'megastadium') this._themeMegaStadium(g);
+    if (def.bubbleWrap) this._themeBubbleWrap(g);
+  }
+
+  // ─── Bubble Wrap Ring ───────────────────────────────────────────────────────
+  // One InstancedMesh of squashy bubbles on a hex grid. Feet pop what they touch (with a tiny
+  // hop), hard landings pop a crater, skidding props leave a popped trail, and every bubble
+  // re-inflates a few seconds later so the floor keeps playing all match.
+  _themeBubbleWrap(g) {
+    const B = BALANCE.arena.bubble;
+    const sheet = new THREE.Mesh(
+      new THREE.CircleGeometry(CORE_RADIUS - 0.08, 64),
+      new THREE.MeshBasicMaterial({ color: 0xe8f6ff, transparent: true, opacity: 0.45, depthWrite: false })
+    );
+    sheet.rotation.x = -Math.PI / 2;
+    sheet.position.y = 0.02;
+    noOutline(sheet);
+    g.add(sheet);
+
+    const xs = [], zs = [];
+    const rowH = B.spacing * 0.866;
+    const rows = Math.ceil(B.floorRadius / rowH);
+    for (let r = -rows; r <= rows; r++) {
+      const z = r * rowH;
+      const off = (r & 1) ? B.spacing / 2 : 0;
+      const cols = Math.ceil(B.floorRadius / B.spacing) + 1;
+      for (let c = -cols; c <= cols; c++) {
+        const x = c * B.spacing + off;
+        if (x * x + z * z > B.floorRadius * B.floorRadius) continue;
+        xs.push(x); zs.push(z);
+      }
+    }
+    const n = xs.length;
+    const geo = new THREE.SphereGeometry(B.radius, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xd8f1ff, roughness: 0.12, metalness: 0.05, transparent: true, opacity: 0.62 });
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.receiveShadow = true;
+    noOutline(mesh);
+    g.add(mesh);
+    this.bubbles = {
+      mesh, n, xs: Float32Array.from(xs), zs: Float32Array.from(zs),
+      popped: new Float32Array(n),   // seconds until re-inflated (0 = full)
+      inflate: new Float32Array(n).fill(1),
+      chain: 0, chainT: 0, soundT: 0, hopT: new Map(), prevVy: new Map(), dirty: true,
+    };
+    this._reinflateBubbles();
+  }
+
+  _reinflateBubbles() {
+    const b = this.bubbles;
+    if (!b) return;
+    b.popped.fill(0); b.inflate.fill(1); b.dirty = true;
+    this._writeBubbleMatrices(true);
+  }
+
+  _writeBubbleMatrices(all = false) {
+    const b = this.bubbles;
+    if (!b || !(b.dirty || all)) return;
+    const m = _bwMat;
+    for (let i = 0; i < b.n; i++) {
+      const k = b.inflate[i];
+      // A popped bubble is a crinkled flat disc; it puffs back up with a little overshoot.
+      const sy = 0.12 + 0.88 * k;
+      const sxz = 0.9 + 0.1 * k + (k > 0.7 && k < 1 ? Math.sin(k * Math.PI * 3) * 0.06 : 0);
+      m.makeScale(sxz, sy, sxz);
+      m.setPosition(b.xs[i], 0.02, b.zs[i]);
+      b.mesh.setMatrixAt(i, m);
+    }
+    b.mesh.instanceMatrix.needsUpdate = true;
+    b.dirty = false;
+  }
+
+  /** Pop every full bubble within `reach` of (x,z). Returns how many popped. */
+  _popBubblesAt(x, z, reach, budget) {
+    const b = this.bubbles, B = BALANCE.arena.bubble;
+    const r2 = (reach + B.radius * 0.5) ** 2;
+    let popped = 0;
+    for (let i = 0; i < b.n && popped < budget; i++) {
+      if (b.popped[i] > 0) continue;
+      const dx = b.xs[i] - x, dz = b.zs[i] - z;
+      if (dx * dx + dz * dz > r2) continue;
+      b.popped[i] = B.regrow * (0.85 + ((i * 7919) % 100) / 330);  // staggered re-inflate
+      b.inflate[i] = 0;
+      popped++;
+    }
+    if (popped) b.dirty = true;
+    return popped;
+  }
+
+  _bubbleSound(x, z, count) {
+    const b = this.bubbles, B = BALANCE.arena.bubble;
+    if (b.soundT > 0 && count < 6) return;
+    b.soundT = 1 / B.soundsPerSec;
+    // Chained pops climb a little pentatonic ladder, so a sprint sounds like a tune.
+    const LADDER = [1, 1.125, 1.25, 1.5, 1.667, 2];
+    b.chain = b.chainT > 0 ? b.chain + 1 : 0;
+    b.chainT = 0.35;
+    const pitch = count >= 6 ? 0.7 : LADDER[b.chain % LADDER.length] * (0.94 + Math.random() * 0.12);
+    this.onBubblePop?.({ x, y: 0.3, z }, pitch, count);
+  }
+
+  _updateBubbleWrap(dt) {
+    const b = this.bubbles, B = BALANCE.arena.bubble;
+    b.soundT = Math.max(0, b.soundT - dt);
+    b.chainT = Math.max(0, b.chainT - dt);
+    // Re-inflate.
+    for (let i = 0; i < b.n; i++) {
+      if (b.popped[i] > 0) {
+        b.popped[i] -= dt;
+        if (b.popped[i] <= 0) { b.popped[i] = 0; b.inflate[i] = 0.001; b.dirty = true; }
+      } else if (b.inflate[i] < 1) {
+        b.inflate[i] = Math.min(1, b.inflate[i] + dt * 2.2);
+        b.dirty = true;
+      }
+    }
+    let budget = B.maxPopsPerTick;
+    for (const d of this.dweebs ?? []) {
+      if (!d?.active || !d.body || d.grabbedBy || budget <= 0) continue;
+      const p = d.getPosition();
+      const v = d.body.linvel();
+      const prevVy = b.prevVy.get(d) ?? 0;
+      b.prevVy.set(d, v.y);
+      if (p.y > 1.6 || p.y < -0.5) continue;  // airborne high up / off the island
+      const slam = d.grounded && prevVy < -B.slamSpeed;
+      const reach = slam ? B.slamReach : B.stepReach;
+      const n = this._popBubblesAt(p.x, p.z, reach, budget);
+      if (!n) continue;
+      budget -= n;
+      this._bubbleSound(p.x, p.z, n);
+      // Each pop gives a squeaky little hop (rate-limited so it never becomes a trampoline).
+      const hopT = b.hopT.get(d) ?? 0;
+      if (d.grounded && !slam && this.time > hopT) {
+        b.hopT.set(d, this.time + B.hopCooldown);
+        d.body.setLinvel({ x: v.x * 0.97, y: Math.max(v.y, B.hop), z: v.z * 0.97 }, true);
+      }
+    }
+    // Skidding or landing props pop a trail too.
+    for (const o of this.objects) {
+      if (budget <= 0) break;
+      if (!o?.body || o.isDebris || o.isGrabbed) continue;
+      const p = o.getPosition();
+      if (p.y > 0.9 || p.y < -0.5) continue;
+      const v = o.body.linvel();
+      if (v.x * v.x + v.y * v.y + v.z * v.z < B.propSpeed * B.propSpeed) continue;
+      const n = this._popBubblesAt(p.x, p.z, 0.45, budget);
+      if (n) { budget -= n; this._bubbleSound(p.x, p.z, n); }
+    }
+    this._writeBubbleMatrices();
+    this.stageHazards = StageHazards.wants(def) ? new StageHazards(this, def, g) : null;
   }
 
   _themeIceberg(g) {
@@ -669,7 +836,9 @@ export class Arena {
   }
 
   _resetArenaHazards() {
+    this.claw?.reset();
     const A = BALANCE.arena;
+    this.stageHazards?.reset();
     this.physicsWorld.setGravityScale?.(this.gravity);
     this.windTimer = A.windFirst;
     this.gustLeft = 0;
@@ -687,6 +856,7 @@ export class Arena {
     }
     this.crustTimer = A.crustFirst;
     this.crusts = 0;
+    this._reinflateBubbles();
   }
 
   /** The floating platform a Dweeb is standing on, if any. */
@@ -1446,7 +1616,7 @@ export class Arena {
 
   /** Drop a random item from the sky somewhere over solid ground. */
   dropRandomItem(time = 0, bias = null) {
-    const live = this.objects.filter(o => !o.isDebris && !o.broken).length;
+    const live = this.objects.filter(o => !o.isDebris && !o.broken && !o.def?.isPickup).length;
     if (live >= 10) return null;
     const key = this.pickDropItem(time, bias);
     const p = this.randomGroundPoint(8.5);
@@ -1455,8 +1625,22 @@ export class Arena {
 
   spawnPowerUp(kind = null) {
     if (this.powerups.length >= 2) return null;
-    const keys = Object.keys(POWERUPS);
-    kind = kind || keys[Math.floor(Math.random() * keys.length)];
+    if (!kind) {
+      // Weighted: common powerups appear often, swap is rare (weight 0.5 vs 2-3 for others)
+      const pool = [
+        { key: 'mega', w: 2 }, { key: 'zoom', w: 2 }, { key: 'bubble', w: 2 },
+        { key: 'freeze', w: 1.5 }, { key: 'magnet', w: 1.5 }, { key: 'sugar', w: 2 },
+        { key: 'shield', w: 1.5 }, { key: 'swap', w: 0.5 }, // rare
+      ];
+      let total = 0;
+      for (const it of pool) total += it.w;
+      const r = Math.random() * total;
+      let acc = 0;
+      for (const it of pool) {
+        acc += it.w;
+        if (r < acc) { kind = it.key; break; }
+      }
+    }
     const def = POWERUPS[kind];
     const g = new THREE.Group();
     const gem = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), toonMat({ color: def.color, emissive: def.color, emissiveIntensity: 0.25 }));
@@ -1506,12 +1690,15 @@ export class Arena {
   }
 
   /** Material-shaped debris: wood splinters, glass/ceramic shards, fruit chunks, cardboard flaps. */
-  spawnDebris(position, color = 0xc4a06a, count = 5, material = 'wood', palette = null) {
+  spawnDebris(position, color = 0xc4a06a, count = 5, material = 'wood', palette = null, burst = null) {
+    // burst (optional): { vel, dir, power, size } — chunks inherit the prop's motion, blow out along
+    // the hit direction and scale with the prop, so a smashed crate reads as the crate coming apart.
+    const bv = burst?.vel, bd = burst?.dir, pw = burst?.power ?? 0, sz = burst?.size ?? 1;
     for (let i = 0; i < count; i++) {
       if (!this.physicsWorld.addDebris()) break;
       const shape = debrisShape(material, i);
       const col = palette ? palette[i % palette.length] : material === 'fruit' ? (i % 3 === 2 ? 0x2f8f3a : 0xff4d6a) : color;
-      const s = 0.7 + Math.random() * 0.6;
+      const s = (0.7 + Math.random() * 0.6) * sz;
       const mesh = new THREE.Mesh(shape.geo, debrisMat(col, material === 'glass'));
       const dx = position.x + (Math.random() - 0.5) * 0.5;
       const dy = position.y + Math.random() * 0.3;
@@ -1523,8 +1710,22 @@ export class Arena {
       const [hx, hy, hz] = shape.half;
       const result = this.physicsWorld.createDynamicBody(dx, dy, dz, 'box',
         { hx: hx * s, hy: hy * s, hz: hz * s }, { material: material === 'fruit' ? 'fruit' : 'wood', mass: 0.2, isDebris: true });
-      this.physicsWorld.applyImpulse(result.body, { x: (Math.random() - 0.5) * 0.35, y: Math.random() * 0.3 + 0.12, z: (Math.random() - 0.5) * 0.35 });
-      this.physicsWorld.applyTorqueImpulse(result.body, { x: (Math.random() - 0.5) * 0.01, y: (Math.random() - 0.5) * 0.01, z: (Math.random() - 0.5) * 0.01 });
+      if (burst) {
+        // Radial spray from the centre, biased along the blow, plus whatever velocity the prop had.
+        const rx = dx - position.x, rz = dz - position.z, rl = Math.hypot(rx, rz) || 1;
+        const spread = 2.5 + pw * 0.25 + Math.random() * 2;
+        const along = pw * (0.35 + Math.random() * 0.35);
+        result.body.setLinvel({
+          x: (bv?.x ?? 0) * 0.55 + (rx / rl) * spread + (bd?.x ?? 0) * along,
+          y: Math.abs(bv?.y ?? 0) * 0.3 + 2.5 + Math.random() * (3 + pw * 0.15),
+          z: (bv?.z ?? 0) * 0.55 + (rz / rl) * spread + (bd?.z ?? 0) * along,
+        }, true);
+        const sp = 8 + pw * 0.6;
+        result.body.setAngvel({ x: (Math.random() - 0.5) * sp, y: (Math.random() - 0.5) * sp, z: (Math.random() - 0.5) * sp }, true);
+      } else {
+        this.physicsWorld.applyImpulse(result.body, { x: (Math.random() - 0.5) * 0.35, y: Math.random() * 0.3 + 0.12, z: (Math.random() - 0.5) * 0.35 });
+        this.physicsWorld.applyTorqueImpulse(result.body, { x: (Math.random() - 0.5) * 0.01, y: (Math.random() - 0.5) * 0.01, z: (Math.random() - 0.5) * 0.01 });
+      }
       this.objects.push({
         mesh, body: result.body, physicsId: result.id, isDebris: true, life: 3 + Math.random() * 2,
         getPosition() { return this.body.translation(); },
@@ -1898,8 +2099,14 @@ export class Arena {
       if (this.arenaId === 'pinball') this._updateConveyors(dt);
       if (this.wind) this._updateWind(dt);
       if (this.arenaId === 'megastadium') this._updateMegaStadium(dt);
+      if (this.clawEnabled && CLAW_ARENAS.has(this.arenaId)) {
+        if (!this.claw) { this.claw = new CrowdClaw(this); this.claw.onEvent = (k, d) => this.onClaw?.(k, d); }
+        this.claw.update(dt);
+      }
     }
+    this.stageHazards?.update(dt, this.hazardsActive);
     this._updatePlatforms();
+    if (this.bubbles) this._updateBubbleWrap(dt);
 
     for (let i = this.objects.length - 1; i >= 0; i--) {
       const obj = this.objects[i];
@@ -2238,6 +2445,7 @@ export class Arena {
 
   _updateCrowd(dt) {
     if (!this.crowd) return;
+    this.crowdGiftTimer = Math.max(0, (this.crowdGiftTimer ?? 0) - dt);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const up = new THREE.Vector3(0, 1, 0);
@@ -2254,6 +2462,73 @@ export class Arena {
       this.crowd.setMatrixAt(i, m);
     });
     this.crowd.instanceMatrix.needsUpdate = true;
+    if (dt > 0) this._updateCrowdGifts();
+  }
+
+  /** Front-row fans toss a care package into the ring when the place is loud enough. */
+  _updateCrowdGifts() {
+    const C = BALANCE.crowd;
+    if (!C || !this.hazardsActive) return;
+    if (this.cheer < (C.giftThreshold ?? 0.9)) return;
+    if ((this.crowdGiftTimer ?? 0) > 0) return;
+
+    const live = this.objects.filter(o => !o.isDebris && !o.broken).length;
+    if (live >= 10) {
+      this.crowdGiftTimer = 1.5;
+      return;
+    }
+
+    const seat = this._pickCrowdGiftSeat();
+    if (!seat) return;
+
+    let key = this.pickDropItem(this.time, C.giftBias);
+    for (let tries = 0; tries < 4 && OBJECT_DEFS[key]?.explosive; tries++) {
+      key = this.pickDropItem(this.time, C.giftBias);
+    }
+    if (!key || !OBJECT_DEFS[key] || OBJECT_DEFS[key].explosive) {
+      this.crowdGiftTimer = 1.5;
+      return;
+    }
+
+    const obj = this.spawnItem(key, { x: seat.x, y: seat.y + 1.8, z: seat.z });
+    if (!obj) {
+      this.crowdGiftTimer = 1.5;
+      return;
+    }
+
+    this._tossCrowdGift(obj, seat);
+    this.cheer = Math.max(0, this.cheer - 0.3);
+    this.crowdGiftTimer = C.giftCooldown ?? 8;
+    this.fx?.crowdRoar?.(1, 'gift');
+    this.fx?.crowdGift?.(seat, OBJECT_DEFS[key]?.name);
+  }
+
+  _pickCrowdGiftSeat() {
+    const seats = this.crowdSeats;
+    if (!seats?.length) return null;
+    let minY = Infinity;
+    for (const seat of seats) if (seat.y < minY) minY = seat.y;
+    const front = seats.filter(seat => seat.y <= minY + 0.3);
+    return front[Math.floor(Math.random() * front.length)] ?? seats[0] ?? null;
+  }
+
+  /** Lob the gift from the seat toward a clear patch of stage, so it is actually usable. */
+  _tossCrowdGift(obj, seat) {
+    if (!obj?.body?.setLinvel) return;
+    const target = this.randomGroundPoint(7);
+    const tx = target?.x ?? 0, tz = target?.z ?? 0;
+    const releaseY = seat.y + 1.8;
+    const ty = 0.9;
+    const dx = tx - seat.x, dz = tz - seat.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const flight = THREE.MathUtils.clamp(dist / 30, 0.9, 1.6);
+    const g = 25; // matches PhysicsWorld's toy gravity
+    obj.body.setLinvel({
+      x: dx / flight,
+      y: (ty - releaseY + 0.5 * g * flight * flight) / flight,
+      z: dz / flight,
+    }, true);
+    obj.pop?.(0.3);
   }
 
   /** Make the crowd go wild (0..1). */
@@ -2282,6 +2557,7 @@ export class Arena {
     this.crumbleQueue = [];
     this.itemTimer = 6;
     this.powerupTimer = 10;
+    this.crowdGiftTimer = BALANCE.crowd.giftCooldown ?? 8;
     this.lastRareDrop = {};
     this._resetArenaHazards();
     this._spawnStartItems();

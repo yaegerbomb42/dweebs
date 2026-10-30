@@ -36,6 +36,7 @@ export function mountSettings({ root, toast }) {
     setSeg(q('.seg[data-setting="invertY"]'), String(!!s.invertY));
     setSeg(q('.seg[data-setting="music"]'), s.music);
     setSeg(q('.seg[data-setting="sound"]'), s.sound);
+    setSeg(q('.seg[data-setting="colorblind"]'), s.colorblind);
     paintBindings(s);
   }
 
