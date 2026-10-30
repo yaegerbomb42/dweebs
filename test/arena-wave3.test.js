@@ -166,12 +166,13 @@ describe('conveyors (pinball)', () => {
   it('the +x belt carries a grounded dweeb', async () => {
     const sim = await makeSim([false], { arena: 'pinball' });
     const d = sim.dweebs[0];
-    place(sim, d, 0, 0.6, 4.4);
+    // The +x belt is the z≈−4.2 lane — the live Pinball Factory layout, which the sim mirrors.
+    place(sim, d, 0, 0.6, -4.4);
     stepCollect(sim, 120);
     expect(d.position[0]).toBeGreaterThan(2);
     const ctrl = await makeSim([false]);
     const c = ctrl.dweebs[0];
-    place(ctrl, c, 0, 0.6, 4.4);
+    place(ctrl, c, 0, 0.6, -4.4);
     stepCollect(ctrl, 120);
     expect(Math.abs(c.position[0])).toBeLessThan(0.5);
   });

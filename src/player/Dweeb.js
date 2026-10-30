@@ -106,6 +106,9 @@ export class Dweeb {
     this.stylePeak = 0;
     this.superReady = false;
     this.superArmed = false;    // next charged smash / throw gets the Super Yeet
+    // Super-smash meter: consecutive landed punches (see CombatSystem._punchStreak)
+    this.punchStreak = 0;
+    this.punchStreakT = -99;
     this.trickshots = 0;
 
     // Water flail (one splash-jump out when barely under near the edge) + highlight-reel air time
@@ -869,6 +872,8 @@ export class Dweeb {
     const dmgArmor = this.megaTimer > 0 ? 0.6 : 1;
     const armor = dmgArmor * this.stats.armor;
     this.percent = Math.min(999, this.percent + damage * dmgArmor * shieldDmg);
+    // Taking a hit breaks your punch streak (super-smash meter wants consecutive landed punches).
+    this.punchStreak = 0;
     const launch = (base + growth * this.stats.growthTaken * (this.percent / 100)) * armor * shieldLaunch;
 
     this.rollTimer = 0;
@@ -1029,6 +1034,8 @@ export class Dweeb {
     this.styleTier = 0;
     this.superReady = false;
     this.superArmed = false;
+    this.punchStreak = 0;
+    this.punchStreakT = -99;
   }
 
   eliminate() {
@@ -1058,6 +1065,8 @@ export class Dweeb {
     this.sugarTimer = 0;
     this.lastHitBy = null;
     this.grabbedBy = null;
+    this.punchStreak = 0;
+    this.punchStreakT = -99;
     this.body.setEnabled(true);
     this.collider.setCollisionGroups(this.defaultGroups);
     if (this.ragdolling) this.recoverFromRagdoll();

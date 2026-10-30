@@ -5,25 +5,41 @@
 // grandstands, the letter blocks, the crowd, the decals — belongs to the view and is not
 // simulated at all.
 //
-// Every arena in src/game/Arenas.js has a mechanic profile here (arenaProfiles.js). The
-// stadium plays like the sim always has; the other seven play their own game:
+// The layout constants here are copied from src/world/Arena.js (Lead-owned, may be restyled
+// freely). The drop table is a deliberate restatement rather than an import, because Arena.js
+// pulls in three.js and cannot load in Node; QA asked for exactly this on the board, and both
+// copies must stay in step.
+//
+// ─── Hazard determinism ───
+// Every hazard here is a pure function of (arena.time, seeded initial values). The initial
+// values are drawn once at build() from the 'hazards' RNG stream — a stream nothing else draws
+// from, so adding hazards never shifts the drop table or combat rolls. Because motion is a
+// function of time, a snapshot only needs `time` to resume a hazard exactly; no per-hazard
+// mutable state is snapshotted. The sim applies hazards analytically (a radius test, a velocity
+// nudge) rather than as colliders, so results never depend on contact-event ordering.
+//
+// ─── Arena mechanics ───
+// Every arena in src/game/Arenas.js has a mechanic profile in arenaProfiles.js. The stadium
+// plays like the sim always has; the others play their own game:
 //   iceberg    — 0.16 traction, 1.08 slide (applied in SimDweeb.preStep)
 //   volcano    — lava lagoon (first dip spits you back, second dip dunks) + crust collapse
-//   pinball    — conveyor belts push grounded dweebs and items
+//   pinball    — conveyor belts push grounded dweebs and items (live layout: +x at z≈−4.2)
 //   moon       — 0.58 gravity (applied by Sim between preStep and physics)
 //   gale       — telegraphed wind gusts shove everything sideways
 //   megastadium— 1.4 bumper boost
 //   stormspire — telegraphed lightning strikes
 //   quicksand  — sticky centre drags grounded dweebs down
 //   magnetcore — periodic pulls toward the centre
+//   colosseum  — rotating hammers, conveyor belts, jump pads
+//   icepeak    — 0.12 traction, crumbly rim tiles, crust collapse
+//   lavafoundry— rising lava edge, rotating hammer, jump pad
 //
-// All schedulers draw from the arena's own seeded 'drops' stream, so two runs with the same
-// seed strike the same lightning at the same tick.
+// Scheduler state is tick-quantized (integer timers) so snapshots stay exact.
 
 import { BALANCE } from '../game/Balance.js';
 import { TICK_DT } from './contracts.js';
 import { DROP_ITEMS, RARE } from './tables.js';
-import { profileFor } from './arenaProfiles.js';
+import { ARENA_IDS, profileFor } from './arenaProfiles.js';
 
 export const CORE_RADIUS = 11;
 export const STAGE_RADIUS = 16;
@@ -33,6 +49,22 @@ export const WATER_LEVEL = -5;
 /** Max live stage items, and how often the sky tries to add one. Mirrors the live values. */
 const ITEM_CAP = 10;
 const ITEM_INTERVAL = 6;      // seconds
+/** Pre-spawn warning: the drop is picked and telegraphed this many ticks before it lands. */
+export const TELEGRAPH_TICKS = Math.round(BALANCE.arena.telegraphTime * 60);
+
+/**
+ * Which hazards the sim models per stage id. The data lives in arenaProfiles.js (one source);
+ * this stays under the name the milestone's tests import. Unknown ids fall back to the
+ * stadium profile, so the sim never crashes on a stage the view added first — it just
+ * plays it plain.
+ */
+export function arenaProfile(id) {
+  return profileFor(id);
+}
+
+export const ARENA_PROFILES = Object.freeze(
+  Object.fromEntries(ARENA_IDS.map(id => [id, profileFor(id)])),
+);
 
 const AR = BALANCE.arena;
 
@@ -43,22 +75,30 @@ const AR = BALANCE.arena;
 export class SimArena {
   /**
    * @param {import('./physics.js').SimPhysics} physics
-   * @param {import('./rng.js').Rng} rng The 'drops' stream.
-   * @param {object} [opts] @param {string} [opts.arenaId] one of ARENA_IDS, default 'stadium'
+   * @param {import('./rng.js').RngStreams|import('./rng.js').Rng} rngStreams The sim RNG streams
+   *   (an Rng is also accepted and used for both the drops and the hazards).
+   * @param {string} [arenaId] Stage id; unknown ids play as the stadium.
    */
-  constructor(physics, rng, opts = {}) {
+  constructor(physics, rngStreams, arenaId = 'stadium') {
     this.physics = physics;
-    this.rng = rng;
-    this.setArena(opts.arenaId ?? 'stadium');
+    const isStreams = !!rngStreams && typeof rngStreams.stream === 'function';
+    this.rng = isStreams ? rngStreams.stream('drops') : rngStreams;
+    this.hazardRng = isStreams ? rngStreams.stream('hazards') : rngStreams;
+    this.arenaId = arenaId;
+    this.profile = profileFor(arenaId);
     this.time = 0;
     this.suddenDeath = false;
     this.itemTimer = Math.round(ITEM_INTERVAL * 60);
+    /** Pre-picked drop waiting out its telegraph, or null. { key, x, z, rare } */
+    this.pendingDrop = null;
     /** @type {Record<string, number>} last drop time per rare key, for the cooldown filter. */
     this.lastRareDrop = Object.create(null);
     /** @type {object[]} kinematic hazards the sim moves; the view reads their transforms. */
     this.hazards = [];
     this.spinAngle = 0;
     this.spinRate = 1.2;      // rad/s; matches the live turntable
+    /** Crumble schedule: crumbleTimes[i] is when rim tile i falls, Infinity if it never does. */
+    this.crumbleTimes = new Array(SEGMENTS).fill(Infinity);
     /** Telegraphed danger zones, rebuilt every tick; merged into SimState.hazards for bots. */
     this.warnZones = [];
     this._resetSchedulers();
@@ -82,44 +122,94 @@ export class SimArena {
   }
 
   build() {
+    const P = this.profile;
     // A single fat cylinder stands in for the island. The live arena is a core disc plus 16
     // crumbling ring tiles; the sim only needs "solid within STAGE_RADIUS", and one collider
-    // instead of 17 keeps the Rapier world small enough to snapshot cheaply.
-    this.physics.fixedCylinder(0, -1, 0, STAGE_RADIUS, 1);
+    // instead of 17 keeps the Rapier world small enough to snapshot cheaply. Crumbly tiles are
+    // modelled by toggling a dweeb's ground collision (see SimCombat.stageHazards), not by
+    // removing colliders.
+    this.physics.fixedCylinder(0, -1, 0, STAGE_RADIUS, 1, P.floorFriction);
 
     // Bumpers, trampolines and the turntable. These are not colliders in the sim: the sim
     // detects a dweeb inside the radius and applies the bounce itself, which is deterministic
     // and never depends on the ordering of contact-force events.
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < P.bumpers; i++) {
       const a = Math.PI / 8 + i * Math.PI / 2;
       this.hazards.push({ kind: 'bumper', x: Math.cos(a) * 8.2, z: Math.sin(a) * 8.2, r: 0.7, tint: i });
     }
-    for (const a of [Math.PI * 3 / 8, -Math.PI * 3 / 8]) {
+    for (let i = 0; i < P.trampolines; i++) {
+      const a = i === 0 ? Math.PI * 3 / 8 : -Math.PI * 3 / 8;
       this.hazards.push({ kind: 'trampoline', x: Math.cos(a) * 8.2, z: Math.sin(a) * 8.2, r: 1.05 });
     }
-    this.spinner = { kind: 'spinner', x: 0, z: 0, half: 5.5, dangerR: 2.0, angle: 0 };
-    this.hazards.push(this.spinner);
+    for (let i = 0; i < P.jumpPads; i++) {
+      const d = this.hazardRng.floorDir();
+      const r = 5 + this.hazardRng.next() * 4;
+      this.hazards.push({ kind: 'jumppad', x: d.x * r, z: d.z * r, r: 1.15 });
+    }
+    for (let i = 0; i < P.hammers; i++) {
+      const d = this.hazardRng.floorDir();
+      const pr = 2 + this.hazardRng.next() * 3;
+      this.hazards.push({
+        kind: 'hammer',
+        x: d.x * pr, z: d.z * pr,
+        armR: BALANCE.arena.hammerArmR,
+        headR: BALANCE.arena.hammerHeadR,
+        phase0: this.hazardRng.next() * Math.PI * 2,
+        speed: BALANCE.arena.hammerSpeed * (this.hazardRng.int(2) === 0 ? 1 : -1),
+      });
+    }
+    // Two opposing conveyor belts, mirroring the live Pinball Factory layout: fixed lanes at
+    // z = ∓4.2 pushing opposite x directions (+x at z = −4.2). Deterministic and
+    // non-overlapping by construction.
+    for (let i = 0; i < (P.conveyorCount ?? 0); i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      this.hazards.push({
+        kind: 'conveyor',
+        x: 0, z: side * 4.2,
+        hx: 6.4, hz: 1.25,
+        dx: -side, dz: 0,
+        speed: BALANCE.arena.conveyorSpeed,
+      });
+    }
+    if (P.spinner) {
+      this.spinner = { kind: 'spinner', x: 0, z: 0, half: 5.5, dangerR: 2.0, angle: 0 };
+      this.hazards.push(this.spinner);
+    }
+    if (P.crumbly) {
+      // Crumble order is a seeded shuffle; the schedule is then a pure function of time.
+      const order = [...Array(SEGMENTS).keys()];
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = this.hazardRng.int(i + 1);
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      const A = BALANCE.arena;
+      for (let k = 0; k < Math.min(A.crumbleMax, SEGMENTS); k++) {
+        this.crumbleTimes[order[k]] = A.crumbleFirst + k * A.crumbleEvery;
+      }
+    }
   }
 
   /**
-   * Advance the kinematic stage. Returns 'drop' on the tick the sky should drop something.
+   * Advance the kinematic stage. Returns 'telegraph' on the tick a sky drop is picked and
+   * warned, 'drop' TELEGRAPH_TICKS later when it lands, null otherwise.
    * Scheduler state is tick-quantized (integer timers) so snapshots stay exact.
    */
   step(api) {
     this.time += TICK_DT;
     this.spinAngle = (this.spinAngle + this.spinRate / 60) % (Math.PI * 2);
-    this.spinner.angle = this.spinAngle;
+    if (this.spinner) this.spinner.angle = this.spinAngle;
     this.warnZones = [];
-    let drop = null;
-    if (--this.itemTimer <= 0) {
+    let sig = null;
+    if (--this.itemTimer === TELEGRAPH_TICKS) sig = 'telegraph';
+    else if (this.itemTimer <= 0) {
       this.itemTimer = Math.round(ITEM_INTERVAL * 60);
-      drop = 'drop';
+      sig = 'drop';
     }
     this._stepWind(api);
     this._stepLightning(api);
     this._stepMagnet(api);
     this._stepCrust(api);
-    return drop;
+    return sig;
   }
 
   // ─── Wind (Sky Turbine Rooftop) ─────────────────────────────────────────────
@@ -202,19 +292,17 @@ export class SimArena {
   }
 
   /**
-   * Stage push as a target-velocity offset, for SimDweeb.preStep. Belts carry, wind shoves,
-   * the magnet drags: they compose with the dweeb's own input by shifting what "standing
-   * still" means, instead of fighting the ground friction after the fact. Returns null when
-   * the arena is calm.
+   * Stage push as a target-velocity offset, for SimDweeb.preStep. Wind shoves, the magnet
+   * drags: they compose with the dweeb's own input by shifting what "standing still" means,
+   * instead of fighting the ground friction after the fact. Conveyor belts are NOT here —
+   * they ride the beltVX/beltVZ path (set from the conveyor hazard entries by
+   * SimCombat.stageHazards), so the belt only ever pushes once. Returns null when the arena
+   * is calm.
    * @returns {{x: number, z: number}|null}
    */
   stagePush(x, z, grounded) {
     const p = this.profile;
     let px = 0, pz = 0, any = false;
-    if (p.conveyors && grounded) {
-      const belt = this._beltAt(x, z);
-      if (belt) { px += belt.dir * AR.conveyorPush; any = true; }
-    }
     if (p.wind && this.wind.phase === 'blow') {
       px += this.wind.dirX * AR.windForce * 0.7;
       pz += this.wind.dirZ * AR.windForce * 0.7;
@@ -297,11 +385,14 @@ export class SimArena {
     }
   }
 
-  /** Two belts across the factory floor: +x at z≈+4.4, −x at z≈−4.4. */
+  /**
+   * Belt lookup for loose items (dweebs ride beltVX/beltVZ instead — see stagePush).
+   * Mirrors the live Pinball Factory layout: +x at z≈−4.2, −x at z≈+4.2.
+   */
   _beltAt(x, z) {
-    if (Math.abs(x) > 10) return null;
-    if (Math.abs(z - 4.4) < AR.conveyorWidth) return { dir: 1 };
-    if (Math.abs(z + 4.4) < AR.conveyorWidth) return { dir: -1 };
+    if (Math.abs(x) > 6.4) return null;
+    if (Math.abs(z + 4.2) < AR.conveyorWidth) return { dir: 1 };
+    if (Math.abs(z - 4.2) < AR.conveyorWidth) return { dir: -1 };
     return null;
   }
 
@@ -359,13 +450,58 @@ export class SimArena {
     return Math.hypot(x, z) < this.edgeRadius() - margin;
   }
 
+  /** Rim tile index for an angle, 0..SEGMENTS-1. Tiles are the crumble unit on icepeak. */
+  tileIndex(x, z) {
+    let a = Math.atan2(z, x);
+    if (a < 0) a += Math.PI * 2;
+    return Math.min(SEGMENTS - 1, Math.floor(a / (Math.PI * 2) * SEGMENTS));
+  }
+
+  /** Tile state at time t: 'intact' | 'shaking' (telegraphed) | 'gone'. Pure in (i, t). */
+  tileStateAt(i, t) {
+    const ct = this.crumbleTimes[i];
+    if (!Number.isFinite(ct)) return 'intact';
+    if (t >= ct) return 'gone';
+    if (t >= ct - BALANCE.arena.crumbleWarn) return 'shaking';
+    return 'intact';
+  }
+
+  /** Tile state at the current time. */
+  tileState(i) {
+    return this.tileStateAt(i, this.time);
+  }
+
+  /** True when (x, z) is over a crumbled rim tile — the floor is gone there. */
+  isPit(x, z) {
+    if (!this.profile.crumbly) return false;
+    const r = Math.hypot(x, z);
+    if (r < CORE_RADIUS || r >= STAGE_RADIUS) return false;
+    return this.tileState(this.tileIndex(x, z)) === 'gone';
+  }
+
+  /** Current hammer-head position: a pure function of time. The view reads this to render it. */
+  hammerHead(h) {
+    const a = h.phase0 + h.speed * this.time;
+    return { x: h.x + Math.cos(a) * h.armR, z: h.z + Math.sin(a) * h.armR };
+  }
+
+  /** Rising lava edge (Lava Foundry): the radius of the safe zone. Infinity anywhere else. */
+  lavaEdge() {
+    if (!this.profile.lavaRising) return Infinity;
+    const A = BALANCE.arena;
+    if (this.time < A.lavaEdgeGrace) return STAGE_RADIUS;
+    return Math.max(A.lavaEdgeMin, STAGE_RADIUS - A.lavaEdgeRise * (this.time - A.lavaEdgeGrace));
+  }
+
   /**
-   * Current radius of solid ground — shrinks in sudden death, and on the volcano the crust
-   * keeps falling in (up to crustMax segments, 12% of the radius each).
+   * Current radius of solid ground — shrinks in sudden death and under the foundry's rising
+   * lava, and on the volcano the crust keeps falling in (up to crustMax segments, 12% of
+   * the radius each).
    */
   edgeRadius() {
     let r = STAGE_RADIUS;
     if (this.suddenDeath) r *= BALANCE.match.sdBlastScale;
+    r = Math.min(r, this.lavaEdge());   // Infinity unless lavaRising
     if (this.crustFalls > 0) r *= 1 - 0.12 * this.crustFalls;
     return r;
   }
@@ -375,16 +511,29 @@ export class SimArena {
     this.suddenDeath = true;
   }
 
-  /** Fresh round: schedulers, timers and crust reset; the arena identity stays. */
+  /** Fresh round: schedulers, timers, crust and the pending drop reset; the arena identity stays. */
   resetRound() {
     this.time = 0;
     this.suddenDeath = false;
     this.itemTimer = Math.round(ITEM_INTERVAL * 60);
     this.lastRareDrop = Object.create(null);
+    this.pendingDrop = null;
     this._resetSchedulers();
   }
 
   // ─── Drop table ───────────────────────────────────────────────────────────────
+
+  /**
+   * Pick the next sky drop ahead of time and choose where it lands, so the view can telegraph
+   * it. Returns null when the item cap is reached (checked by the caller) or the table is dry.
+   */
+  planDrop(bias = null, liveCounts = null) {
+    const key = this.pickDropItem(bias, liveCounts);
+    if (!key) return null;
+    const p = this.randomGroundPoint(8.5);
+    this.pendingDrop = { key, x: p.x, z: p.z, rare: !!RARE[key] };
+    return this.pendingDrop;
+  }
 
   /**
    * Weighted pick with the live game's rare caps and cooldowns, faithful to
@@ -432,6 +581,25 @@ export class SimArena {
     return { x: 0, z: 2 };
   }
 
+  /**
+   * A respawn/drop point separated from `avoid` (other dweebs, this tick's earlier respawns) by
+   * at least `minDist`. Simultaneous respawns used to teleport capsules into each other; the
+   * solver answered with explosive depenetration — dweebs clipping through the floor or
+   * launching sideways. Deterministic: every candidate comes from the seeded stream, and the
+   * fallback keeps the best candidate seen rather than looping forever.
+   */
+  separatedGroundPoint(maxR, avoid = [], minDist = BALANCE.arena.respawnMinGap) {
+    let best = null, bestScore = -Infinity;
+    for (let i = 0; i < 10; i++) {
+      const p = this.randomGroundPoint(maxR);
+      let m = Infinity;
+      for (const a of avoid) m = Math.min(m, Math.hypot(p.x - a.x, p.z - a.z));
+      if (m >= minDist) return p;
+      if (m > bestScore) { bestScore = m; best = p; }
+    }
+    return best ?? { x: 0, z: 2 };
+  }
+
   get itemCap() { return ITEM_CAP; }
 
   snapshot() {
@@ -440,6 +608,7 @@ export class SimArena {
       time: this.time, itemTimer: this.itemTimer,
       suddenDeath: this.suddenDeath, lastRareDrop: { ...this.lastRareDrop },
       spinAngle: this.spinAngle,
+      pendingDrop: this.pendingDrop ? { ...this.pendingDrop } : null,
       wind: { ...this.wind },
       lightning: { ...this.lightning },
       magnet: { ...this.magnet },
@@ -458,6 +627,7 @@ export class SimArena {
       spinAngle: s.spinAngle, crustFalls: s.crustFalls ?? 0, crustTimer: s.crustTimer ?? 0,
     });
     this.lastRareDrop = { ...(s.lastRareDrop ?? {}) };
+    this.pendingDrop = s.pendingDrop ? { ...s.pendingDrop } : null;
     if (s.wind) this.wind = { ...s.wind };
     if (s.lightning) this.lightning = { ...s.lightning };
     if (s.magnet) this.magnet = { ...s.magnet };

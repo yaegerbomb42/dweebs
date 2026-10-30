@@ -64,11 +64,11 @@ export class SimPhysics {
   }
 
   /** The island floor, as one fat fixed cylinder (see arena.js for why not 17 tiles). */
-  fixedCylinder(x, y, z, radius, halfHeight) {
+  fixedCylinder(x, y, z, radius, halfHeight, friction = 0.7) {
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z));
     const col = this.world.createCollider(
       RAPIER.ColliderDesc.cylinder(halfHeight, radius)
-        .setFriction(0.7)
+        .setFriction(friction)
         .setRestitution(0.1)
         .setCollisionGroups(groups(Groups.GROUND, Groups.ALL)),
       body,
@@ -153,11 +153,33 @@ export class SimPhysics {
   lockRotations(id, on) { this.body(id)?.lockRotations(!!on, true); }
 
   /** Ray from a point along a direction; used by the aim preview and by bots. */
-  raycast(ox, oy, oz, dx, dy, dz, maxDist) {
+  raycast(ox, oy, oz, dx, dy, dz, maxDist, skipGround = false, excludeCollider = null) {
     const ray = new RAPIER.Ray({ x: ox, y: oy, z: oz }, { x: dx, y: dy, z: dz });
-    const hit = this.world.castRay(ray, maxDist, true, undefined, groups(Groups.ALL, Groups.ALL));
+    // skipGround: the grounded raycast of a dweeb falling through a crumbled tile must not see
+    // the floor its collision is toggled off from — same answer both ways.
+    const filter = skipGround ? groups(Groups.ALL, Groups.ALL & ~Groups.GROUND) : groups(Groups.ALL, Groups.ALL);
+    const hit = this.world.castRay(ray, maxDist, true, undefined, filter, excludeCollider ?? undefined);
     if (!hit) return null;
     return { distance: hit.timeOfImpact, id: this.byCollider.get(hit.collider.handle) ?? 0 };
+  }
+
+  /** A dweeb's own collider, so its grounded raycast can exclude it (see sync()). */
+  colliderOf(id) {
+    const b = this.body(id);
+    return b ? b.collider(0) : null;
+  }
+
+  /**
+   * Toggle whether a dweeb collides with the floor. Crumbly rim tiles are modelled by switching
+   * ground collision off while a dweeb is over a gone tile, so it genuinely falls through to
+   * the lagoon instead of standing on a collider the view has removed. Part of the Rapier world,
+   * so it rides along in takeSnapshot().
+   */
+  setCollideGround(id, on) {
+    const e = this.bodies.get(id);
+    if (!e) return;
+    const col = e.body.collider(0);
+    col.setCollisionGroups(groups(Groups.PLAYER, on ? Groups.ALL : Groups.ALL & ~Groups.GROUND));
   }
 
   // ─── Snapshot ──────────────────────────────────────────────────────────────────

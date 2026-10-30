@@ -160,3 +160,72 @@ export function introLine(arenaName, modeTagline) {
 
 /** Every string, for WHY.md / tuning. */
 export const ALL_LINES = { KO_LINES, PLAYER_KO, PLAYER_GOT, HYPE_LINES, AWARD_LINES, VICTORY_LINES, INTRO_LINES };
+
+/**
+ * AnnounceQueue — the fix for overlapping KO announcements.
+ *
+ * The bug: `hud.announce()` stomps the current banner on every call. When two KOs land in
+ * quick succession the second call wipes the first mid-display, so the earlier KO's punchline
+ * is cut off (or the two banners visibly fight over the element). There is no voice synth in
+ * the game — the "announcer voice" IS these banners plus the feed lines — so the overlap is
+ * this stomping.
+ *
+ * The queue serializes announcements: each one gets its full duration on screen, extras wait
+ * their turn (deduped, capped). Wiring: construct once per match, call `announce(hud, ...)`
+ * instead of `hud.announce(...)`, and call `update(hud, dt)` every frame. It works headless
+ * against any `{ announce(), announceTimer }`-shaped object, which is what the test uses.
+ */
+export class AnnounceQueue {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.minGap] Minimum seconds a banner owns the screen, even a short one.
+   * @param {number} [opts.maxQueue] Longest the waiting line may grow; oldest waiters drop.
+   */
+  constructor({ minGap = 0.45, maxQueue = 3 } = {}) {
+    this.minGap = minGap;
+    this.maxQueue = maxQueue;
+    this.queue = [];
+    this.now = 0;
+    this.activeUntil = -Infinity;
+  }
+
+  get pending() { return this.queue.length; }
+
+  /**
+   * @returns {boolean} true when the banner showed immediately, false when it was queued
+   *   (or deduped).
+   */
+  announce(hud, text, style = '', duration = 1.2) {
+    const item = { text, style, duration };
+    const hudIdle = (hud.announceTimer ?? 0) <= 0;
+    if (hudIdle && this.queue.length === 0 && this.now >= this.activeUntil) {
+      this._show(hud, item);
+      return true;
+    }
+    // Debounce: an identical banner already showing or queued adds nothing.
+    if (this.queue.some(q => q.text === item.text)) return false;
+    if (this.queue.length >= this.maxQueue) this.queue.shift(); // shed the oldest waiter
+    this.queue.push(item);
+    return false;
+  }
+
+  /** Advance the clock and show whatever is due. Call every frame with the HUD. */
+  update(hud, dt) {
+    this.now += dt;
+    if (this.queue.length > 0 && this.now >= this.activeUntil) {
+      this._show(hud, this.queue.shift());
+    }
+  }
+
+  /** Drop the line and reset the clock (round transitions). */
+  reset() {
+    this.queue.length = 0;
+    this.now = 0;
+    this.activeUntil = -Infinity;
+  }
+
+  _show(hud, item) {
+    hud.announce(item.text, item.style, item.duration);
+    this.activeUntil = this.now + Math.max(item.duration, this.minGap);
+  }
+}

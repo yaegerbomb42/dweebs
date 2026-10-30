@@ -166,7 +166,10 @@ export function isNeutralInput(f) {
  * @property {number}   suddenDeathAt Seconds remaining when the arena starts closing in.
  * @property {string}   botDifficulty 'easy' | 'normal' | 'hard' | 'brutal' for bot-filled slots.
  * @property {boolean}  items         Whether the drop table runs at all.
- * @property {string}   arena         Arena id (src/sim/arenaProfiles.js); default 'stadium'.
+ * @property {string}   arena         Arena id: a src/sim/arenaProfiles.js id ('stadium',
+ *                                    'colosseum', 'icepeak', 'lavafoundry', 'stormspire',
+ *                                    'quicksand', 'magnetcore', …). Unknown ids play as the
+ *                                    stadium. Defaults to 'stadium'.
  * @property {string}   mode          'brawl' | 'hill' | 'teams' | 'sudden'.
  * @property {number[][]|null} teams  Team battle rosters: arrays of slots per team.
  * @property {number}   hillTarget    King-of-the-hill points to take the round.
@@ -338,6 +341,14 @@ export const EV = Object.freeze({
   SEGMENT_WARN: 'segmentWarn',
   /** Stage segment b fell. */
   SEGMENT_FALL: 'segmentFall',
+  /** A sky drop was picked and telegraphed: kind = item key, (x, z) = landing zone, mag = warn seconds, tier = 1 for rare drops. */
+  TELEGRAPH: 'telegraph',
+  /** Dweeb a touched rising lava at (x, y, z). mag = launch. */
+  LAVA: 'lava',
+  /** A jump pad launched dweeb a. mag = upward velocity. */
+  JUMPPAD: 'jumppad',
+  /** A stage hazard hit dweeb a. kind names the hazard ('hammer'), mag = launch. */
+  HAZARD: 'hazard',
   /** Dweeb a is hanging off the ledge. x = ledge angle, mag = hang time. */
   LEDGE: 'ledge',
   /** Dweeb a reached style tier (1..3). */

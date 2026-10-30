@@ -156,6 +156,28 @@ export const BALANCE = {
     crustMax: 4,            // segments the volcano may eat before sudden death
     bumperBoost: 1.28,      // factory bumpers shove a little harder
     pendulumBoost: 1.3,
+    // Knockout Arena hazards (sim + live read the same numbers)
+    hammerCount: 2,          // rotating hammers on the Colosseum of Clouts
+    hammerArmR: 6.5,         // metres from the pivot to the hammer head
+    hammerHeadR: 1.1,        // head hit radius
+    hammerSpeed: 1.6,        // rad/s
+    hammerDamage: 10, hammerBase: 7, hammerGrowth: 9,
+    jumpPadVel: 24,          // jump pads launch harder than trampolines (17)
+    conveyorCount: 2,        // conveyor belts on the Colosseum
+    conveyorSpeed: 5.5,      // m/s of belt drift applied to grounded dweebs
+    crumbleFirst: 20,        // grace before the first edge tile crumbles
+    crumbleEvery: 8.5,       // seconds between crumbles
+    crumbleMax: 4,           // tiles the arena may eat before sudden death
+    crumbleWarn: 1.6,        // telegraph (shake) before a tile falls
+    telegraphTime: 1.2,      // pre-spawn warning before a sky drop lands
+    lavaEdgeGrace: 8,        // Lava Foundry: grace before the lava perimeter starts rising
+    lavaEdgeRise: 0.55,      // m/s the safe radius shrinks
+    lavaEdgeMin: 5.5,        // the lava never closes past this radius
+    // NOTE: lavaDamage / lavaCooldown belong to the volcano dip (see above); the foundry's
+    // rising edge gets its own keys so the two lava tunings never shadow each other.
+    lavaEdgeDamage: 9, lavaEdgeBase: 6, lavaEdgeGrowth: 8,
+    lavaEdgeCooldown: 1.0,
+    respawnMinGap: 2.2,      // simultaneous respawns are separated by at least this (metres)
     // Storm Spire lightning (telegraphed ground strikes)
     lightningFirst: 6,      // grace before the first strike
     lightningEvery: 9,      // seconds between strikes (jittered ±2 by the seeded stream)
@@ -213,6 +235,12 @@ export const BALANCE = {
     names: ['MEH', 'SPICY', 'CHAOTIC', 'DWEEB GOD'],
     hold: 2.5,       // seconds before the meter starts draining
     drain: 22,       // points / s after that
+    // Super-smash meter: consecutive landed punches build it faster. A punch landed within
+    // streakWindow of the last one continues the streak; a whiff, a weapon hit, or taking a
+    // hit resets it. Each streak level past the first adds streakBonus style, up to streakCap.
+    streakWindow: 1.1,
+    streakBonus: 3,
+    streakCap: 6,
   },
 
   // Attack tables: charge c ∈ [0,1]. `p` is the attacker's power scale (mega / Super Yeet).

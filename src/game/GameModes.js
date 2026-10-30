@@ -3,6 +3,9 @@
 // 2. 'walldrop'— Team PVP Wall Drop Arena (1 life, slow arcing bullets, center dividing wall drops)
 // 3. 'escape'  — Co-op Combatless Island Escape (parkour, heavy battery carrying, gate switches)
 // 4. 'brawl'   — Classic Knockout Brawl
+//
+// Each mode also declares `arenas` (the stage ids it may be played on) and `arena` (its
+// default stage). The menu filters the arena picker by the current mode's list.
 
 export const GAME_MODES = {
   adventure: {
@@ -15,6 +18,8 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: true,
     isCivilization: true,
+    arenas: ['meadowlands'],
+    arena: 'meadowlands',
   },
   derby: {
     id: 'derby',
@@ -25,6 +30,8 @@ export const GAME_MODES = {
     hasWallDrop: false,
     hasContraptions: true,
     hasEscapePuzzles: false,
+    arenas: ['stadium', 'colosseum', 'icepeak', 'lavafoundry', 'pinball', 'megastadium'],
+    arena: 'stadium',
   },
   walldrop: {
     id: 'walldrop',
@@ -35,6 +42,8 @@ export const GAME_MODES = {
     hasWallDrop: true,
     hasContraptions: false,
     hasEscapePuzzles: false,
+    arenas: ['stadium', 'colosseum'],
+    arena: 'stadium',
   },
   escape: {
     id: 'escape',
@@ -45,6 +54,8 @@ export const GAME_MODES = {
     hasWallDrop: false,
     hasContraptions: false,
     hasEscapePuzzles: true,
+    arenas: ['meadowlands'],
+    arena: 'meadowlands',
   },
   mimic: {
     id: 'mimic',
@@ -56,6 +67,8 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: false,
     isMimic: true,
+    arenas: ['stadium', 'colosseum'],
+    arena: 'stadium',
   },
   warfare: {
     id: 'warfare',
@@ -67,6 +80,8 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: false,
     isWarfare: true,
+    arenas: ['stadium', 'colosseum', 'megastadium'],
+    arena: 'stadium',
   },
   brawl: {
     id: 'brawl',
@@ -77,6 +92,8 @@ export const GAME_MODES = {
     hasWallDrop: false,
     hasContraptions: true,
     hasEscapePuzzles: false,
+    arenas: ['colosseum', 'icepeak', 'lavafoundry', 'stadium', 'iceberg', 'volcano', 'pinball', 'megastadium'],
+    arena: 'colosseum',
   },
   hill: {
     id: 'hill',
@@ -88,6 +105,8 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: false,
     isHill: true,
+    arenas: ['stadium', 'colosseum', 'megastadium'],
+    arena: 'stadium',
   },
   teams: {
     id: 'teams',
@@ -99,6 +118,8 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: false,
     isTeams: true,
+    arenas: ['stadium', 'colosseum', 'megastadium', 'pinball'],
+    arena: 'stadium',
   },
   sudden: {
     id: 'sudden',
@@ -110,6 +131,8 @@ export const GAME_MODES = {
     hasContraptions: true,
     hasEscapePuzzles: false,
     isSudden: true,
+    arenas: ['stadium', 'colosseum', 'icepeak', 'lavafoundry'],
+    arena: 'stadium',
   },
   build: {
     id: 'build',
@@ -120,6 +143,8 @@ export const GAME_MODES = {
     hasWallDrop: false,
     hasContraptions: true,
     hasEscapePuzzles: false,
+    arenas: ['stadium', 'colosseum'],
+    arena: 'stadium',
   },
   build_arena: {
     id: 'build_arena',
@@ -130,6 +155,8 @@ export const GAME_MODES = {
     hasWallDrop: false,
     hasContraptions: true,
     hasEscapePuzzles: false,
+    arenas: ['colosseum', 'stadium', 'megastadium'],
+    arena: 'colosseum',
   },
 };
 

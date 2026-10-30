@@ -11,6 +11,7 @@
 
 import { BALANCE } from '../game/Balance.js';
 import { TICK_DT } from './contracts.js';
+import { SEGMENTS as SEGMENTS_N } from './arena.js';
 import { WEAPONS, itemDef } from './tables.js';
 
 const A = BALANCE.attacks;
@@ -107,7 +108,7 @@ export class SimCombat {
         base: atk.base * t.stats.armor,
         growth: atk.growth * t.stats.armor * t.stats.growthTaken,
         dirX: dx || fx, dirZ: dz || fz, lift: 0.35 + charge * 0.5,
-        from: attacker,
+        from: attacker, punch: kind === 'punch',
       }, api);
       hit = true;
       if (launch) api.noteLaunch?.(t, launch);
@@ -118,6 +119,9 @@ export class SimCombat {
       this.throwHeld(attacker, Math.max(0.2, charge), api);
       hit = true;
     }
+
+    // A whiffed jab breaks the punch streak: the super-smash meter wants consecutive LANDED punches.
+    if (!hit && kind === 'punch') attacker.punchStreak = 0;
 
     api.emit?.(hit ? 'attack' : 'whiff', { a: attacker.id, mag: charge, kind });
     return hit;
@@ -361,35 +365,105 @@ export class SimCombat {
   }
 
   /**
-   * Bumpers and trampolines, applied as a radius test rather than as a contact. Deterministic,
-   * and it does not depend on contact-event ordering — which is the whole reason the sim does it
-   * this way rather than the way the live game does it.
+   * Bumpers, trampolines, jump pads, hammers, conveyors, crumbly tiles and rising lava —
+   * applied as analytic tests rather than as contacts. Deterministic, and it does not depend
+   * on contact-event ordering — which is the whole reason the sim does it this way rather
+   * than the way the live game does it.
    */
   stageHazards(dweebs, arena, api) {
-    const B = BALANCE.bounce;
+    const B = BALANCE.bounce, AB = BALANCE.arena;
     const boost = arena.profile?.bumperBoost ?? 1;
     for (const d of dweebs) {
       if (!d.active) continue;
       const p = d.position;
-      for (const h of arena.hazards) {
-        if (h.kind !== 'bumper' && h.kind !== 'trampoline') continue;
-        const dx = p[0] - h.x, dz = p[2] - h.z;
-        if (Math.hypot(dx, dz) > h.r + 0.4) continue;
-        const v = this.physics.vel(d.id);
-        if (h.kind === 'bumper') {
-          const dist = Math.hypot(dx, dz);
-          const nx = dist > 0.01 ? dx / dist : 1, nz = dist > 0.01 ? dz / dist : 0;
-          const along = v.x * nx + v.z * nz;
-          const out = Math.max(B.bumperMinSpeed, -along * B.bumperGain) * boost;
-          this.physics.setVel(d.id,
-            v.x + nx * (out - along + B.bumperPush * boost),
-            Math.max(v.y, B.bumperUp * boost),
-            v.z + nz * (out - along + B.bumperPush * boost));
-          api.emit?.('bumper', { a: d.id, x: h.x, y: 0.25, z: h.z, mag: out });
-        } else if (v.y < 1) {
-          this.physics.setVel(d.id, v.x, B.trampolineVel, v.z);
-          api.emit?.('trampoline', { a: d.id, x: h.x, y: 0.25, z: h.z, mag: B.trampolineVel });
+      // Belt velocity is refreshed every tick: standing on a conveyor joins its drift to your
+      // movement target (see preStep); stepping off zeroes it again.
+      d.beltVX = 0;
+      d.beltVZ = 0;
+
+      // Crumbly rim tiles: over a gone tile the floor is gone. Toggle ground collision so the
+      // dweeb genuinely falls through to the lagoon; restore it once back over solid floor.
+      const pit = arena.isPit(p[0], p[2]) && p[1] < 1.2;
+      if (pit && !d.pitfall) {
+        d.pitfall = true;
+        this.physics.setCollideGround(d.id, false);
+      } else if (!pit && d.pitfall) {
+        d.pitfall = false;
+        this.physics.setCollideGround(d.id, true);
+      }
+
+      // Rising lava (Lava Foundry): outside the safe radius at floor level burns.
+      if (arena.profile.lavaRising && d.lavaCd <= 0 && p[1] < 1.5 && p[1] > -2) {
+        const r = Math.hypot(p[0], p[2]);
+        const edge = arena.lavaEdge();
+        if (r > edge) {
+          const nx = r > 0.01 ? -p[0] / r : 0, nz = r > 0.01 ? -p[2] / r : 0;
+          const launch = d.applyHit({
+            damage: AB.lavaEdgeDamage, base: AB.lavaEdgeBase, growth: AB.lavaEdgeGrowth,
+            dirX: nx, dirZ: nz, lift: 0.9, from: null,
+          }, api);
+          d.lavaCd = AB.lavaEdgeCooldown;
+          api.emit?.('lava', { a: d.id, x: p[0], y: p[1], z: p[2], mag: launch });
         }
+      }
+
+      for (const h of arena.hazards) {
+        const dx = p[0] - h.x, dz = p[2] - h.z;
+        if (h.kind === 'bumper' || h.kind === 'trampoline' || h.kind === 'jumppad') {
+          if (Math.hypot(dx, dz) > h.r + 0.4) continue;
+          const v = this.physics.vel(d.id);
+          if (h.kind === 'bumper') {
+            const dist = Math.hypot(dx, dz);
+            const nx = dist > 0.01 ? dx / dist : 1, nz = dist > 0.01 ? dz / dist : 0;
+            const along = v.x * nx + v.z * nz;
+            const out = Math.max(B.bumperMinSpeed, -along * B.bumperGain) * boost;
+            this.physics.setVel(d.id,
+              v.x + nx * (out - along + B.bumperPush * boost),
+              Math.max(v.y, B.bumperUp * boost),
+              v.z + nz * (out - along + B.bumperPush * boost));
+            api.emit?.('bumper', { a: d.id, x: h.x, y: 0.25, z: h.z, mag: out });
+          } else if (v.y < 1) {
+            const vel = h.kind === 'jumppad' ? AB.jumpPadVel : B.trampolineVel;
+            this.physics.setVel(d.id, v.x, vel, v.z);
+            api.emit?.(h.kind === 'jumppad' ? 'jumppad' : 'trampoline',
+              { a: d.id, x: h.x, y: 0.25, z: h.z, mag: vel });
+          }
+        } else if (h.kind === 'hammer') {
+          if (d.hazardCd > 0 || p[1] > 2.4) continue;
+          const head = arena.hammerHead(h);
+          const hx = p[0] - head.x, hz = p[2] - head.z;
+          if (Math.hypot(hx, hz) > h.headR + 0.45) continue;
+          // Tangential shove along the swing direction, plus lift.
+          const s = Math.sign(h.speed) || 1;
+          const rx = head.x - h.x, rz = head.z - h.z;
+          const rl = Math.hypot(rx, rz) || 1;
+          const launch = d.applyHit({
+            damage: AB.hammerDamage, base: AB.hammerBase, growth: AB.hammerGrowth,
+            dirX: (-rz / rl) * s, dirZ: (rx / rl) * s, lift: 0.55, from: null,
+          }, api);
+          d.hazardCd = 0.9;
+          api.emit?.('hazard', { a: d.id, kind: 'hammer', x: head.x, y: 1, z: head.z, mag: launch });
+        } else if (h.kind === 'conveyor') {
+          if (!d.grounded || d.grabbedBy) continue;
+          if (Math.abs(dx) > h.hx || Math.abs(dz) > h.hz) continue;
+          if (p[1] > 1.6 || p[1] < -1.2) continue;
+          // The belt joins the dweeb's movement target (see preStep): a flat velocity add
+          // would be braked away before the next physics step ever integrated it.
+          d.beltVX = h.dx * h.speed;
+          d.beltVZ = h.dz * h.speed;
+        }
+      }
+    }
+
+    // Crumble transitions are pure functions of time, so warn/fall edges are computed from
+    // (time, time - dt) without storing per-tile state.
+    if (arena.profile.crumbly) {
+      const t = arena.time, dt = TICK_DT;
+      for (let i = 0; i < SEGMENTS_N; i++) {
+        const now = arena.tileStateAt(i, t), prev = arena.tileStateAt(i, t - dt);
+        if (now === prev) continue;
+        if (now === 'shaking') api.emit?.('segmentWarn', { b: i });
+        else if (now === 'gone') api.emit?.('segmentFall', { b: i });
       }
     }
   }
