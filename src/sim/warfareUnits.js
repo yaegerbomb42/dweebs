@@ -54,7 +54,7 @@ export const UNIT_TYPES = Object.freeze({
   },
   sapper: {
     name: 'Sapper', blurb: 'Tunnel-rat with a cone drill. Burrows under barricades to pop up behind the enemy back line.',
-    hp: 85, speed: 4.8, radius: 0.5, mass: 1.2,
+    hp: 100, speed: 4.8, radius: 0.5, mass: 1.2,
     attack: 'melee', range: 1.0, dmg: 22, cooldown: 22,
     cost: 30, retreatAt: 0.2, flanker: true, grabbable: true, aggro: 24, tunnels: true,
   },
