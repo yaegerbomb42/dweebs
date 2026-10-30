@@ -26,6 +26,7 @@ export function applySettings() {
   const s = loadSettings();
   const g = game();
   applyAudioSettings(g?.audio, s);
+  window.__dweebsGovernor?.setAuto?.(s.quality === 'auto');
   applyQuality(g?.renderer, s.quality);
   applyReducedMotion(g, s.reducedMotion);
   return s;
@@ -34,6 +35,8 @@ export function applySettings() {
 /** Quality preset: shadow map on/off plus a render-scale hint. */
 function applyQuality(renderer, quality) {
   if (!renderer) return;
+  // 'auto' is handled by the quality governor; skip here
+  if (quality === 'auto') return;
   const dpr = window.devicePixelRatio || 1;
   const scale = quality === 'low' ? 0.6 : quality === 'medium' ? 0.85 : 1;
   try {
