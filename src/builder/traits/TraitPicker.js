@@ -28,11 +28,11 @@ const css = `
 `;
 
 export class TraitPicker {
-  constructor({ traits = [], core = {}, onChange, onBrawl, onClose } = {}) {
+  constructor({ traits = [], core = {}, onChange, onBrawl, onWilds, onClose } = {}) {
     this.coll = loadCollection();
     this.sel = traits.filter(id => isOwned(this.coll, id));
     this.core = { ...core };
-    this.onChange = onChange; this.onBrawl = onBrawl; this.onClose = onClose;
+    this.onChange = onChange; this.onBrawl = onBrawl; this.onWilds = onWilds; this.onClose = onClose;
     this.cat = 'owned'; this.q = ''; this.limit = 150;
     const root = document.createElement('div'); root.id = 'tp-root';
     root.innerHTML = `<style>${css}</style><div id="tp-win">
@@ -121,7 +121,7 @@ export class TraitPicker {
       }).join('')}
       <div style="font-family:system-ui;font-size:10px;opacity:.7;margin:4px 0">± buttons hand-pick core stat points (${corePoints(this.core)} pts; raising gets pricier each step, lowering refunds a little). Dashed line = what the traits asked for, before trade-offs and caps.</div>
       <div style="margin-top:8px"><button class="tp-btn" id="tp-rand">🎲 Randomize</button><button class="tp-btn" id="tp-roul" style="background:#ff9ee0">🎰 Mutation Roulette</button><button class="tp-btn" id="tp-clear" style="background:#ff6b6b">Clear</button></div>
-      <div><button class="tp-btn" id="tp-brawl" style="background:#7dd3fc">🤖 Brawl Sim</button><button class="tp-btn" id="tp-done" style="background:#5ee06a">✔ Done</button></div>`;
+      <div><button class="tp-btn" id="tp-brawl" style="background:#7dd3fc">🤖 Brawl Sim</button><button class="tp-btn" id="tp-wilds" style="background:#5ee06a">🌲 Dweeb Wilds</button><button class="tp-btn" id="tp-done" style="background:#5ee06a">✔ Done</button></div>`;
     el.querySelector('#tp-rand').addEventListener('click', () => {
       this.core = {}; this.sel = generateBuild((Date.now() & 0xffffff) + 1, ownedTraits(this.coll), MAX_TRAITS); this.emit(); this.render();
     });
@@ -145,5 +145,6 @@ export class TraitPicker {
     el.querySelector('#tp-clear').addEventListener('click', () => { this.sel = []; this.emit(); this.render(); });
     el.querySelector('#tp-done').addEventListener('click', () => this.close());
     el.querySelector('#tp-brawl').addEventListener('click', () => { this.close(); this.onBrawl?.(); });
+    el.querySelector('#tp-wilds').addEventListener('click', () => { this.close(); this.onWilds?.(); });
   }
 }
