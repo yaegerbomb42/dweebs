@@ -47,6 +47,7 @@ export class Fx {
 
   /** Hit feedback in four tiers (jab / solid / ragdoll / fireworks): small hits stay crisp, big ones get loud. */
   hit(victim, attacker, launch, kind) {
+    this.combo?.registerHit?.(victim, attacker, launch, performance.now() / 1000);
     const pos = victim.getPosition();
     const power = Math.min(1, launch / 20);
     const tier = hitTier(launch);
