@@ -41,6 +41,7 @@ import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
 import { MutatorDirector } from './game/Mutators.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
+import { QuestBoard } from './adventure/quests.js';
 import { BuildingManager } from './adventure/building.js';
 import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
@@ -61,6 +62,7 @@ let lastBuilderOppType = 'random';
 
 let currentMeadowlands = null;
 let colony = null;
+let questBoard = null; // Meadowlands NPC quests + Moss Tablet secrets
 let buildingManager = null;
 let currentEscapeSandbox = null;
 let currentMimicLab = null;
@@ -481,7 +483,7 @@ function applyAudioSettings() {
 function toMenu() {
   if (currentMeadowlands) {
     if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
-    currentMeadowlands.dispose();
+    (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
     currentMeadowlands = null;
   }
   if (buildingManager) {
@@ -531,7 +533,7 @@ function startWarfare(submode = 'defense') {
   spectateTarget = null;
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
-  if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+  if (currentMeadowlands) { (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
@@ -696,7 +698,7 @@ function startBuildLab() {
   spectateTarget = null;
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
-  if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+  if (currentMeadowlands) { (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
@@ -887,6 +889,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'quests', { get: () => questBoard, configurable: true });
   fx.player = player;
   hud.setup(dweebs);
 
@@ -901,7 +904,7 @@ function startMatch() {
   if (isAdventure) {
     if (arena.setStadiumVisible) arena.setStadiumVisible(false);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
-    if (currentMeadowlands) currentMeadowlands.dispose();
+    if (currentMeadowlands) (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
     currentMeadowlands = new Meadowlands(physics, scene, { fx });
     colony = new Colony();
     bots = []; // Citizens are autonomous and peaceful; no brawler AI in adventure
@@ -936,6 +939,7 @@ function startMatch() {
       const restored = applySave(savedVillage, { colony, buildingManager, world: currentMeadowlands });
       colony._addLog(`📂 Welcome back! Restored ${restored.citizens} citizens and ${restored.structures} structures.`);
     }
+    try { questBoard = new QuestBoard({ world: currentMeadowlands, colony, hud, audio, buildingManager }); } catch (e) { console.warn('[quests]', e); questBoard = null; }
 
     for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
     $('hud')?.classList.remove('hidden');
@@ -959,7 +963,7 @@ function startMatch() {
     if (currentMeadowlands) {
       // Save the village before tearing it down.
       if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
-      currentMeadowlands.dispose();
+      (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
       currentMeadowlands = null;
     }
     if (buildingManager) {
@@ -1470,6 +1474,7 @@ function loop() {
       buildingManager.updatePlaced(rawDt, dweebs);
     }
     currentMeadowlands.update(dt, dweebs, colony);
+    if (questBoard && player) questBoard.update(dt, player);
 
     // Gently rescue any dweeb that falls below the map
     for (const d of dweebs) {
@@ -1516,6 +1521,7 @@ function loop() {
       } else {
         objBanner.textContent = `Goal: Expand New Dweebtopia! Build Watchtowers & Barricades to defend against Critters (Gen ${colony.generation})`;
       }
+      if (questBoard) objBanner.textContent = `${questBoard.bannerText()}  ·  ${objBanner.textContent}`;
     }
 
     // Citizen Observation Card in Observer mode
@@ -1971,7 +1977,7 @@ function wireCivCameraControls() {
       saveVillage({ colony, buildingManager, world: currentMeadowlands });
     }
     if (currentMeadowlands) {
-      currentMeadowlands.dispose();
+      (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
       currentMeadowlands = null;
     }
     if (buildingManager) {
