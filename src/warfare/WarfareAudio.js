@@ -3,7 +3,7 @@
 // boss drone, win fanfare, lose trombone, UI clicks. Mute persists in localStorage.
 const KEY = 'dweebs-warfare-muted';
 const store = typeof localStorage !== 'undefined' ? localStorage : { getItem: () => null, setItem: () => {} };
-const LIMITS = { hit: 14, death: 8, explode: 6, fire: 8, slam: 4, grab: 4, convert: 4, fortHit: 4, recruit: 6, warhorn: 2, repair: 2, trap: 4 };
+const LIMITS = { hit: 14, death: 8, pop: 6, explode: 6, fire: 8, slam: 4, grab: 4, convert: 4, fortHit: 4, recruit: 6, warhorn: 2, repair: 2, trap: 4 };
 
 export class WarfareAudio {
   constructor({ enabled = true } = {}) {
@@ -182,7 +182,8 @@ export class WarfareAudio {
     for (const ev of events) {
       switch (ev.type) {
         case 'hit': if (this._take('hit')) this.hit(ev.x, ev.dmg > 40); break;
-        case 'death': if (this._take('death')) this.pop(ev.x, ev.unit === 'boss' || ev.unit === 'brute'); break;
+        case 'death': if (ev.unit !== 'decoy' && this._take('death')) this.pop(ev.x, ev.unit === 'boss' || ev.unit === 'brute'); break;
+        case 'pop': if (this._take('pop')) this.pop(ev.x, false); break;
         case 'explode': if (this._take('explode')) this.boom(ev.x, !!ev.big); break;
         case 'fire': if (this._take('fire')) this.thoomp(ev.x); break;
         case 'slam': if (this._take('slam')) this.slam(ev.x, ev.unit === 'boss'); break;

@@ -211,6 +211,11 @@ export class WarfareHud {
             <i class="wf-cd-sweep" data-cd-sweep="stance"></i>
             <span class="wf-cd-label wf-cd-overlay" data-cd-text="stance"></span>
           </button>
+          <button class="alt" data-a="decoy" title="Inflatable Decoy (G) · Costs 20 Coins">
+            <span class="wf-p-label">🎈 DECOY (G) 🪙20</span>
+            <i class="wf-cd-sweep" data-cd-sweep="decoy"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="decoy"></span>
+          </button>
           <button class="alt" data-a="warhorn" title="War Horn (T) · Costs 20 Coins — your army hits +30% harder and moves +20% faster for 8s">
             <span class="wf-p-label">📯 WAR HORN (T) 🪙20</span>
             <i class="wf-cd-sweep" data-cd-sweep="warhorn"></i>
@@ -443,8 +448,8 @@ export class WarfareHud {
   updatePowers(st, team, powerCooldowns = {}) {
     if (!st) return;
     const coins = st.coins?.[team] ?? 0;
-    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0, warhorn: 18.0, repair: 25.0, trap: 15.0 };
-    const costs = { artillery: 25, supply: 15, stance: 0, warhorn: 20, repair: 30, trap: 20 };
+    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0, decoy: 12.0, warhorn: 18.0, repair: 25.0, trap: 15.0 };
+    const costs = { artillery: 25, supply: 15, stance: 0, decoy: 20, warhorn: 20, repair: 30, trap: 20 };
     for (const k of Object.keys(costs)) {
       const cd = Math.max(0, powerCooldowns[k] || 0);
       const cost = costs[k];

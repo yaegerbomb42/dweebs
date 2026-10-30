@@ -70,6 +70,14 @@ export const UNIT_TYPES = Object.freeze({
     attack: 'slam', range: 1.6, dmg: 55, splash: 4.2, cooldown: 54,
     cost: 400, retreatAt: 0, flanker: false, grabbable: false, aggro: 16,
   },
+  // Commander power only, never purchasable: a giant balloon Dweeb that soaks enemy attention
+  // until its fuse runs out or someone pops it.
+  decoy: {
+    name: 'Inflatable Decoy', blurb: 'Giant balloon Dweeb. Draws fire, then pops.',
+    hp: 220, speed: 0, radius: 1.2, mass: 0.5,
+    attack: 'none', range: 0, dmg: 0, cooldown: 1,
+    cost: 0, retreatAt: 0, flanker: false, grabbable: false, aggro: 0,
+  },
   medic: {
     name: 'Patch', blurb: 'Combat medic. Pulses a healing wave to the most wounded ally in range.',
     hp: 110, speed: 4.0, radius: 0.5, mass: 1.4,

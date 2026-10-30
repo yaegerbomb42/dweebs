@@ -185,9 +185,10 @@ export class WarfareView {
       let e = this.entries.get(u.id);
       if (!e) {
         const m = buildUnit(u.type, u.team);
+        if (u.decoy) m.root.scale.multiplyScalar(u.radius / 0.55);
         m.root.position.set(u.x, 0, u.z);
         this.dyn.add(m.root);
-        e = { m, px: u.x, pz: u.z, x: u.x, z: u.z, team: u.team, yaw: u.team === 'blue' ? 0 : Math.PI, flash: 0, leanX: 0, leanZ: 0, spawnT: 0, type: u.type, flag: null, rank: 0, name: '' };
+        e = { m, px: u.x, pz: u.z, x: u.x, z: u.z, team: u.team, yaw: u.team === 'blue' ? 0 : Math.PI, flash: 0, leanX: 0, leanZ: 0, spawnT: 0, type: u.type, decoy: !!u.decoy, flag: null, rank: 0, name: '' };
         this.entries.set(u.id, e);
       }
       e.px = e.x; e.pz = e.z;
@@ -276,14 +277,17 @@ export class WarfareView {
           if (e) {
             this.entries.delete(ev.id);
             this.dyn.remove(e.m.root);
-            const root = e.m.root;
-            root.position.set(e.x, e.y ?? 0, e.z);
-            e.m.body.material = teamMat(e.team);
-            fx.deathPop(root, e.team, ev.kx, ev.kz, ev.unit === 'boss' || ev.unit === 'brute');
-            if (ev.unit === 'boss') { fx.addShake(1.2); fx.explosion(e.x, e.z, 6, true); }
+            if (ev.unit !== 'decoy') {
+              const root = e.m.root;
+              root.position.set(e.x, e.y ?? 0, e.z);
+              e.m.body.material = teamMat(e.team);
+              fx.deathPop(root, e.team, ev.kx, ev.kz, ev.unit === 'boss' || ev.unit === 'brute');
+              if (ev.unit === 'boss') { fx.addShake(1.2); fx.explosion(e.x, e.z, 6, true); }
+            }
           }
           break;
         }
+        case 'pop': fx.balloonPop(ev.x, ev.z, ev.team); fx.number(ev.x, 3.2, ev.z, 'POP!', 'crit'); break;
         case 'explode': fx.explosion(ev.x, ev.z, ev.r, !!ev.big); break;
         case 'artillery': {
           const r = ev.radius || 8.5;
@@ -415,6 +419,7 @@ export class WarfareView {
       else tilt.scale.set(1, 1, 1);
       if (e.flash > 0) { e.flash -= dt; e.m.body.material = flashMat(); tilt.scale.multiplyScalar(1.12); }
       else if (e.m.body.material !== teamMat(e.team)) e.m.body.material = teamMat(e.team);
+      if (e.decoy) { const wob = 1 + Math.sin(t * 4 + e.x) * 0.045; tilt.scale.set(wob, 1 / wob, wob); }
       if (e.m.spark) e.m.spark.scale.setScalar(0.7 + Math.abs(Math.sin(t * 30 + e.x)) * 0.8);
       if (e.type === 'boss') {
         const back = tilt.getObjectByName('backGear');
