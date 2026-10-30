@@ -97,6 +97,15 @@ export const BALANCE = {
     max: 0.18,
   },
 
+  slip: {
+    radius: 0.7,           // metres a grounded Dweeb must step inside a peel
+    cooldown: 1.6,         // per-Dweeb grace so a pile of peels cannot stun-lock
+    stun: 0.55,
+    up: 4.6,
+    forward: 4.2,
+    spin: 9,
+  },
+
   // Recovery tools (Spec 6)
   airDodge: { speed: 11, invuln: 0.25, duration: 0.28, cooldown: 1.2 },
   tech: { buffer: 0.1, invuln: 0.3, missProne: 0.55 },

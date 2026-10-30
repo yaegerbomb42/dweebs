@@ -263,6 +263,19 @@ export class Fx {
     this.audio.playComicBonk(this._pan(pos));
   }
 
+  slip(victim) {
+    const pos = victim.getPosition();
+    this.particles.dust({ x: pos.x, y: pos.y - 0.45, z: pos.z }, 10);
+    this.particles.ring({ x: pos.x, y: pos.y - 0.4, z: pos.z }, { color: 0xffd93b, size: 2.4, life: 0.35 });
+    this.particles.emit(pos, { count: 12, colors: [0xffd93b, 0xfff1b8, 0xffffff], speed: 4, up: 2, size: 0.1, life: 0.45 });
+    this.audio.playSlideWhistle(this._pan(pos));
+    this.hud.popup('WIPEOUT!', { x: pos.x, y: pos.y + 0.9, z: pos.z }, 'big', 0xffd93b);
+    this.cam.shake(0.16);
+    this.hitStop = Math.max(this.hitStop, 0.03);
+    this.haptics?.hit(1, this._near(pos, 24), !!victim.isPlayer);
+    this.arena?.excite?.(0.35);
+  }
+
   whiff(d, weapon) {
     if (d.isPlayer || this._near(d.getPosition(), 8) > 0) this.audio.playWhoosh(this._pan(d.getPosition()));
   }

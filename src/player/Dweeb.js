@@ -86,6 +86,7 @@ export class Dweeb {
     this.traction = 1;          // arena ground acceleration multiplier
     this.slide = 1;             // arena top-speed multiplier
     this.skidTimer = 0;         // dust/haptic cooldown while carving a hard turn
+    this.slipCd = 0;            // banana-peel grace so piles cannot stun-lock
     this.techBuffer = 0;        // tech pressed just before impact
     this.techGrace = 0;         // …or just after
     this.missedTech = false;
@@ -1136,6 +1137,7 @@ export class Dweeb {
     this.slamActive = false;
     this.dropkickTimer = 0;
     this.skidTimer = 0;
+    this.slipCd = 0;
     this.rollTimer = 0;
     this.fastFalling = false;
     this.shieldCharges = 0;
@@ -1194,6 +1196,7 @@ export class Dweeb {
     this.slamActive = false;
     this.dropkickTimer = 0;
     this.skidTimer = 0;
+    this.slipCd = 0;
     this.rollTimer = 0;
     this.fastFalling = false;
     this.dropGrace = 0;
