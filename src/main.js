@@ -722,6 +722,7 @@ function toMenu() {
   audio.setCharge(0);
   hud.setSpectator('');
   hideSpectatorOverlay();
+  removeDarwinBoard();
   tutorial?.hide?.();
   try { modeDirector.reset(); } catch (e) { console.warn('[ModeDirector] reset error:', e); }
   for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud', 'spectator-duel-overlay']) $(id)?.classList.add('hidden');
@@ -1121,6 +1122,7 @@ function startMatch() {
   match.settings.stocks = (GAME_MODES[currentMode]?.stocks ?? +settings.stocks);
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
+  if (currentMode === 'derby') updateDarwinBoard();
 
   // ── Mode Initialization (Knockout Arena vs Expedition & Dynasty) ──
   const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
@@ -1298,6 +1300,8 @@ function mutatorCtx() {
 
 function startRound() {
   const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
+  if (currentMode !== 'derby') hideDarwinBoard();
+  else updateDarwinBoard();
   const isDweebball = currentMode === 'dweebball';
 
   // Undo last round's mutator before the round reset re-applies arena stats.
@@ -1462,6 +1466,35 @@ const matchEvents = {
     if (d.eliminated && !d.isPlayer) hud.popup('OUT!', pos, 'big', d.color);
     // Kill-cam lite: lean toward where they went when the player was part of it
     if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
+
+    // --- Derby mode: Darwin award ---
+    if (currentMode === 'derby') {
+      const vertSpeed = Math.abs(d.koSpeedY || 0);
+      let points = 100; // base
+      const bonuses = [];
+      if (kind === 'splash') { points += 75; bonuses.push({ label: 'BELLY FLOP', value: 75 }); }
+      if (pos.y > 6) { points += 100; bonuses.push({ label: 'SKY DIVE', value: 100 }); }
+      if (!credited) { points += 80; bonuses.push({ label: 'SELF-OWN', value: 80 }); }
+      const vertBonus = Math.min(150, Math.round(vertSpeed * 4));
+      if (vertBonus > 0) { points += vertBonus; bonuses.push({ label: 'METEOR', value: vertBonus }); }
+      if (sd) { points += 100; bonuses.push({ label: 'SUDDEN DEATH', value: 100 }); }
+      // Label from biggest bonus
+      let label = 'DARWIN';
+      if (bonuses.length) {
+        bonuses.sort((a, b) => b.value - a.value);
+        label = bonuses[0].label;
+      }
+      match.awardDarwin(d, points, label);
+      // Feedback
+      hud.feed(`<b style="color:#ffd23f">DARWIN +${points}</b> ${Hud.nameTag(d)} · ${label}`, 'ko');
+      hud.popup('DARWIN +' + points, pos, 'big', 0xffd23f);
+      particles.confetti(pos, 30);
+      arena.excite?.(0.4);
+    }
+  },
+  onDarwinAward(d, points, label) {
+    // Update the Darwin leaderboard panel
+    updateDarwinBoard();
   },
   onHillHold(holder) {
     if (!holder) return;
@@ -1726,6 +1759,48 @@ function highlightReel() {
 }
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+// ─── Darwin Leaderboard (derby mode) ───
+let darwinBoardEl = null;
+
+function ensureDarwinBoard() {
+  if (darwinBoardEl) return darwinBoardEl;
+  darwinBoardEl = document.createElement('div');
+  darwinBoardEl.id = 'darwin-board';
+  darwinBoardEl.style.cssText = `
+    position: fixed; top: 16px; right: 16px; z-index: 20;
+    background: rgba(255, 248, 238, 0.98); border: 3px solid #1b1030;
+    border-radius: 8px; padding: 8px 12px; min-width: 160px;
+    font-family: "Nunito", sans-serif; font-weight: 700; font-size: 13px;
+    color: #1b1030; box-shadow: 0 4px 12px rgba(27, 16, 48, 0.25);
+    pointer-events: none;
+  `;
+  document.body.appendChild(darwinBoardEl);
+  return darwinBoardEl;
+}
+
+function updateDarwinBoard() {
+  if (currentMode !== 'derby') { hideDarwinBoard(); return; }
+  const el = ensureDarwinBoard();
+  // Sort dweebs by darwin points descending
+  const ranked = [...dweebs].sort((a, b) => (b.darwin || 0) - (a.darwin || 0));
+  el.innerHTML = '<div style="font-size:11px;letter-spacing:1px;margin-bottom:4px;color:#8a6a9a">DARWIN</div>' +
+    ranked.map((d, i) => `
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-top:${i>0?'1px dashed #d8c8b8':''}">
+        <span style="color:${hex(d.color)}">${i+1}. ${d.isPlayer ? 'YOU' : d.name}</span>
+        <span style="color:#1b1030;background:#ffd23f;border-radius:6px;padding:0 6px">${d.darwin || 0}</span>
+      </div>
+    `).join('');
+  el.style.display = 'block';
+}
+
+function hideDarwinBoard() {
+  if (darwinBoardEl) darwinBoardEl.style.display = 'none';
+}
+
+function removeDarwinBoard() {
+  if (darwinBoardEl) { darwinBoardEl.remove(); darwinBoardEl = null; }
+}
 
 function podium(list, stat, extra = null) {
   const heights = [150, 110, 80];
