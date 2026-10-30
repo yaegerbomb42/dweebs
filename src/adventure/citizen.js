@@ -35,10 +35,25 @@ export const MOODS = {
   hungry: { id: 'hungry', icon: '😋', text: 'My tummy is rumbling…' },
 };
 
+/**
+ * Role mastery: XP thresholds for profession levels 1-3. Citizens earn XP by
+ * doing their job — foragers banking berries, builders raising structures,
+ * defenders bonking critters, tinkerers learning verbs. Each level is a real
+ * mechanical bonus (see addRoleXp / the per-role branches in _executeGoal).
+ */
+export const ROLE_XP_LEVELS = [0, 10, 30];
+const ROLE_LEVELUP_LINES = {
+  forager: 'My berry basket runneth over! 🍓',
+  builder: 'These hands build wonders! 🔨',
+  defender: 'None shall pass! 🛡️',
+  tinkerer: 'Genius takes practice! 🔧',
+};
+
 export const CITIZEN_STATES = {
   IDLE: 'IDLE',
   WANDER: 'WANDER',
   FORAGE: 'FORAGE',
+  HAUL: 'HAUL',
   REST: 'REST',
   SOCIALIZE: 'SOCIALIZE',
   TINKER: 'TINKER',
@@ -48,7 +63,37 @@ export const CITIZEN_STATES = {
   GUARD: 'GUARD',
   SING: 'SING',
   REPAIR: 'REPAIR',
+  TRY_STUNT: 'TRY_STUNT',
 };
+
+/** Copyable stunt types, with the verb learned on success and the comedy lines. */
+const COPYCAT_STUNTS = {
+  bounce: {
+    verb: 'bounce',
+    win: 'I bounced! Did everyone see that?! 🤩',
+    fail: 'I bounced straight onto my face. Worth it! 😵',
+  },
+  launch: {
+    verb: 'launch',
+    win: 'Launch successful! I am a flying Dweeb! 🚀',
+    fail: 'The launchpad laughed at me. Ouch. 😵',
+  },
+  zipline: {
+    verb: 'zipline',
+    win: 'Wheee! I rode the zipline all by myself! 🎉',
+    fail: 'I ran at the zipline and hugged the pole instead. 😵',
+  },
+  vault: {
+    verb: 'vault',
+    win: 'I found the vault trick! Treasure, here I come! 🤩',
+    fail: 'I tripped over my own feet at the vault door. 😵',
+  },
+};
+
+/** Seconds a citizen remembers a stunt and keeps trying to copy it. */
+const COPYCAT_MEMORY = 9;
+/** Seconds before a citizen can be inspired by another stunt. */
+const COPYCAT_COOLDOWN = 22;
 
 export class Citizen {
   constructor(dweeb, config = {}) {
@@ -68,6 +113,10 @@ export class Citizen {
 
     // Role (null = unassigned villager, follows needs only)
     this.role = config.role || null;
+    // Role mastery: XP earned by doing the job, levels 1-3 at ROLE_XP_LEVELS.
+    this.roleXp = typeof config.roleXp === 'number' ? config.roleXp : 0;
+    this.roleLevel = 1 + ROLE_XP_LEVELS.filter(t => t > 0 && this.roleXp >= t).length;
+    this._gizmoAcc = 0; // tinkerer L3: seconds until the next gizmo sale
     // Mood + speech bubble
     this.mood = 'happy';
     this.moodTimer = 0; // seconds of forced excitement left
@@ -89,6 +138,7 @@ export class Citizen {
     this.arrivalDist = 1.6;
     this.stuckTimer = 0;
     this.lastPos = new THREE.Vector3();
+    this._lastTargetDist = undefined; // distance-to-goal last tick (stuck detection)
     // Corner-unstick: a perpendicular sidestep engaged while a sharp building
     // corner blocks the straight-line heading (see _executeGoal).
     this._sidestep = null; // { until, dx, dz } in citizen clock seconds
@@ -99,10 +149,25 @@ export class Citizen {
     this._buildAcc = 0;
     this._bonkAcc = 0;
     this._lastStuntAt = -1;
+    // Forage give-up: consecutive bare bushes, and a cooldown that stops the
+    // citizen ping-ponging between picked-clean bushes forever.
+    this._emptyBushStreak = 0;
+    this._forageCooldown = 0;
+
+    // Village copycat: a fresh stunt this citizen wants to imitate.
+    this.copycat = null;         // { type, x, z, until, verb, stunt, attempted }
+    this._copycatCooldown = 0;   // seconds before another imitation
 
     // Toy-hammer repair duty (landmarks from the ToyTown district).
     this._repairSwing = 0;
     this.repairHammer = null;
+
+    // Physical hauling: a woven basket on the back and the resource units it holds.
+    this.carrying = null; // { res: 'berries'|'wood'|'stone', amount: number }
+    this.basket = null;
+    this.basketBerries = null;
+    this._basketSway = 0;
+    this._basketSwayV = 0;
   }
 
   /** A tiny toy hammer appears while a worker is patching a broken fort. */
@@ -127,6 +192,178 @@ export class Citizen {
     return g;
   }
 
+  /** A woven berry basket appears only while the citizen is hauling goods. */
+  _ensureBasket() {
+    if (this.basket) return this.basket;
+    if (!this.dweeb || !this.dweeb.mesh) return null;
+    const g = new THREE.Group();
+    const wicker = toonMat({ color: 0xa86b33, flatShading: true });
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.27, 0.19, 0.24, 8, 1, true),
+      wicker,
+    );
+    body.position.y = 0.12;
+    const bottom = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.19, 0.19, 0.04, 8),
+      toonMat({ color: 0x8a5a2b, flatShading: true }),
+    );
+    bottom.position.y = 0.02;
+    const handle = new THREE.Mesh(
+      new THREE.TorusGeometry(0.2, 0.022, 4, 8, Math.PI),
+      wicker,
+    );
+    handle.position.y = 0.25;
+    handle.rotation.z = Math.PI;
+    g.add(body, bottom, handle);
+
+    const berries = new THREE.Group();
+    for (let i = 0; i < 5; i++) {
+      const berry = new THREE.Mesh(
+        new THREE.SphereGeometry(0.065, 6, 6),
+        toonMat({ color: 0xdc2626, flatShading: true }),
+      );
+      const a = (i / 5) * Math.PI * 2;
+      berry.position.set(Math.cos(a) * 0.11, 0.08 + (i % 2) * 0.06, Math.sin(a) * 0.11);
+      berry.visible = false;
+      berries.add(berry);
+    }
+    g.add(berries);
+
+    g.position.set(0.34, 0.55, 0.22);
+    g.visible = false;
+    this.dweeb.mesh.add(g);
+    this.basket = g;
+    this.basketBerries = berries;
+    return g;
+  }
+
+  /** Attach one unit to the basket without starting the delivery trip yet. */
+  _addToBasket(res, amount = 1) {
+    if (!res || amount <= 0) return false;
+    if (this.carrying && this.carrying.res === res) {
+      this.carrying.amount += amount;
+    } else {
+      // Only one resource type fits in a basket; bank any old load first.
+      this.carrying = { res, amount };
+    }
+    this._ensureBasket();
+    this._updateBasketVisual();
+    return true;
+  }
+
+  _updateBasketVisual() {
+    if (!this.basket) return;
+    const carrying = !!this.carrying && this.carrying.amount > 0;
+    this.basket.visible = carrying;
+    if (!carrying || !this.basketBerries) return;
+    const shown = Math.min(5, Math.ceil(this.carrying.amount));
+    this.basketBerries.children.forEach((berry, i) => {
+      berry.visible = i < shown;
+    });
+  }
+
+  /** Springy sway proportional to walking speed; also a tiny idle wobble. */
+  _updateBasket(dt) {
+    if (!this.basket) return;
+    if (!this.carrying || this.carrying.amount <= 0) {
+      this.basket.visible = false;
+      return;
+    }
+    this.basket.visible = true;
+    let speed = 0;
+    try {
+      const v = this.dweeb?.body?.linvel?.();
+      if (v) speed = Math.min(1.6, Math.hypot(v.x || 0, v.z || 0));
+    } catch {
+      speed = 0;
+    }
+    const target = speed * 0.28 + Math.sin(this.clock * 9) * 0.04 * (0.4 + speed);
+    this._basketSwayV += (target - this._basketSway) * 42 * dt - this._basketSwayV * 8 * dt;
+    this._basketSway += this._basketSwayV * dt;
+    this._basketSway = THREE.MathUtils.clamp(this._basketSway, -0.55, 0.55);
+    this.basket.rotation.z = -this._basketSway;
+    this.basket.rotation.x = Math.sin(this.clock * 11) * 0.05 * (0.3 + speed);
+    this.basket.position.y = 0.55 + Math.abs(this._basketSway) * 0.08;
+  }
+
+  /** Clear the basket and hide its mesh (after a successful drop). */
+  _clearBasket() {
+    this.carrying = null;
+    this._basketSway = 0;
+    this._basketSwayV = 0;
+    this._updateBasketVisual();
+  }
+
+  /** Bank the carried load directly when no physical hauling system exists. */
+  _bankCarried(colony, world) {
+    if (!this.carrying || !colony || typeof colony.addResource !== 'function') {
+      this._clearBasket();
+      return;
+    }
+    const { res, amount } = this.carrying;
+    let silos = [];
+    try {
+      silos = typeof colony._silosFrom === 'function'
+        ? colony._silosFrom(world)
+        : (world?.buildingManager?.placedStructures || []).filter(s => s && s.id === 'silo');
+    } catch {
+      silos = [];
+    }
+    if (amount > 0) colony.addResource(res, amount, silos);
+    this._clearBasket();
+  }
+
+  /** Turn a loaded basket into a walk to the nearest supply pile / silo. */
+  _startHaulTrip(world) {
+    if (!this.carrying || this.carrying.amount <= 0) return false;
+    const target = world && typeof world.haulTargetFor === 'function'
+      ? world.haulTargetFor(this, this.carrying.res)
+      : null;
+    if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.z)) return false;
+    this.state = CITIZEN_STATES.HAUL;
+    this.targetEntity = target.pile || null;
+    this.targetPos.set(target.x, target.y ?? 0.5, target.z);
+    this.stateTimer = 24;
+    this.activityText = `Hauling ${this.carrying.amount} ${this.carrying.res} to the village pile 🧺`;
+    return true;
+  }
+
+  /** Drop carried goods into a physical pile, then bank what the pile accepts. */
+  _depositHaul(world, colony) {
+    if (!this.carrying || this.carrying.amount <= 0) {
+      this.stateTimer = 0;
+      this._clearBasket();
+      return;
+    }
+    const fallback = { ...this.carrying };
+    let dropped = null;
+    try {
+      dropped = world && typeof world.dropHaul === 'function'
+        ? world.dropHaul(this, colony)
+        : null;
+    } catch {
+      dropped = null;
+    }
+    const res = dropped?.res || fallback.res;
+    const amount = dropped?.amount ?? fallback.amount;
+    const pile = dropped?.pile || null;
+    this._clearBasket();
+    if (colony && typeof colony.addResource === 'function' && amount > 0) {
+      let silos = [];
+      try {
+        silos = typeof colony._silosFrom === 'function'
+          ? colony._silosFrom(world)
+          : (world?.buildingManager?.placedStructures || []).filter(s => s && s.id === 'silo');
+      } catch {
+        silos = [];
+      }
+      colony.addResource(res, amount, silos, pile);
+    }
+    this.activityText = `Dropped ${amount} ${res} into the village pile 🧺`;
+    this.say('Fresh supplies! 🧺', '🍓', 2);
+    this.stateTimer = 0.2;
+  }
+
   /** Assign (or clear with null) a role. Returns true if the role id is valid. */
   assignRole(roleId) {
     if (roleId !== null && !ROLES[roleId]) return false;
@@ -135,6 +372,28 @@ export class Citizen {
       this.activityText = `${this.name} is now the village ${ROLES[roleId].name} ${ROLES[roleId].icon}`;
     }
     return true;
+  }
+
+  /**
+   * Earn profession XP. Level-ups announce themselves and hit the colony log.
+   * Bonuses: forager L2 banks 2 berries/pick, L3 is a green thumb (nearby
+   * bushes regrow 25% faster); builder L2 hammers 25% faster, L3 raises
+   * tougher structures (+25% hp); defender L2 bonks faster (1.0s), L3 scares
+   * critters off with an aura; tinkerer L2 learns 1.5x faster again, L3 sells
+   * a gizmo for 1 gold every minute.
+   */
+  addRoleXp(n, colony = null) {
+    if (!this.role || n <= 0) return this.roleLevel;
+    this.roleXp += n;
+    const level = 1 + ROLE_XP_LEVELS.filter(t => t > 0 && this.roleXp >= t).length;
+    if (level > this.roleLevel) {
+      this.roleLevel = level;
+      const line = ROLE_LEVELUP_LINES[this.role] || 'Level up!';
+      this.say(line, '⭐', 3);
+      this.moodTimer = 2;
+      if (colony) colony._addLog(`⭐ ${this.name} reached ${ROLES[this.role].name} level ${level}! ${line}`);
+    }
+    return this.roleLevel;
   }
 
   /** Show a speech bubble for a few seconds. */
@@ -172,11 +431,12 @@ export class Citizen {
     return true;
   }
 
-  observePeer(teacherCitizen, verbId, dt) {
+  observePeer(teacherCitizen, verbId, dt, colony = null) {
     if (this.knownVerbs.has(verbId)) return;
     if (!this.learningProgress[verbId]) this.learningProgress[verbId] = 0;
 
-    const tinkererBonus = this.role === 'tinkerer' ? 1.5 : 1.0;
+    // Tinkerers learn 1.5x faster; level-2 tinkerers learn 1.5x faster again.
+    const tinkererBonus = this.role === 'tinkerer' ? (this.roleLevel >= 2 ? 2.25 : 1.5) : 1.0;
     const rate = 0.25 * (this.personality.learningSpeed || 1.0) * tinkererBonus;
     this.learningProgress[verbId] += dt * rate;
     this.state = CITIZEN_STATES.OBSERVE;
@@ -184,13 +444,15 @@ export class Citizen {
 
     if (this.learningProgress[verbId] >= 1.0) {
       this.learnVerb(verbId);
+      this.addRoleXp(2, colony);
       this.state = CITIZEN_STATES.TINKER;
       this.activityText = `Practicing ${verbId} excitedly!`;
     }
   }
 
   /** React to a nearby physics stunt (bounce, zipline, vault). */
-  reactToStunt(stunt) {
+  reactToStunt(stunt, otherCitizens = []) {
+    if (!stunt) return;
     const lines = {
       bounce: { text: 'Whoa! Did you SEE that bounce?!', icon: '🤩' },
       zipline: { text: 'Wheee! The zipline! Again! Again!', icon: '🤩' },
@@ -202,22 +464,76 @@ export class Citizen {
     this.mood = 'excited';
     this.say(line.text, line.icon, 3);
     this.activityText = line.text;
+
+    // One nearby citizen gets the idea to imitate the stunt. The shared stunt
+    // object acts as the claim, so the first inspired villager wins and the
+    // rest only cheer.
+    this._tryRememberStunt(stunt, otherCitizens);
+  }
+
+  /** Remember a stunt to imitate, if this citizen is free and not on cooldown. */
+  _tryRememberStunt(stunt, otherCitizens = []) {
+    if (!stunt || stunt.copycatClaimed) return false;
+    const spec = COPYCAT_STUNTS[stunt.type];
+    if (!spec) return false;
+    if (!Number.isFinite(stunt.x) || !Number.isFinite(stunt.z)) return false;
+    if (this.copycat || this._copycatCooldown > 0) return false;
+    if (!this.dweeb || !this.dweeb.body) return false;
+
+    this.copycat = {
+      type: stunt.type,
+      x: stunt.x,
+      z: stunt.z,
+      until: this.clock + COPYCAT_MEMORY,
+      verb: spec.verb,
+      stunt,
+      attempted: false,
+    };
+    stunt.copycatClaimed = true;
+    stunt.copycatName = this.name;
+
+    // A little extra flavour: tinkerers are usually first to volunteer.
+    if (this.role === 'tinkerer' && otherCitizens.length > 1) {
+      this.activityText = `Ooh! A ${stunt.type} trick? I can build that!`;
+    } else {
+      this.activityText = `Ooh! I want to try that ${stunt.type} too!`;
+    }
+    this.stateTimer = 0; // decide on the copy attempt right away
+    return true;
   }
 
   update(dt, world, otherCitizens = [], colony = null) {
     if (!this.dweeb || !this.dweeb.body) return;
     this.clock += dt;
+    if (this._copycatCooldown > 0) this._copycatCooldown = Math.max(0, this._copycatCooldown - dt);
 
     // 1. Update internal needs
     this.hunger = Math.min(100, this.hunger + dt * 0.8);
-    this.energy = Math.max(0, this.energy - dt * 0.7 * (this.personality.energyDecay || 1.0));
+    // Summer's long days tire Dweebs more slowly; winter's cold bites harder.
+    const season = world ? world.season : undefined;
+    const seasonEnergyMul = season === 'summer' ? 0.85 : season === 'winter' ? 1.15 : 1;
+    this.energy = Math.max(0, this.energy - dt * 0.7 * (this.personality.energyDecay || 1.0) * seasonEnergyMul);
     this.curiosity = Math.min(100, this.curiosity + dt * 1.1 * (this.personality.curiosityBias || 1.0));
     this.social = Math.min(100, this.social + dt * 0.9 * (this.personality.socialBias || 1.0));
+
+    // Tinkerer mastery L3: sell a gizmo to a passing traveler every minute.
+    if (this.role === 'tinkerer' && this.roleLevel >= 3 && colony) {
+      this._gizmoAcc += dt;
+      if (this._gizmoAcc >= 60) {
+        this._gizmoAcc = 0;
+        colony.addResource('gold', 1, []);
+        this.say('Sold a gizmo! 🪙', '🪙', 2);
+      }
+    }
 
     // Friendships slowly cool off without contact.
     for (const [name, bond] of this.friends) {
       this.friends.set(name, Math.max(0, bond - dt * 0.05));
     }
+
+    // A citizen that found every bush picked clean takes a break from
+    // foraging so the bushes get a regrowth cycle to recover.
+    if (this._forageCooldown > 0) this._forageCooldown -= dt;
 
     // Mood follows needs, unless something exciting just happened.
     if (this.moodTimer > 0) {
@@ -239,20 +555,34 @@ export class Citizen {
         if (this.clock - stunt.at > 2) continue;
         if (Math.hypot(stunt.x - pos.x, stunt.z - pos.z) > 14) continue;
         this._lastStuntAt = stunt.at;
-        this.reactToStunt(stunt);
+        this.reactToStunt(stunt, otherCitizens);
       }
     }
 
     this.stateTimer -= dt;
 
-    // Check stuck detection. Citizens working, eating, chatting or singing in
-    // place are not stuck — only movers get re-evaluated.
-    const stationaryStates = [
-      CITIZEN_STATES.REST, CITIZEN_STATES.FORAGE, CITIZEN_STATES.SOCIALIZE,
-      CITIZEN_STATES.BUILD, CITIZEN_STATES.SING, CITIZEN_STATES.REPAIR,
-    ];
+    // Check stuck detection. Citizens resting in place are never stuck; citizens
+    // working (foraging, chatting, hammering, singing, repairing) are only
+    // stuck while still travelling to their work site — a repair worker whose
+    // landmark is unreachable must eventually give up, not hammer thin air
+    // forever. Pure movers always get re-evaluated.
     const currentPos = this.dweeb.body.translation();
-    if (this.lastPos.distanceTo(currentPos) < 0.1 && !stationaryStates.includes(this.state)) {
+    const distToWork = Math.hypot(
+      this.targetPos.x - currentPos.x, this.targetPos.z - currentPos.z,
+    );
+    const workStates = [
+      CITIZEN_STATES.FORAGE, CITIZEN_STATES.SOCIALIZE, CITIZEN_STATES.BUILD,
+      CITIZEN_STATES.SING, CITIZEN_STATES.REPAIR,
+    ];
+    const stationary = this.state === CITIZEN_STATES.REST ||
+      (workStates.includes(this.state) && distToWork <= this.arrivalDist + 0.4);
+    // A citizen covering ground toward its goal isn't stuck: walk speed is
+    // 4.2 m/s (0.07 m/tick), so per-tick displacement alone can't tell a
+    // steady walk from wedging into a corner. Require no *progress* too.
+    const lastDist = this._lastTargetDist;
+    this._lastTargetDist = distToWork;
+    const progress = lastDist === undefined ? 1 : lastDist - distToWork;
+    if (this.lastPos.distanceTo(currentPos) < 0.1 && progress < 0.02 && !stationary) {
       this.stuckTimer += dt;
       if (this.stuckTimer > 2.5) {
         this.stateTimer = 0; // force re-evaluate
@@ -273,9 +603,40 @@ export class Citizen {
   }
 
   _selectNextGoal(world, otherCitizens, colony = null) {
+    // Priority 0: A fresh stunt memory outranks chores — the village is watching!
+    if (this.copycat) {
+      if (this.copycat.attempted || this.clock >= this.copycat.until) {
+        if (!this.copycat.attempted) this._copycatCooldown = Math.max(this._copycatCooldown, 6);
+        this.copycat = null;
+      } else {
+        this.state = CITIZEN_STATES.TRY_STUNT;
+        this.targetEntity = null;
+        this.targetPos.set(this.copycat.x, 0.5, this.copycat.z);
+        this.stateTimer = COPYCAT_MEMORY + 2;
+        this.activityText = `Running over to copy that ${this.copycat.type} trick!`;
+        return;
+      }
+    }
+
+    // Priority 0: A loaded basket must reach a supply pile before anything else.
+    if (this.carrying && this.carrying.amount > 0) {
+      if (this._startHaulTrip(world)) return;
+      // No physical hauling support (or no safe target): bank the load directly.
+      this._bankCarried(colony, world);
+    }
+
     // Priority 1: High Hunger -> Find Berry Bush (foragers go earlier)
+    const raining = !!(world && world.weather === 'rain');
+
+    // A Builder heading off to eat/sleep/rest frees their blueprint claim so
+    // another Builder can pick it up; they re-claim when they come back.
+    if (this.role === 'builder' && colony) colony.releaseBuild(this);
+
+    // Priority 1: High Hunger -> Find Berry Bush (foragers go earlier).
+    // Skipped while the citizen is taking a break after finding every bush bare.
     const hungerLine = this.role === 'forager' ? 55 : 70;
-    if (this.hunger > hungerLine && world.berryBushes && world.berryBushes.length > 0) {
+    if (this.hunger > hungerLine && this._forageCooldown <= 0 &&
+        world.berryBushes && world.berryBushes.length > 0) {
       const bush = world.berryBushes[Math.floor(Math.random() * world.berryBushes.length)];
       this.state = CITIZEN_STATES.FORAGE;
       this.targetEntity = bush;
@@ -299,6 +660,19 @@ export class Citizen {
         this.activityText = 'Sitting cozily by the central fire, recharging energy';
       }
       this.stateTimer = 6 + Math.random() * 5;
+      return;
+    }
+
+    // Priority 2b: a pending expedition haul resumes after needs are handled —
+    // the citizen keeps marching to the point of interest until arrival pays out.
+    if (this._expeditionHaul && this._expeditionHaul.dest) {
+      const dest = this._expeditionHaul.dest;
+      this.state = CITIZEN_STATES.EXPEDITION;
+      this.targetPos.set(
+        dest.x + (Math.random() - 0.5) * 4, dest.y, dest.z + (Math.random() - 0.5) * 4,
+      );
+      this.stateTimer = 25;
+      this.activityText = `Trekking on to ${this._expeditionHaul.poi} with an empty pack 🎒`;
       return;
     }
 
@@ -335,25 +709,74 @@ export class Citizen {
       }
     }
 
-    // Role: Builder -> construct the next queued blueprint.
-    if (this.role === 'builder' && colony && colony.buildQueue && colony.buildQueue.length > 0) {
-      this.state = CITIZEN_STATES.BUILD;
-      this.targetEntity = colony.buildQueue[0];
-      // Build site: a clearing just off the campfire.
-      this.targetPos.set(6 + (Math.random() - 0.5) * 3, 0.5, 6 + (Math.random() - 0.5) * 3);
-      this._buildAcc = 0;
-      this.stateTimer = 12;
-      this.activityText = `Marching off to build the ${colony.buildQueue[0]}! 🔨`;
+    // Rain: cozy dweebs hate getting wet — they nap by the fire instead.
+    if (raining && this.personality.id === 'cozy' && this.energy < 70) {
+      this.state = CITIZEN_STATES.REST;
+      const placedTents = world.buildingManager ? world.buildingManager.placedStructures.filter(s => s.id === 'tent' || s.id === 'firepit') : [];
+      if (placedTents.length > 0) {
+        const target = placedTents[Math.floor(Math.random() * placedTents.length)];
+        this.targetPos.set(target.pos.x, target.pos.y, target.pos.z);
+        this.activityText = `Waiting out the rain under the ${target.id === 'tent' ? 'Play Tent' : 'Firepit'} 🌧️`;
+      } else {
+        this.targetPos.set((Math.random() - 0.5) * 3, 0.5, (Math.random() - 0.5) * 3);
+        this.activityText = 'Waiting out the rain by the fire 🌧️';
+      }
+      this.stateTimer = 6 + Math.random() * 4;
       return;
     }
 
-    // Role: Defender -> patrol the barricades, or the village edge.
+    // Festival: needs and repairs already handled above — drop everything and mingle.
+    if (colony && colony.festival && colony.festival.active && otherCitizens.length > 0) {
+      const peer = otherCitizens[Math.floor(Math.random() * otherCitizens.length)];
+      if (peer !== this && peer.dweeb && peer.dweeb.body) {
+        this.state = CITIZEN_STATES.SOCIALIZE;
+        this.targetEntity = peer;
+        const pp = peer.dweeb.body.translation();
+        this.targetPos.set(pp.x + (Math.random() - 0.5) * 2, pp.y, pp.z + (Math.random() - 0.5) * 2);
+        this.stateTimer = 6 + Math.random() * 4;
+        this.activityText = 'Dancing at the Berry Harvest Festival! 🎉';
+        if (Math.random() < 0.3) this.say('Best festival ever! 🎉', '🎉', 2);
+        return;
+      }
+    }
+
+    // Role: Builder -> claim and construct the next queued blueprint.
+    // claimBuild() hands each Builder a different affordable blueprint, so two
+    // Builders never raise (and charge for) the same blueprint twice.
+    if (this.role === 'builder' && colony) {
+      const id = colony.claimBuild(this);
+      if (id) {
+        this.state = CITIZEN_STATES.BUILD;
+        this.targetEntity = id;
+        // Build site: a clearing just off the campfire; the structure rises
+        // exactly where the Builder hammers (see _completeBuild sitePos).
+        const bx = 6 + (Math.random() - 0.5) * 3;
+        const bz = 6 + (Math.random() - 0.5) * 3;
+        const by = world && world._getHeight ? world._getHeight(bx, bz) : 0.5;
+        this.targetPos.set(bx, by, bz);
+        this._buildAcc = 0;
+        this.stateTimer = 12;
+        this.activityText = `Marching off to build the ${id}! 🔨`;
+        return;
+      }
+      // Nothing claimable (empty queue / all claimed / unaffordable) — the
+      // Builder just acts like a regular villager this round.
+    }
+
+    // Role: Defender -> patrol the barricades, the sentry vaults, or the village edge.
     if (this.role === 'defender') {
       this.state = CITIZEN_STATES.GUARD;
+      // An unopened sentry vault deserves a watch: defenders take turns
+      // standing guard there, which is exactly what opens it.
+      const sentries = world.ruins ? world.ruins.filter(r => r.kind === 'guard' && !r.opened) : [];
       const posts = world.buildingManager
         ? world.buildingManager.placedStructures.filter(s => s.id === 'cannon')
         : [];
-      if (posts.length > 0) {
+      if (sentries.length > 0 && Math.random() < 0.5) {
+        const s = sentries[Math.floor(Math.random() * sentries.length)];
+        this.targetPos.set(s.x + (Math.random() - 0.5) * 8, s.y, s.z + (Math.random() - 0.5) * 8);
+        this.activityText = `Standing sentry watch at the ${s.name} 🛡️`;
+      } else if (posts.length > 0) {
         const post = posts[Math.floor(Math.random() * posts.length)];
         this.targetPos.set(post.pos.x + (Math.random() - 0.5) * 3, post.pos.y, post.pos.z + (Math.random() - 0.5) * 3);
         this.activityText = 'Standing guard at the plush cannon 🛡️';
@@ -379,17 +802,37 @@ export class Citizen {
       return;
     }
 
-    // Priority 4: High Curiosity -> Explore Ruins or Lookout Bluff
-    if (this.curiosity > 65) {
+    // Priority 4: High Curiosity -> Explore the wild POIs.
+    // In the rain only the brave (adventurers) head out; everyone else stays dry.
+    if (this.curiosity > 65 && !(raining && (this.personality.bravery || 1) < 1.2)) {
       this.state = CITIZEN_STATES.EXPEDITION;
-      if (Math.random() > 0.4) {
+      const r = Math.random();
+      // Unopened ruin sites draw the curious — the trials reward visitors.
+      const unopened = world.ruins ? world.ruins.filter(ru => !ru.opened) : [];
+      if (r > 0.88 && unopened.length > 0) {
+        const ruin = unopened[Math.floor(Math.random() * unopened.length)];
+        this.targetPos.set(ruin.x + (Math.random() - 0.5) * 6, ruin.y, ruin.z + (Math.random() - 0.5) * 6);
+        this.activityText = `Investigating the ${ruin.name}`;
+      } else if (r > 0.55) {
         // Head towards the Ancient Meadowland Ruin
         this.targetPos.set((Math.random() - 0.5) * 6, 1.2, -32 + (Math.random() - 0.5) * 4);
         this.activityText = 'Surveying the mysterious Ancient Ruin';
-      } else {
+      } else if (r > 0.35) {
         // Head towards Lookout Bluff
         this.targetPos.set(28 + (Math.random() - 0.5) * 6, 3.5, 5 + (Math.random() - 0.5) * 6);
         this.activityText = 'Hiking up to the Lookout Bluff';
+      } else if (r > 0.2) {
+        // The Crystal Hollow, deep in the gorge
+        this.targetPos.set(-2 + (Math.random() - 0.5) * 6, 2.0, -62 + (Math.random() - 0.5) * 4);
+        this.activityText = 'Exploring the glittering Crystal Hollow';
+      } else if (r > 0.1) {
+        // The Geyser Gorge steam vents
+        this.targetPos.set(1 + (Math.random() - 0.5) * 6, 2.0, -63 + (Math.random() - 0.5) * 4);
+        this.activityText = 'Hopping the steam vents of Geyser Gorge';
+      } else {
+        // The Old Wooden Bridge over the river
+        this.targetPos.set(-17 + (Math.random() - 0.5) * 6, 1.5, -14 + (Math.random() - 0.5) * 4);
+        this.activityText = 'Crossing the Old Wooden Bridge';
       }
       this.stateTimer = 10 + Math.random() * 6;
       return;
@@ -416,11 +859,104 @@ export class Citizen {
     this.activityText = 'Wandering peacefully around New Dweebtopia';
   }
 
+  /** Chance that this citizen pulls off the copied stunt, from role + personality. */
+  _copycatSuccessChance(type) {
+    let chance = 0.45;
+    if (this.role === 'tinkerer') chance += 0.3;
+    else if (this.role === 'defender') chance += 0.18;
+    else if (this.role === 'builder') chance += 0.08;
+    else if (this.role === 'forager') chance += 0.02;
+
+    const bravery = Number(this.personality && this.personality.bravery) || 1;
+    chance += (bravery - 1) * 0.28;
+    const pid = this.personality && this.personality.id;
+    if (pid === 'adventurer') chance += 0.06;
+    else if (pid === 'inventor') chance += 0.09;
+    else if (pid === 'cozy') chance -= 0.12;
+
+    if (this.energy < 30) chance -= 0.12;
+    if (type === 'zipline') chance -= 0.1;
+    else if (type === 'vault') chance += 0.08;
+    return Math.max(0.12, Math.min(0.92, chance));
+  }
+
+  /** Nearby villagers cheer a success or groan at a wipeout. */
+  _copycatCrowd(otherCitizens, text, icon) {
+    if (!Array.isArray(otherCitizens) || !this.dweeb || !this.dweeb.body) return;
+    const here = this.dweeb.body.translation();
+    if (!here) return;
+    for (const peer of otherCitizens) {
+      if (!peer || peer === this || !peer.dweeb || !peer.dweeb.body) continue;
+      let pp;
+      try { pp = peer.dweeb.body.translation(); } catch { continue; }
+      if (!pp) continue;
+      if (Math.hypot(pp.x - here.x, pp.z - here.z) > 16) continue;
+      peer.moodTimer = Math.max(peer.moodTimer || 0, 2);
+      peer.mood = 'excited';
+      if (Math.random() < 0.55 && typeof peer.say === 'function') {
+        peer.say(text, icon, 2);
+      }
+    }
+  }
+
+  /** Perform the remembered stunt. Success teaches the verb; failure is comedy. */
+  _performCopycat(cc, otherCitizens, colony = null) {
+    if (!cc || !this.dweeb || !this.dweeb.body) return;
+    cc.attempted = true;
+    const spec = COPYCAT_STUNTS[cc.type] || COPYCAT_STUNTS.bounce;
+    const success = Math.random() < this._copycatSuccessChance(cc.type);
+
+    if (success) {
+      const learned = this.learnVerb(cc.verb);
+      this.mood = 'excited';
+      this.moodTimer = 4;
+      this.say(spec.win, '🤩', 3);
+      this.activityText = `Nailed the ${cc.type} trick all by myself!`;
+
+      // Re-enact it physically: bounces and launches send them sky-high, the rest is a proud hop
+      if (this.dweeb.body && this.dweeb.body.setLinvel) {
+        const v = this.dweeb.body.linvel ? this.dweeb.body.linvel() : { x: 0, z: 0 };
+        const up = cc.type === 'launch' ? 14 : cc.type === 'bounce' ? 11 : cc.type === 'zipline' ? 7 : 5;
+        const fwd = cc.type === 'launch' ? 6 : cc.type === 'zipline' ? 4 : 0;
+        const yaw = Number(this.dweeb.yaw) || 0;
+        this.dweeb.body.setLinvel({ x: (v.x || 0) * 0.3 + Math.sin(yaw) * fwd, y: up, z: (v.z || 0) * 0.3 + Math.cos(yaw) * fwd }, true);
+        if (this.dweeb.body.setAngvel && up > 8) this.dweeb.body.setAngvel({ x: 0, y: 9, z: 0 }, true);
+      }
+
+      this._copycatCrowd(otherCitizens, `Yay! ${this.name} copied the ${cc.type}!`, '🎉');
+      if (learned && colony && typeof colony._addLog === 'function') {
+        colony._addLog(`🌟 ${this.name} copied the player's ${cc.type} stunt and learned ${cc.verb.toUpperCase()}!`);
+      }
+    } else {
+      // Comedic failure: a ragdoll tumble (or a plain stumble if unavailable).
+      this.energy = Math.max(0, this.energy - 4);
+      this.say(spec.fail, '😵', 3);
+      this.activityText = `Face-planted trying to copy the ${cc.type} trick 😵`;
+      if (this.dweeb.body && this.dweeb.body.setLinvel) {
+        const v = this.dweeb.body.linvel ? this.dweeb.body.linvel() : { x: 0, z: 0 };
+        this.dweeb.body.setLinvel({
+          x: (v.x || 0) * 0.2 + (Math.random() - 0.5) * 2.5,
+          y: 2.2,
+          z: (v.z || 0) * 0.2 + (Math.random() - 0.5) * 2.5,
+        }, true);
+      }
+      if (typeof this.dweeb.startRagdoll === 'function') {
+        this.dweeb.startRagdoll(0.9, 5);
+      }
+      this._copycatCrowd(otherCitizens, `Ooooh! ${this.name} wiped out!`, '😂');
+    }
+
+    this.copycat = null;
+    this._copycatCooldown = COPYCAT_COOLDOWN + Math.random() * 8;
+    this.stateTimer = 1.5 + Math.random() * 1.5;
+  }
+
   _executeGoal(dt, world, otherCitizens, colony = null) {
     const pos = this.dweeb.body.translation();
     const distToTarget = Math.hypot(this.targetPos.x - pos.x, this.targetPos.z - pos.z);
 
     if (this.repairHammer) this.repairHammer.visible = this.state === CITIZEN_STATES.REPAIR;
+    this._updateBasket(dt);
 
     // Repair duty: walk to the damaged landmark, then tap-tap-tap it back together.
     if (this.state === CITIZEN_STATES.REPAIR) {
@@ -451,6 +987,34 @@ export class Citizen {
       this.repairHammer.rotation.z = -0.35;
     }
 
+    // Copycat attempt: walk to the stunt origin, then try the matching action.
+    if (this.state === CITIZEN_STATES.TRY_STUNT) {
+      const cc = this.copycat;
+      if (!cc) {
+        this.stateTimer = 0;
+        this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+        if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
+        return;
+      }
+      if (!cc.attempted && this.clock >= cc.until) {
+        // Too slow — the moment passed and the crowd moved on.
+        this.copycat = null;
+        this._copycatCooldown = Math.max(this._copycatCooldown, 6);
+        this.stateTimer = 0;
+        this.say('Aww, I missed my turn to try it…', '😔', 2);
+        this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+        if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
+        return;
+      }
+      if (distToTarget <= this.arrivalDist + 0.6) {
+        this._performCopycat(cc, otherCitizens, colony);
+        this.dweeb.controllerInput = { moveX: 0, moveY: 0, jump: false };
+        if (this.dweeb.moveInput) this.dweeb.moveInput.set(0, 0);
+        return;
+      }
+      // Still walking: fall through to the shared movement code at the bottom.
+    }
+
     // If resting, replenish energy and sit still (night rest is twice as fast).
     if (this.state === CITIZEN_STATES.REST) {
       const tod = world ? world.timeOfDay : undefined;
@@ -464,6 +1028,14 @@ export class Citizen {
     // Defenders chase critters while on patrol. This runs before the arrival
     // check because the target moves — "arrived" doesn't apply to a critter.
     if (this.state === CITIZEN_STATES.GUARD && world.critters && world.critters.length > 0) {
+      // Defender mastery L3: a fearsome aura — critters within 6m turn tail.
+      if (this.role === 'defender' && this.roleLevel >= 3) {
+        for (const c of world.critters) {
+          if (c.state !== 'flee' && Math.hypot(c.x - pos.x, c.z - pos.z) < 6) {
+            c.state = 'flee';
+          }
+        }
+      }
       let nearest = null;
       let best = 10;
       for (const c of world.critters) {
@@ -474,15 +1046,17 @@ export class Citizen {
       if (nearest) {
         this.targetPos.set(nearest.x, nearest.y, nearest.z);
         if (best < 2.5) {
-          // Bonk! One plush mallet hit every 1.5 seconds.
+          // Bonk! One plush mallet hit every 1.5 seconds (1.0 at defender L2).
           this._bonkAcc += dt;
-          if (this._bonkAcc >= 1.5) {
+          const bonkInterval = this.role === 'defender' && this.roleLevel >= 2 ? 1.0 : 1.5;
+          if (this._bonkAcc >= bonkInterval) {
             this._bonkAcc = 0;
             nearest.hp -= 1;
             this.activityText = 'Bonked a critter with a plush mallet! 💢';
             this.say('Take that, critter!', '💢', 1.5);
             if (nearest.hp <= 0) {
               if (world.removeCritter) world.removeCritter(nearest);
+              this.addRoleXp(2, colony);
               if (colony) {
                 colony.resources.gold = (colony.resources.gold || 0) + 1;
                 colony._addLog(`🛡️ ${this.name} bonked a mischief critter! +1 🪙`);
@@ -506,53 +1080,112 @@ export class Citizen {
           this._eatAcc -= 1;
           if (bush && bush.available > 0) {
             bush.available -= 1;
+            this._emptyBushStreak = 0;
             if (this.role === 'forager' && colony) {
               this.hunger = Math.max(0, this.hunger - 8);
+              const canHaul = world
+                && typeof world.haulTargetFor === 'function'
+                && typeof world.dropHaul === 'function';
+              if (canHaul) {
+                // Real berries go into the basket; a full basket (or an empty
+                // bush) turns the forage into a physical delivery trip.
+                this._addToBasket('berries', 1);
+                const full = !this.carrying || this.carrying.amount >= 3;
+                if (full || bush.available <= 0) {
+                  if (!this._startHaulTrip(world)) this._bankCarried(colony, world);
+                } else {
+                  this.activityText = `Filling the berry basket (${this.carrying.amount}/3) 🧺`;
+                }
+              } else {
+                const silos = world.buildingManager
+                  ? world.buildingManager.placedStructures.filter(s => s.id === 'silo')
+                  : [];
+                colony.addResource('berries', 1, silos);
+                this.activityText = 'Picking berries for the village stores 🍓';
+              }
               const silos = world.buildingManager
                 ? world.buildingManager.placedStructures.filter(s => s.id === 'silo')
                 : [];
-              colony.addResource('berries', 1, silos);
+              // Forager mastery L2: expert pickers fill the basket twice as fast.
+              const perPick = this.roleLevel >= 2 ? 2 : 1;
+              colony.addResource('berries', perPick, silos);
+              this.addRoleXp(1, colony);
               this.activityText = 'Picking berries for the village stores 🍓';
             } else {
               this.hunger = Math.max(0, this.hunger - 25);
               this.activityText = 'Happily munching on sweet berries';
             }
           } else {
-            // Bush is picked clean — move on.
+            // Bush is picked clean — move on. After several bare bushes in a
+            // row, take a break instead of ping-ponging between empty bushes
+            // forever; the streak resets on the next successful bite.
+            this._emptyBushStreak += 1;
+            if (this._emptyBushStreak >= 3) {
+              this._emptyBushStreak = 0;
+              this._forageCooldown = 20;
+              this.say('All picked clean… 🍂', '🍂', 2);
+              this.activityText = 'The bushes are all picked clean — taking a break';
+            } else {
+              this.activityText = 'This bush is picked clean!';
+            }
             this.stateTimer = 0;
-            this.activityText = 'This bush is picked clean!';
           }
         }
+      } else if (this.state === CITIZEN_STATES.HAUL) {
+        this._depositHaul(world, colony);
       } else if (this.state === CITIZEN_STATES.SOCIALIZE && this.targetEntity) {
         this.social = Math.max(0, this.social - dt * 20);
-        // Friendships grow while chatting.
+        // Friendships grow while chatting — three times as fast at a festival.
+        const festive = !!(colony && colony.festival && colony.festival.active);
         const peer = this.targetEntity;
-        const bond = Math.min(100, (this.friends.get(peer.name) || 0) + dt * 3);
+        const bond = Math.min(100, (this.friends.get(peer.name) || 0) + dt * (festive ? 9 : 3));
         this.friends.set(peer.name, bond);
+        if (festive && Math.random() < dt * 0.4) this.say('Woo! 🎉', '🎉', 1.5);
         if (bond >= 50 && !this._bondLogged.has(peer.name)) {
           this._bondLogged.add(peer.name);
           if (colony) colony._addLog(`💛 ${this.name} and ${peer.name} are now best buds!`);
         }
         // Social knowledge diffusion! If I know Bounce and they don't, teach them
         if (this.knownVerbs.has('bounce')) {
-          this.targetEntity.observePeer(this, 'bounce', dt);
+          this.targetEntity.observePeer(this, 'bounce', dt, colony);
         }
       } else if (this.state === CITIZEN_STATES.EXPEDITION) {
         this.curiosity = Math.max(0, this.curiosity - dt * 20);
+        // A launched expedition pays out its haul on arrival — the one-shot
+        // grant that makes expeditions feel earned, routed through silos.
+        if (this._expeditionHaul && colony) {
+          const haul = this._expeditionHaul;
+          this._expeditionHaul = null;
+          const silos = colony._silosFrom ? colony._silosFrom(world) : [];
+          const gained = [];
+          for (const [res, n] of Object.entries(haul.items)) {
+            colony.addResource(res, n, silos);
+            gained.push(`+${n} ${res}`);
+          }
+          this.say('What a haul! 🎒', '🎒', 3);
+          this.moodTimer = 2;
+          colony._addLog(`🧭 ${this.name} returned from ${haul.poi}: ${gained.join(', ')}!`);
+        }
       } else if (this.state === CITIZEN_STATES.SING) {
         this.social = Math.max(0, this.social - dt * 10);
         this.energy = Math.min(100, this.energy + dt * 2);
         if (Math.random() < dt * 0.3) this.say('La la la! 🎵', '🎵', 2);
         this.activityText = 'Singing the Berry Harvest song 🎵';
       } else if (this.state === CITIZEN_STATES.BUILD && colony) {
-        // Hammer away; after 6 seconds of work the blueprint is done.
+        // Hammer away; after 6 seconds of work (4.5 at builder L2) the
+        // blueprint is done. The structure rises exactly where the Builder
+        // hammered, and the builder's claim is released so the same blueprint
+        // can be queued and claimed again later.
         this._buildAcc += dt;
         this.activityText = `Hammering away at the ${this.targetEntity}! 🔨`;
-        if (this._buildAcc >= 6) {
-          const done = colony._completeBuild(this.targetEntity, world);
+        const buildTime = this.role === 'builder' && this.roleLevel >= 2 ? 4.5 : 6;
+        if (this._buildAcc >= buildTime) {
+          const site = { x: this.targetPos.x, y: this.targetPos.y, z: this.targetPos.z };
+          const done = colony._completeBuild(this.targetEntity, world, site, this);
           if (done) {
             this.say('Done! Look at it! 🔨', '🔨', 3);
             this.moodTimer = 2;
+            this.addRoleXp(3, colony);
           }
           this.stateTimer = 0;
         }
@@ -606,14 +1239,19 @@ export class Citizen {
       }
     }
 
-    // Feed movement input to Dweeb
+    // Feed movement input to Dweeb. moveInput is applied in world frame by the
+    // Dweeb (tx = x * speed, tz = y * speed), so the direction is NOT negated:
+    // negating dirZ here used to send citizens mirrored in Z, away from every
+    // target they were ever given (they could never arrive to eat, build,
+    // chat, sing or deliver expeditions). The corner-unstick sidestep above
+    // blends into moveX/moveZ, so both are fed unnegated in world frame.
     this.dweeb.controllerInput = {
       moveX,
-      moveY: -moveZ, // Three.js forward is -Z
+      moveY: moveZ,
       jump,
     };
     if (this.dweeb.moveInput) {
-      this.dweeb.moveInput.set(moveX, -moveZ);
+      this.dweeb.moveInput.set(moveX, moveZ);
     }
     if (jump && typeof this.dweeb.jump === 'function') {
       this.dweeb.jump();
