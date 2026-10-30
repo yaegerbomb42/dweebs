@@ -81,6 +81,8 @@ export const BACKSTAB = 1.6;
 /** Rockets stay this far behind their side's most advanced shield. */
 export const ROCKET_BEHIND_SHIELD = 3;
 const KNOCK_DECAY = 0.86;
+/** Netter: how long (ticks) a net pins its target. Brutes wriggle free in half the time. */
+export const NET_TICKS = 60;
 
 function teamStats() {
   return { kills: 0, lost: 0, converted: 0, recruited: 0, coinsEarned: 0, dmgDealt: 0 };
@@ -136,6 +138,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
     dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), cdMul: 1,
+    net: 0,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -387,6 +390,12 @@ function halt(u) {
 
 function updateUnit(st, u, enemies) {
   const s = stats(u.type);
+  // Netted units are pinned in place but can still be pushed by blasts/knockback
+  if (u.net > 0) {
+    u.net--;
+    halt(u);
+    return;
+  }
   if (u.carriedBy) {
     const c = st.byId.get(u.carriedBy);
     if (c && c.alive) { u.x = c.x; u.z = c.z; u.vx = c.vx; u.vz = c.vz; u.kx = 0; u.kz = 0; return; }
@@ -485,6 +494,18 @@ function updateUnit(st, u, enemies) {
         kill(st, u, null, 0, 0);
         return;
       }
+      if (s.attack === 'net') {
+        // Throw a net (on cooldown): pins the target for NET_TICKS. Never refreshes a net that's
+        // still on, so one netter can't perma-lock a unit, and bosses just shrug nets off.
+        if (u.cd > 0) return;
+        u.cd = Math.round(s.cooldown * u.cdMul);
+        if (t.net <= 0 && !t.carriedBy && !t.carrying && t.type !== 'boss') {
+          t.net = t.type === 'brute' ? Math.round(NET_TICKS / 2) : NET_TICKS;
+          t.vx = 0; t.vz = 0;
+          st.events.push({ type: 'net', id: u.id, victim: t.id, team: u.team, x: t.x, z: t.z });
+        }
+        return;
+      }
       if (s.attack === 'grab' && t.type === 'kami' && t !== u) {
         // Fuse flip: a stealer re-lights a kami and spins it back at its own side.
         const from = t.team;
@@ -571,8 +592,14 @@ function integrate(st) {
   const units = st.units;
   for (const u of units) {
     if (!u.alive || u.carriedBy) continue;
-    u.x += (u.vx + u.kx) * WF_DT;
-    u.z += (u.vz + u.kz) * WF_DT;
+    // Netted units don't move under their own power but still take knockback
+    if (u.net > 0) {
+      u.x += (u.kx) * WF_DT;
+      u.z += (u.kz) * WF_DT;
+    } else {
+      u.x += (u.vx + u.kx) * WF_DT;
+      u.z += (u.vz + u.kz) * WF_DT;
+    }
     u.kx *= KNOCK_DECAY;
     u.kz *= KNOCK_DECAY;
   }
@@ -718,7 +745,7 @@ export function battleHash(st) {
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
-    mix(u.carrying); mix(u.carriedBy);
+    mix(u.carrying); mix(u.carriedBy); mix(u.net);
   }
   return h >>> 0;
 }

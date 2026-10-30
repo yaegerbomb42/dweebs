@@ -14,7 +14,7 @@ export const TEAMS = Object.freeze(['blue', 'red']);
 export const otherTeam = t => (t === 'blue' ? 'red' : 'blue');
 
 /** Units a commander can buy. Order = hotkeys 1..4. */
-export const RECRUITABLE = Object.freeze(['shield', 'rocket', 'stealer', 'kami']);
+export const RECRUITABLE = Object.freeze(['shield', 'rocket', 'stealer', 'kami', 'netter']);
 
 /** Enemy-only specials that show up in later waves. */
 export const SPECIALS = Object.freeze(['sneak', 'brute', 'boss']);
@@ -52,6 +52,12 @@ export const UNIT_TYPES = Object.freeze({
     attack: 'blast', range: 1.4, dmg: 80, splash: 3.6, cooldown: 0,
     cost: 25, retreatAt: 0, flanker: false, grabbable: true, aggro: 18,
   },
+  netter: {
+    name: 'Netter', blurb: 'Carries a rolled net hoop. Pins enemies under a cartoon net — zero damage, total lockdown.',
+    hp: 80, speed: 4.2, radius: 0.55, mass: 1.5,
+    attack: 'net', range: 6.5, dmg: 4, cooldown: 95,
+    cost: 30, retreatAt: 0.35, flanker: false, grabbable: true, aggro: 16,
+  },
   sneak: {
     name: 'Sneak', blurb: 'Masked flanker. Circles the front line to knife your rockets.',
     hp: 65, speed: 5.8, radius: 0.45, mass: 1,
@@ -74,13 +80,14 @@ export const UNIT_TYPES = Object.freeze({
 
 /** Damage multiplier attacker → defender. Missing entries are 1. */
 export const COUNTERS = Object.freeze({
-  shield: { rocket: 1.6, kami: 0.7 },
-  rocket: { shield: 0.4, stealer: 1.6, sneak: 1.5, kami: 1.3, brute: 0.8 },
-  stealer: { kami: 2.5, rocket: 1.1, shield: 0.6 },
-  kami: { shield: 2.0, brute: 1.6, boss: 1.8, stealer: 0.7 },
+  shield: { rocket: 1.6, kami: 0.7, netter: 1.5 },
+  rocket: { shield: 0.4, stealer: 1.6, sneak: 1.5, kami: 1.3, brute: 0.8, netter: 1.4 },
+  stealer: { kami: 2.5, rocket: 1.1, shield: 0.6, netter: 0.6 },
+  kami: { shield: 2.0, brute: 1.6, boss: 1.8, stealer: 0.7, netter: 0.5 },
   sneak: { rocket: 1.8, shield: 0.5 },
   brute: { shield: 1.3 },
   boss: {},
+  netter: { stealer: 1.6, kami: 1.6, rocket: 0.5, shield: 0.6 },
 });
 
 export function counterMult(att, def) {
@@ -94,8 +101,8 @@ export const BOUNTY_RATE = 0.6;
 
 /** Which recruitable unit beats `type` (for HUD hints and the AI commander). */
 export const COUNTER_OF = Object.freeze({
-  rocket: 'shield', stealer: 'rocket', kami: 'stealer', shield: 'kami',
-  sneak: 'shield', brute: 'kami', boss: 'kami',
+  rocket: 'shield', stealer: 'rocket', kami: 'netter', shield: 'kami',
+  sneak: 'shield', brute: 'kami', boss: 'kami', netter: 'rocket',
 });
 
 export function stats(type) {

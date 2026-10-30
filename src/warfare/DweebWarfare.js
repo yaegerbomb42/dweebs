@@ -410,7 +410,7 @@ export class DweebWarfare {
       if (k === 'escape') { if (this.phase === 'playing' && !this.overlay) this.setPaused(true); else if (this.phase === 'paused' || this.overlay) this.setPaused(false); e.preventDefault(); return; }
       if (k === 'm') { this.toggleMute(); return; }
       if (this.phase !== 'playing') return;
-      const n = '1234'.indexOf(e.key);
+      const n = '12345'.indexOf(e.key);
       if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
       else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
       else if (k === 'e') { this.callSupply(); e.preventDefault(); }

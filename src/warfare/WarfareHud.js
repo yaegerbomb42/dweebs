@@ -104,7 +104,7 @@ body.warfare-active canvas{touch-action:none}
 @media (max-width:640px){.wf-card{width:84px}.wf-card .h{display:none}.wf-title{font-size:40px}.wf-hints{grid-template-columns:1fr}.wf-fort{width:120px}}
 `;
 
-const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣' };
+const ICON = { shield: '🛡️', rocket: '🚀', stealer: '🥷', kami: '💣', netter: '🕸️' };
 
 /** localStorage key for the best defense wave; normal keeps the original key. */
 export const bestKey = d => (d && d !== 'normal' ? `dweebs-warfare-best-${d}` : 'dweebs-warfare-best');

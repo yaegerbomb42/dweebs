@@ -50,7 +50,7 @@ export function sharedMats() { shared(); return mat; }
 
 /** Toys read better a bit chunkier than their sim footprint. */
 export const VIEW_SCALE = 1.35;
-const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1 };
+const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1, netter: 0.9 };
 
 /**
  * Build one unit. Returns { root, body, gear, spark } where `body` is the mesh whose material
@@ -99,6 +99,24 @@ export function buildUnit(type, team) {
     gear.rotation.x = Math.PI / 2;
     gear.position.y = r * 1.35;
     gear.scale.set(1.05, 1.05, 1);
+  } else if (type === 'netter') {
+    gear = new THREE.Group();
+    // rolled net hoop: a flat ring with cross-hatch suggestion
+    const hoop = new THREE.Mesh(geo.ring, mat.darkWood);
+    hoop.rotation.x = -Math.PI / 2;
+    hoop.position.y = r * 1.25;
+    hoop.scale.setScalar(1.1);
+    // cross strings on the net
+    const cross1 = new THREE.Mesh(geo.dowel, mat.darkWood);
+    cross1.scale.set(0.3, 1.8, 0.3);
+    cross1.rotation.set(0, Math.PI / 4, Math.PI / 2);
+    cross1.position.y = r * 1.25;
+    const cross2 = new THREE.Mesh(geo.dowel, mat.darkWood);
+    cross2.scale.set(0.3, 1.8, 0.3);
+    cross2.rotation.set(0, -Math.PI / 4, Math.PI / 2);
+    cross2.position.y = r * 1.25;
+    gear.add(hoop, cross1, cross2);
+    gear.position.set(0, 0, 0);
   } else if (type === 'kami') {
     gear = new THREE.Group();
     const b = new THREE.Mesh(geo.bomb, mat.bomb);

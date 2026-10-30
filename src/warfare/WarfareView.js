@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { counterMult } from '../sim/warfareUnits.js';
 import { buildBoard } from './WarfareBoard.js';
 import { getBattleground } from './Battlegrounds.js';
-import { buildUnit, buildShell, buildRing, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
+import { buildUnit, buildShell, buildRing, teamMat, flashMat, TEAM_COLORS, sharedMats, sharedGeo } from './WarfareModels.js';
 import { WarfareFx } from './WarfareFx.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -79,6 +79,7 @@ export class WarfareView {
       e.carried = !!u.carriedBy;
       e.carrying = !!u.carrying;
       e.retreat = u.state === 'retreat';
+      e.netted = u.net > 0;
       e.hpFrac = u.hp / u.maxHp;
       if (e.team !== u.team) {
         e.team = u.team;
@@ -151,6 +152,7 @@ export class WarfareView {
         case 'slam': fx.shockwave(ev.x, ev.z, ev.r * 1.3, 0xd4a73a); fx.addShake(ev.unit === 'boss' ? 0.7 : 0.25); fx.puff(ev.x, ev.z); break;
         case 'fire': if (e) { fx.puff(ev.x, ev.z); fx.muzzle(ev.x, ev.z); e.leanX -= (ev.tx - ev.x) * 0.01; e.leanZ -= (ev.tz - ev.z) * 0.01; } break;
         case 'grab': fx.number(ev.x, 2.6, ev.z, 'GRAB!', 'word'); break;
+        case 'net': fx.number(ev.x, 2.6, ev.z, 'NETTED!', 'word'); break;
         case 'convert': fx.number(ev.x, 2.8, ev.z, ev.flip ? 'FUSE FLIP!' : 'CONVERTED!', 'word'); fx.shockwave(ev.x, ev.z, 3, TEAM_COLORS[ev.team]); break;
         case 'retreat': fx.number(ev.x, 2.4, ev.z, 'RETREAT!', 'weak'); break;
         case 'fortHit': {
@@ -229,6 +231,33 @@ export class WarfareView {
         e.flag = f;
       } else if (!e.retreat && e.flag) { tilt.remove(e.flag); e.flag = null; }
       if (e.flag) e.flag.rotation.y = Math.sin(t * 9) * 0.4;
+      // net: a cartoon net hoop that drops over the unit
+      if (e.netted && !e.netMesh) {
+        const netGroup = new THREE.Group();
+        const hoop = new THREE.Mesh(sharedGeo().ring, sharedMats().darkWood);
+        hoop.rotation.x = -Math.PI / 2;
+        hoop.position.y = e.m.height * 0.6;
+        hoop.scale.setScalar(1.3);
+        const cross1 = new THREE.Mesh(sharedGeo().dowel, sharedMats().darkWood);
+        cross1.scale.set(0.3, 2.4, 0.3);
+        cross1.rotation.set(0, Math.PI / 4, Math.PI / 2);
+        cross1.position.y = e.m.height * 0.6;
+        const cross2 = new THREE.Mesh(sharedGeo().dowel, sharedMats().darkWood);
+        cross2.scale.set(0.3, 2.4, 0.3);
+        cross2.rotation.set(0, -Math.PI / 4, Math.PI / 2);
+        cross2.position.y = e.m.height * 0.6;
+        netGroup.add(hoop, cross1, cross2);
+        netGroup.position.y = 0.2;
+        tilt.add(netGroup);
+        e.netMesh = netGroup;
+      } else if (!e.netted && e.netMesh) {
+        tilt.remove(e.netMesh);
+        e.netMesh = null;
+      }
+      if (e.netMesh) {
+        e.netMesh.rotation.y = Math.sin(t * 4) * 0.15;
+        e.netMesh.position.y = 0.2 + Math.sin(t * 6) * 0.05;
+      }
     }
     for (const [sh, m] of this.shells) {
       const p = Math.min(1, (sh.t + alpha) / sh.T);
