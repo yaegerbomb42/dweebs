@@ -8,6 +8,7 @@ import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { BALANCE } from '../game/Balance.js';
 import { RARE } from '../sim/tables.js';
 import { BUMPER_RADIUS, TRAMPOLINE_RADIUS, TRAMPOLINE_TOP, TRAMPOLINE_VEL, TRAMPOLINE_ITEM_VEL, bumperBounce } from '../world/Arena.js';
+import { getObjectDef } from '../world/ObjectRegistry.js';
 
 const CHARGE_TIME = 0.75;
 const _dir = new THREE.Vector3();
@@ -21,8 +22,32 @@ const ROCKET_SPEED = 21;
 const G = 25;                 // PhysicsWorld GRAVITY
 const ITEM_DAMP = 0.06;       // item linear damping
 export const DEFAULT_LOFT = 0.2;  // throw elevation (rad) when nobody's aiming
+// Timed grab catch: an incoming prop can be plucked out of the air before normal focus.
+const CATCH = { radius: 2.2, nearRadius: 3.2, approach: 0.25, minSpeed: 0.01 };
 const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
+/** Giant Swing: hold attack while carrying a Dweeb. Rates in rad/s. */
+const GIANT_SWING = {
+  startCharge: 0.3,   // charge level at which the wind-up becomes a swing
+  minRate: 5, maxRate: 15,
+  radius: 1.35,       // arm's length (world units, scaled by MEGA)
+  hitRadius: 1.0,     // how close a bystander must be to the swung Dweeb to get clobbered
+  escapeSlow: 0.55,   // fraction of the victim's wriggle clock that the blur takes back
+  dizzyAfter: 3.2,    // seconds before you lose it
+  flingBonus: 0.45,   // up to +45% throw damage/launch at full spin
+};
+
+/** Materials that catch fire from blasts. `time` = seconds of burn, `ash` = crumbles when done. */
+const FLAMMABLE = {
+  wood: { time: 6 },
+  cardboard: { time: 3.5, ash: true },
+  fabric: { time: 4, ash: true },
+};
+/** How many links a chain reaction may ripple through before it fizzles (perf + sanity). */
+const CHAIN_MAX_DEPTH = 8;
+const _CHAR = new THREE.Color(0x1d1712);
+const _fire = new THREE.Vector3();
+const SLIP = BALANCE.slip;
 const SUPER = 1.35;           // Super Yeet: damage / base / growth multiplier
 
 // Melee weapon identity (def.weapon). Exported so test/tables-parity.test.js can pin
@@ -46,6 +71,9 @@ function scaled(atk, dmg = 1, kb = 1) {
   atk.growth *= kb;
   return atk;
 }
+
+const _heldQ = new THREE.Quaternion(), _heldQ2 = new THREE.Quaternion(), _heldE = new THREE.Euler();
+const _UP = new THREE.Vector3(0, 1, 0), _RIGHT = new THREE.Vector3(1, 0, 0);
 
 export class CombatSystem {
   constructor(physicsWorld, arena, fx) {
@@ -78,6 +106,12 @@ export class CombatSystem {
     d.charging = 0;
     if (!d.canAct) return;
 
+    // Shooter weapon (melonCannon): lob an exploding melon instead of swinging
+    if (d.held?.kind === 'object' && d.held.ref?.def?.isShooter) {
+      this._fireShooter(d, charge);
+      return;
+    }
+
     if (d.held && !(d.held.kind === 'object' && d.held.ref.isWeapon)) {
       if (d.held.kind === 'object' && d.held.ref.def.gadget) {
         this.useGadget(d, charge);
@@ -95,13 +129,18 @@ export class CombatSystem {
     const p = d.powerScale;
     const yeet = charge > 0 && this._useSuper(d);
     const mul = yeet ? SUPER : 1;
-    const atk = weapon
-      ? scaled(wdef.table(charge), p * mul, p * mul)
-      : scaled(A.punch(charge), p * mul * d.stats.hitDmg, p * mul);
+    // Boxer: the third landed punch in a streak becomes a short anvil-weight uppercut.
+    const uppercut = !weapon && this._uppercutReady(d);
+    const atk = uppercut
+      ? scaled(A.anvil(charge), p * mul * 0.8, p * mul * 0.9)
+      : weapon
+        ? scaled(wdef.table(charge), p * mul, p * mul)
+        : scaled(A.punch(charge), p * mul * d.stats.hitDmg, p * mul);
     atk.range = profile.range;
     atk.cone = profile.cone;
     atk.multi = profile.multi;
-    atk.kind = weapon ? 'smash' : charge ? 'smash' : 'punch';
+    atk.kind = uppercut || weapon ? 'smash' : charge ? 'smash' : 'punch';
+    atk.uppercut = uppercut;
 
     d.attackAnim = 0.22;
     d.attackCooldown = weapon ? wdef.cd + charge * 0.2 : 0.3 + charge * 0.25;
@@ -138,10 +177,13 @@ export class CombatSystem {
     for (const { t, dx, dz } of hitBodies) {
       _dir.set(dx, 0, dz);
       _dir.normalize();
-      _tmp.set(f.x * 0.75 + _dir.x * 0.25, 0.45 + charge * 0.15, f.z * 0.75 + _dir.z * 0.25);
-      const launch = t.receiveHit({ dir: _tmp, damage: atk.damage, base: atk.base, growth: atk.growth, attacker: d, time: this.time });
+      const launchDir = atk.uppercut
+        ? _tmp.set(f.x * 0.55 + _dir.x * 0.2, 0.95 + charge * 0.1, f.z * 0.55 + _dir.z * 0.2)
+        : _tmp.set(f.x * 0.75 + _dir.x * 0.25, 0.45 + charge * 0.15, f.z * 0.75 + _dir.z * 0.25);
+      const launch = t.receiveHit({ dir: launchDir, damage: atk.damage, base: atk.base, growth: atk.growth, attacker: d, time: this.time });
       if (launch > 0) {
         hitAny = true;
+        this.status?.onHit(t, d, d.held?.kind === 'object' ? d.held.ref : null);
         this.fx.hit(t, d, launch, atk.kind);
         if (yeet) this.fx.superYeet(t, d);
         // Super-smash meter: consecutive landed punches bank bonus style; a weapon swing is
@@ -149,9 +191,18 @@ export class CombatSystem {
         let bonus = 0, label = null;
         if (!weapon) {
           bonus = this._punchStreak(d);
+          if (d.signature?.id === 'uppercut') d.signaturePunchCount = (d.signaturePunchCount || 0) + 1;
           if (d.punchStreak >= 3) label = `x${d.punchStreak} COMBO`;
-        } else d.punchStreak = 0;
+        } else {
+          d.punchStreak = 0;
+          d.signaturePunchCount = 0;
+        }
         this.addStyle(d, 4 + launch * 0.5 + (charge > 0.8 ? 4 : 0) + bonus, label);
+        if (atk.uppercut) {
+          this.fx._toyWord?.('UPPERCUT!', t.getPosition(), d.color, 'big');
+          this.fx.cam?.shake?.(0.22);
+          this.addStyle(d, 5, 'UPPERCUT');
+        }
       }
     }
 
@@ -181,14 +232,108 @@ export class CombatSystem {
       obj.hitList.add(d);
       hitAny = true;
       if (obj.def.explosive) this.lightFuse(obj, d, charge > 0.5 ? 0.45 : 0.9);
-      else if (obj.applyDamage(1000 + charge * 3000)) this.breakObject(obj, d);
-      else this.fx.bonk(obj.getPosition(), obj);
+      else if (!this.damageObject(obj, 1000 + charge * 3000, d, { dir: { x: d.forward.x, y: 0, z: d.forward.z }, speed: 6 + charge * 10 })) this.fx.bonk(obj.getPosition(), obj);
     }
     if (!hitAny) {
       this.fx.whiff(d, weapon);
       // A whiffed jab breaks the streak: the super-smash meter wants consecutive LANDED punches.
-      if (!weapon) d.punchStreak = 0;
+      if (!weapon) {
+        d.punchStreak = 0;
+        d.signaturePunchCount = 0;
+      }
     }
+  }
+
+  /** Fire a shooter weapon (melonCannon): lob an exploding melon with a cooldown and live cap. */
+  _fireShooter(d, charge) {
+    const SHOOTER_CD = 0.55;
+    const MAX_LIVE_MELONS = 6;
+
+    // Cooldown check
+    if (d._shooterCd > 0) {
+      return;
+    }
+
+    // Cap live melons
+    let liveMelons = 0;
+    for (const obj of this.arena.objects) {
+      if (!obj.isDebris && !obj.broken && obj.key === 'explodingMelon') liveMelons++;
+    }
+    if (liveMelons >= MAX_LIVE_MELONS) {
+      this.fx.hud.popup('RELOADING', d.getPosition(), 'small', 0xff6a3c);
+      return;
+    }
+
+    // Set cooldown
+    d._shooterCd = SHOOTER_CD;
+
+    // Muzzle point: ~1.2m in front at chest height (yaw from dweeb's forward)
+    const pos = d.getPosition();
+    const f = d.forward;
+    const muzzle = {
+      x: pos.x + f.x * 1.2,
+      y: pos.y + 0.8, // chest height
+      z: pos.z + f.z * 1.2,
+    };
+
+    // Spawn the exploding melon
+    const melon = this.arena.spawnItem('explodingMelon', muzzle);
+    if (!melon) return;
+
+    // Release from kinematic (like throwHeld does)
+    this._releaseObject(melon);
+
+    // Velocity: forward*(14 + charge*10) with upward y 6 + charge*4
+    const horizSpeed = 14 + charge * 10;
+    const upSpeed = 6 + charge * 4;
+    const vel = {
+      x: f.x * horizSpeed,
+      y: upSpeed,
+      z: f.z * horizSpeed,
+    };
+    melon.body.setLinvel(vel, true);
+
+    // Set up exactly like a freshly thrown object (copy throwHeld)
+    melon.thrownBy = d;
+    melon.thrownTime = 2.2;
+    melon.lastSpeed = Math.hypot(vel.x, vel.y, vel.z);
+    melon.throwOrigin = { ...muzzle };
+    melon.prevPos = null;
+    melon.bounces = 0;
+    melon.skips = 0;
+    melon.banked = false;
+    melon.jumpShot = !d.grounded;
+    melon.superYeet = false;
+    melon.hitList.clear();
+    melon.hitList.add(d);
+
+    // Small recoil impulse backwards
+    const recoil = 2.5;
+    const v = d.body.linvel();
+    d.body.setLinvel({ x: v.x - f.x * recoil, y: v.y, z: v.z - f.z * recoil }, true);
+
+    // FX: muzzle burst
+    this.fx.particles.emit(muzzle, {
+      count: 12,
+      colors: [0x5ee06a, 0xffd23f, 0xffffff],
+      speed: 5,
+      up: 3,
+      size: 0.12,
+      life: 0.35,
+      gravity: 0,
+    });
+    this.fx.particles.ring(muzzle, { color: 0x5ee06a, size: 2.5, life: 0.25 });
+
+    // Popup 'THOOM!'
+    this.fx.hud.popup('THOOM!', muzzle, 'small', 0x5ee06a);
+
+    // Launch/whoosh sound
+    this.fx.audio.playWhoosh(this.fx._pan(muzzle), 0.7);
+
+    // Attack animation/cooldown for the shooter
+    d.attackAnim = 0.22;
+    d.attackCooldown = SHOOTER_CD;
+    d.swingT = 0.3;
   }
 
   // ═══ New moves: parry, slam, drop-kick, gadgets ═══
@@ -295,6 +440,62 @@ export class CombatSystem {
       if (pulled) this.addStyle(d, G.style, 'MAGNET');
       return true;
     }
+
+    if (kind === 'grappleGlove') {
+      const range = G.range * (0.85 + charge * 0.3);
+      const pos = d.getPosition();
+      const f = d.forward;
+      // Raycast from hand position (slightly in front and above)
+      const origin = { x: pos.x + f.x * 1.0, y: pos.y + 1.1, z: pos.z + f.z * 1.0 }; // clear of the held glove
+      // Aim slightly upward so the hook can catch ledges and walls above, not just the floor at your feet
+      // Try a few pitches (up first, then level, then down) so the hook catches ledges, walls or the floor ahead
+      let hit = null;
+      for (const up of [0.34, 0.08, -0.3]) {
+        const n = Math.hypot(1, up);
+        hit = this.physics.raycast(origin, { x: f.x / n, y: up / n, z: f.z / n }, range, d.collider);
+        if (hit && hit.distance > 2.2) break;
+        hit = null;
+      }
+      if (!hit) {
+        this.fx.gadget?.(d, 'grappleGlove', false);
+        this.fx.whiff?.(d, 'grappleGlove');
+        return false;
+      }
+      const anchor = hit.point;
+      // Determine if hit is fixed geometry (stage/walls) or a dynamic target (dweeb/prop)
+      const body = hit.collider?.parent?.();
+      const hitDweeb = this.dweebs.some(t => t !== d && t.collider === hit.collider);
+      const ref = hitDweeb ? null : (this.arena.objects || []).find(o => o.collider === hit.collider || (body && o.body === body));
+      const hitObj = !!ref;
+      const isFixed = !hitDweeb && !hitObj && (!body || body.isFixed());
+      if (!hitDweeb && !hitObj && !isFixed) { this.fx.whiff?.(d, 'grappleGlove'); return false; }
+      d.grapple = {
+        anchor: { x: anchor.x, y: anchor.y, z: anchor.z },
+        isFixed,
+        hitDweeb,
+        hitObj: hitObj ? ref : null,
+        timer: 0,
+        maxTime: G.maxTime,
+        detachDist: G.detachDist,
+        spring: G.spring,
+        maxSpeed: G.maxSpeed,
+        yankSpeed: G.yankSpeed,
+        yankUp: G.yankUp,
+        hitstun: G.hitstun,
+        holder: d,
+      };
+      // Visual: add cable line
+      if (this.fx && this.fx.addGrappleCable) this.fx.addGrappleCable(d, anchor);
+      // Audio: throw/zip sound
+      if (this.fx && this.fx.audio?.playThrow) this.fx.audio.playThrow();
+      else if (this.fx && this.fx.audio?.playWhoosh) this.fx.audio.playWhoosh();
+      this.fx.gadget?.(d, 'grappleGlove', true);
+      d.attackCooldown = G.cooldown * (d.sugarTimer > 0 ? BALANCE.powerups.sugar.cooldown : 1);
+      d.attackAnim = 0.22;
+      d.swingT = 0.3;
+      this.addStyle(d, G.style, 'GRAPPLE');
+      return true;
+    }
     return false;
   }
 
@@ -346,6 +547,61 @@ export class CombatSystem {
     }
     this.fx.slam?.(pos, d.color, hit, d.isPlayer);
     d.landSquash = 0.45;
+  }
+
+  /** Boing: a spring-loaded pogo landing — free height plus a toy "BOING!". */
+  _signaturePogo(d, fall = 0) {
+    if (!d?.active || d.signature?.id !== 'pogo') return;
+    const pos = d.getPosition();
+    this.fx.bounce?.({ x: pos.x, y: pos.y - 0.45, z: pos.z }, d.color);
+    this.fx._toyWord?.('BOING!', pos, d.color, 'small');
+    this.fx.cam?.shake?.(d.isPlayer ? 0.12 : 0.05);
+    this.addStyle(d, 1 + Math.min(3, Math.max(0, fall) * 0.06));
+  }
+
+  /** Chonk: a hard landing sends a small radial shove (slam maths, turned down). */
+  _signatureQuake(d, fall = 0) {
+    if (!d?.active || d.signature?.id !== 'quake') return;
+    const sig = d.signature;
+    const A = BALANCE.air;
+    const pos = d.getPosition();
+    const p = d.powerScale;
+    const radius = sig.radius ?? 2.8;
+    const power = Math.min(1, Math.max(0, fall) / 20);
+    let hit = false;
+
+    for (const t of this.dweebs) {
+      if (t === d || !t.active || t.grabbedBy) continue;
+      const tp = t.getPosition();
+      const dx = tp.x - pos.x, dz = tp.z - pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > radius || tp.y < pos.y - A.slamDepth || tp.y > pos.y + 2) continue;
+      const falloff = 1 - (dist / radius) * 0.5;
+      _dir.set(dx, 0.55, dz);
+      if (_dir.lengthSq() < 1e-4) _dir.set(0, 1, 0);
+      const atk = scaled({ ...BALANCE.attacks.slam }, p * falloff * 0.4, p * falloff * 0.7);
+      const launch = t.receiveHit({ dir: _dir.normalize(), ...atk, attacker: d, time: this.time });
+      if (launch > 0) {
+        hit = true;
+        this.fx.hit(t, d, launch, 'slam');
+        this.addStyle(d, 3 + launch * 0.3);
+      }
+    }
+    for (const { obj } of this.arena.getObjectsNear(pos, radius)) {
+      if (!obj?.body) continue;
+      const op = obj.getPosition();
+      _dir.set(op.x - pos.x, 0.6, op.z - pos.z);
+      if (_dir.lengthSq() < 1e-4) _dir.set(0, 1, 0);
+      _dir.normalize();
+      const m = Math.sqrt(obj.body.mass());
+      this.physics.applyImpulse(obj.body, { x: _dir.x * 4 * m, y: 2.5 * m, z: _dir.z * 4 * m });
+    }
+
+    this.fx.slam?.(pos, d.color, false, d.isPlayer);
+    this.fx._toyWord?.('CHONK!', pos, d.color, 'big');
+    this.fx.cam?.shake?.(d.isPlayer ? 0.22 + power * 0.2 : 0.08 + power * 0.1);
+    this.addStyle(d, 2 + power * 3, hit ? 'CHONK QUAKE' : null);
+    d.landSquash = Math.max(d.landSquash || 0, 0.42);
   }
 
   /** While a drop-kick is live, sweep a short arc in front of the kicker. */
@@ -418,6 +674,86 @@ export class CombatSystem {
     }
   }
 
+  /** Grapple glove: spring toward fixed anchor, or yank dynamic target. */
+  _updateGrapple(d, dt) {
+    const g = d.grapple;
+    if (!g || !g.holder || !g.holder.active) {
+      this._detachGrapple(d);
+      return;
+    }
+    const holder = g.holder;
+    const pos = holder.getPosition();
+    g.timer += dt;
+    const anchor = g.anchor;
+    const dx = anchor.x - pos.x, dy = anchor.y - pos.y, dz = anchor.z - pos.z;
+    const dist = Math.hypot(dx, dy, dz);
+    // Detach conditions
+    if (g.timer >= g.maxTime || dist <= g.detachDist || holder.jumpRequested || holder.hitstun > 0 || holder.ragdolling || !holder.active) {
+      this._detachGrapple(d);
+      return;
+    }
+    // Update cable visual
+    if (this.fx && this.fx.updateGrappleCable) this.fx.updateGrappleCable(d, anchor);
+    if (g.isFixed) {
+      // Spring toward anchor
+      const dirLen = dist || 1;
+      const dirX = dx / dirLen, dirY = dy / dirLen, dirZ = dz / dirLen;
+      const v = holder.body.linvel();
+      const towardX = dirX * g.spring * dt;
+      const towardY = dirY * g.spring * dt;
+      const towardZ = dirZ * g.spring * dt;
+      // Cap the added velocity toward anchor
+      const curToward = v.x * dirX + v.y * dirY + v.z * dirZ;
+      const addSpeed = Math.min(g.maxSpeed - curToward, Math.hypot(towardX, towardY, towardZ));
+      if (addSpeed > 0) {
+        const addX = dirX * addSpeed, addY = dirY * addSpeed, addZ = dirZ * addSpeed;
+        holder.body.setLinvel({ x: v.x + addX, y: v.y + addY, z: v.z + addZ }, true);
+      }
+      // Never plummet while reeling in
+      const nv = holder.body.linvel();
+      if (nv.y < -5) holder.body.setLinvel({ x: nv.x, y: -5, z: nv.z }, true);
+    } else {
+      // Yank dynamic target (dweeb or prop) toward holder - use stored reference
+      if (g.hitDweeb) {
+        // Find the dweeb that was hit (could have moved)
+        for (const t of this.dweebs) {
+          if (t === holder || !t.active) continue;
+          const tp = t.getPosition();
+          const tdx = tp.x - anchor.x, tdy = tp.y - anchor.y, tdz = tp.z - anchor.z;
+          if (Math.hypot(tdx, tdy, tdz) < 1.5) {
+            // Yank dweeb toward holder
+            const hpos = holder.getPosition();
+            const tpos = t.getPosition();
+            const tdx2 = hpos.x - tpos.x, tdy2 = hpos.y - tpos.y, tdz2 = hpos.z - tpos.z;
+            const tdist = Math.hypot(tdx2, tdy2, tdz2) || 1;
+            if (t.invulnTimer > 0 || t.bubble) break;
+            t.body.setLinvel({ x: (tdx2 / tdist) * g.yankSpeed, y: g.yankUp, z: (tdz2 / tdist) * g.yankSpeed }, true);
+            t.hitstun = Math.max(t.hitstun || 0, g.hitstun);
+            t.lastHitBy = holder; t.lastHitTime = this.time;
+            this.fx.hud?.popup?.('YOINK!', tpos, 'small', 0xffd23f);
+            break;
+          }
+        }
+      } else if (g.hitObj && g.hitObj.body) {
+        // Yank object toward holder
+        const m = Math.sqrt(g.hitObj.body.mass()) * 2;
+        const hpos = holder.getPosition();
+        const opos = g.hitObj.getPosition();
+        const odx = hpos.x - opos.x, ody = hpos.y + 0.5 - opos.y, odz = hpos.z - opos.z;
+        const odist = Math.hypot(odx, ody, odz) || 1;
+        this.physics.applyImpulse(g.hitObj.body, { x: (odx / odist) * m * 12, y: (ody / odist) * m * 12, z: (odz / odist) * m * 12 });
+      }
+      this._detachGrapple(d);
+    }
+  }
+
+  _detachGrapple(d) {
+    if (d.grapple) {
+      if (this.fx && this.fx.removeGrappleCable) this.fx.removeGrappleCable(d);
+      d.grapple = null;
+    }
+  }
+
   // ═══ Existing actions ═══
 
   /** Grab the nearest thing in front, or throw what you're holding. */
@@ -430,7 +766,13 @@ export class CombatSystem {
     if (!d.canAct || d.held || d.attackCooldown > 0.1) return false;
     // Grab exactly what the focus ring is showing. No vacuuming props from behind you.
     const focus = this.focusTarget(d);
-    if (!focus) return false;
+    if (!focus) {
+      // Nothing to grab, but a thrown prop just missed the catch window: let the player know.
+      const near = this._nearMissCatch(d);
+      if (near) this._denyCatch(d, near);
+      return false;
+    }
+    if (focus.kind === 'catch') return this._catchProjectile(d, focus.ref);
     if (focus.kind === 'dweeb') {
       const best = focus.ref;
       if (best.bubble) { // bubbles are slippery!
@@ -451,8 +793,70 @@ export class CombatSystem {
     return true;
   }
 
+  /** A thrown prop flying toward `d`, close enough to pluck out of the air. */
+  _catchTarget(d) {
+    if (!d || d.held || !this.arena?.objects) return null;
+    const pos = d.getPosition();
+    let best = null, bestScore = Infinity;
+    for (const obj of this.arena.objects) {
+      if (!obj || obj.broken || obj.isDebris || obj.isGrabbed || !obj.body) continue;
+      if (!obj.def?.grabbable || obj.def?.throwable === false || !(obj.thrownTime > 0)) continue;
+      // Fused explosives are hot potato material, not a catch: let them pop normally.
+      if (obj.def.explosive && obj.fuse > 0) continue;
+      const op = obj.getPosition();
+      const dx = pos.x - op.x, dy = pos.y - op.y, dz = pos.z - op.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > CATCH.radius || dist < 1e-3) continue;
+      const v = obj.body.linvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed < CATCH.minSpeed) continue;
+      // Only catch props actually heading at us, not ones sailing past.
+      const dot = (v.x * dx + v.y * dy + v.z * dz) / (speed * dist);
+      if (dot < CATCH.approach) continue;
+      const score = dist + (1 - dot) * 0.7;
+      if (score < bestScore) { bestScore = score; best = { kind: 'catch', ref: obj, dist, dot }; }
+    }
+    return best;
+  }
+
+  /** Nearest in-flight prop for a failed grab (the "DENIED!" near-miss feedback). */
+  _nearMissCatch(d) {
+    if (!d || !this.arena?.objects) return null;
+    const pos = d.getPosition();
+    let best = null, bestDist = CATCH.nearRadius;
+    for (const obj of this.arena.objects) {
+      if (!obj || obj.broken || obj.isDebris || obj.isGrabbed || !obj.body) continue;
+      if (!obj.def?.grabbable || obj.def?.throwable === false || !(obj.thrownTime > 0)) continue;
+      if (obj.def.explosive && obj.fuse > 0) continue;
+      const op = obj.getPosition();
+      const dist = Math.hypot(op.x - pos.x, op.y - pos.y, op.z - pos.z);
+      if (dist < bestDist) { bestDist = dist; best = obj; }
+    }
+    return best;
+  }
+
+  _catchProjectile(d, obj) {
+    if (!d || !obj || !obj.body) return false;
+    if (!obj.hitList) obj.hitList = new Set();
+    // Mark ourselves immune to this throw before it becomes kinematic in our hands.
+    obj.hitList.add(d);
+    this._holdObject(d, obj);
+    d.catchWindow = 0.55;
+    d.catchFlash = 0.3;
+    this.addStyle(d, 5, 'CAUGHT!');
+    this.fx.catchProp?.(d, obj);
+    return true;
+  }
+
+  _denyCatch(d, obj) {
+    if (!d) return;
+    d.catchFlash = 0.12;
+    this.fx.catchDenied?.(d, obj);
+  }
+
   _holdObject(d, obj) {
     d.held = { kind: 'object', ref: obj };
+    d.carryHeldT = 0;
     obj.grab(d);
     // Heft: heavy props take a beat to settle and slow your walk; featherweights are instant
     const C = BALANCE.carry, mass = obj.def.mass ?? 1;
@@ -496,9 +900,24 @@ export class CombatSystem {
     if (held.kind === 'dweeb') {
       const t = held.ref;
       t.setGrabbed(null);
+      // Letting go mid Giant Swing: the spin pays out as extra fling
+      const gs = d.giantSwing;
+      d.giantSwing = null;
+      const swingK = gs ? Math.min(1, gs.spin / GIANT_SWING.maxRate) : 0;
       t.body.setTranslation({ x: pos.x + f.x * 0.9, y: pos.y + 0.9, z: pos.z + f.z * 0.9 }, true);
-      _tmp.set(f.x, 0.55, f.z);
-      const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1), p * (yeet ? SUPER : 1));
+      _tmp.set(f.x, 0.55 - swingK * 0.15, f.z);
+      const sm = 1 + swingK * GIANT_SWING.flingBonus;
+      if (swingK > 0.3) this.fx._toyWord?.(swingK > 0.8 ? 'HAMMER THROW!' : 'SPIN FLING!', pos, 0xffd23f, swingK > 0.8 ? 'big' : 'small');
+      const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1) * sm, p * (yeet ? SUPER : 1) * sm);
+      if (t.team != null && t.team === d.team) {
+        // Team Battle: chucking a teammate is a free, damage-less TEAM LAUNCH across the stage.
+        const s = 11 + charge * 6;
+        t.body.setLinvel({ x: f.x * s, y: 8 + charge * 3, z: f.z * s }, true);
+        t.invulnTimer = Math.max(t.invulnTimer, 0.5);
+        this.fx.teamLaunch?.(t, d);
+        this.fx.throw(d);
+        return true;
+      }
       const launch = t.receiveHit({ dir: _tmp, ...atk, attacker: d, time: this.time });
       t.invulnTimer = 0;
       if (launch > 0) {
@@ -521,10 +940,14 @@ export class CombatSystem {
     const spin = 10 / Math.sqrt(Math.max(mass, 0.5));
     const fw = d.forward;
     obj.body.setTranslation(L.origin, true);
-    obj.body.setLinvel(L.vel, true);
+    // A load mid-swing whips out a little harder in the direction it was already going.
+    const sw = held.sway;
+    obj.body.setLinvel(sw ? { x: L.vel.x + sw.vx * 0.6, y: L.vel.y, z: L.vel.z + sw.vz * 0.6 } : L.vel, true);
     obj.body.setAngvel({ x: fw.z * spin, y: (Math.random() - 0.5) * spin * 0.7, z: -fw.x * spin }, true);
     obj.thrownBy = d;
     obj.thrownTime = obj.def.roll ? 3 : 2.2;
+    obj.boomT = 0; obj.boomReturning = false;
+    if (obj.def.boomerang) obj.thrownTime = obj.def.boomerang.maxTime + 0.4;
     obj.lastSpeed = L.speed;
     obj.throwOrigin = { ...L.origin };
     obj.prevPos = null;
@@ -551,12 +974,23 @@ export class CombatSystem {
     if (!d.held) return;
     const held = d.held;
     d.held = null;
+    d.giantSwing = null;
     if (held.kind === 'dweeb') {
       held.ref.setGrabbed(null);
       held.ref.invulnTimer = 0.3;
     } else {
-      this._releaseObject(held.ref);
-      held.ref.body.setLinvel({ x: 0, y: 1, z: 0 }, true);
+      // Set it down, don't fling it: place the prop just ahead at hand height and let its swing carry.
+      const obj = held.ref, p = d.getPosition(), f = d.forward, sw = held.sway;
+      this._releaseObject(obj);
+      if (d.active && !d.ragdolling && d.hitstun <= 0) {
+        const hy = obj.def.dims?.hy ?? obj.def.dims?.radius ?? obj.def.dims?.halfHeight ?? 0.3;
+        obj.body.setTranslation({ x: p.x + f.x * (0.9 + hy), y: p.y + 0.2 + hy, z: p.z + f.z * (0.9 + hy) }, true);
+        obj.body.setLinvel({ x: (sw?.vx ?? 0) * 0.5, y: 0.3, z: (sw?.vz ?? 0) * 0.5 }, true);
+        obj.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      } else {
+        // Knocked out of your hands: it keeps whatever swing it had.
+        obj.body.setLinvel({ x: (sw?.vx ?? 0) * 1.5, y: 1.5, z: (sw?.vz ?? 0) * 1.5 }, true);
+      }
     }
   }
 
@@ -582,12 +1016,20 @@ export class CombatSystem {
     else _tmp.set(0, 1, 0);
     _tmp.normalize().multiplyScalar(AD.speed);
     d.body.setLinvel({ x: _tmp.x, y: _tmp.y, z: _tmp.z }, true);
+    const sig = d.signature;
+    const freePhase = sig?.id === 'phase' && !d.ghostDodgeUsed;
     d.airDodgeTimer = AD.duration;
-    d.airDodgeCd = AD.cooldown;
-    d.invulnTimer = Math.max(d.invulnTimer, AD.invuln);
+    d.airDodgeCd = freePhase ? 0 : AD.cooldown;
+    d.invulnTimer = Math.max(d.invulnTimer, AD.invuln + (freePhase ? (sig.invuln ?? 0.1) : 0));
     d.isCharging = false;
     d.charging = 0;
     if (h > 0.1) d.yaw = Math.atan2(dx, dz);
+    if (freePhase) {
+      d.ghostDodgeUsed = true;
+      this.fx._toyWord?.('PHASE!', d.getPosition(), d.color, 'small');
+      this.fx.cam?.shake?.(0.1);
+      this.addStyle(d, 2, 'PHASE DODGE');
+    }
     this.fx.airDodge(d);
     return true;
   }
@@ -632,9 +1074,22 @@ export class CombatSystem {
     const S = STYLE;
     if (this.time - (d.punchStreakT ?? -99) <= S.streakWindow) {
       d.punchStreak = Math.min(S.streakCap, (d.punchStreak || 0) + 1);
-    } else d.punchStreak = 1;
+    } else {
+      d.punchStreak = 1;
+      d.signaturePunchCount = 0;
+    }
     d.punchStreakT = this.time;
     return S.streakBonus * (d.punchStreak - 1);
+  }
+
+  /** Boxer: true when this swing would be the third consecutive landed punch. */
+  _uppercutReady(d) {
+    const sig = d.signature;
+    if (!sig || sig.id !== 'uppercut') return false;
+    const every = Math.max(2, sig.every || 3);
+    const active = this.time - (d.punchStreakT ?? -99) <= STYLE.streakWindow;
+    const count = active ? (d.signaturePunchCount || 0) : 0;
+    return (count + 1) % every === 0;
   }
 
   /** F / middle mouse: cash the full meter in — the next charged smash or throw is a Super Yeet. */
@@ -916,6 +1371,9 @@ export class CombatSystem {
    */
   focusTarget(d) {
     if (!d.canAct || d.held) return null;
+    // A catchable projectile outranks any normal grab: the prompt reads CATCH! instead of PICK UP.
+    const catchable = this._catchTarget(d);
+    if (catchable) return catchable;
     const pos = d.getPosition();
     const yaw = this.aimYawOf(d);
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
@@ -935,6 +1393,12 @@ export class CombatSystem {
 
     for (const { obj } of this.arena.getObjectsNear(pos, 2.4)) {
       if (!obj.def.grabbable || obj.isGrabbed || obj === d.held?.ref) continue;
+      // Fused explosives pop normally; in-flight props belong to the catch path above.
+      if (obj.def.explosive && obj.fuse > 0) continue;
+      if (obj.thrownTime > 0) {
+        const v = obj.body?.linvel?.();
+        if (v && Math.hypot(v.x, v.y, v.z) > 3) continue;
+      }
       const op = obj.getPosition();
       const dx = op.x - pos.x, dz = op.z - pos.z;
       const dist = Math.hypot(dx, dz);
@@ -973,6 +1437,7 @@ export class CombatSystem {
   // ═══ World effects ═══
 
   explode(pos, attacker, source = null) {
+    this.onExplode?.(pos, attacker, source);
     if (source) {
       source.broken = true;
       this.arena.removeObject(source);
@@ -989,10 +1454,14 @@ export class CombatSystem {
       const launch = t.receiveHit({ dir: _dir, ...A.explosion(k), attacker, time: this.time });
       if (launch > 0) {
         this.fx.hit(t, attacker, launch, 'boom');
+        // Blasts light oily Dweebs (INFERNO) and dry out wet ones a little
+        if (t.statuses?.oily > 0) this.status?.apply(t, 'burn', attacker);
         if (attacker && attacker !== t) this.addStyle(attacker, 8 + launch * 0.4);
       }
     }
+    this._chainReact(pos, attacker, source);
     for (const { obj } of this.arena.getObjectsNear(pos, 5)) {
+      if (!obj.body) continue;
       const op = obj.getPosition();
       _dir.set(op.x - pos.x, 0, op.z - pos.z).normalize();
       const m = Math.sqrt(obj.body.mass()) * 2;
@@ -1002,20 +1471,308 @@ export class CombatSystem {
     this.fx.explosion(pos);
   }
 
+  // ═══ Chain reactions & fire ═══
+
+  /**
+   * A blast lights every explosive in reach on a short, distance-scaled fuse (so a barrel cluster
+   * ripples outward instead of popping at once) and sets nearby wood / cardboard / fabric burning.
+   * Chain kills credit whoever lit the first one.
+   */
+  _chainReact(pos, attacker, source) {
+    const depth = (source?.chainDepth ?? 0) + 1;
+    const reach = (source?.def?.explosionRadius ?? 5) * 1.3;
+    let lit = 0;
+    for (const { obj, dist } of this.arena.getObjectsNear(pos, reach)) {
+      if (!obj || obj === source || obj.broken || !obj.body || obj.isDebris) continue;
+      const d = dist ?? 0;
+      if (obj.def.explosive && !(obj.fuse > 0) && depth <= CHAIN_MAX_DEPTH) {
+        obj.chainDepth = depth;
+        this.lightFuse(obj, attacker, 0.14 + d * 0.05);
+        lit++;
+      } else if (FLAMMABLE[obj.def.material] && !(obj.burning > 0) && d < 5) {
+        this.ignite(obj, attacker);
+      }
+    }
+    // Chain bookkeeping: a combo window that grows as each linked blast goes off
+    const c = this.chain;
+    if (source?.chainDepth && c && c.by === attacker && this.time - c.t < 2.5) {
+      c.n++; c.t = this.time;
+      if (c.n >= 2) {
+        const big = c.n >= 4;
+        this.fx._toyWord?.(`CHAIN x${c.n}!`, { x: pos.x, y: pos.y + 1.6, z: pos.z }, big ? 0xff3b3b : 0xff9a1f, big ? 'big' : 'small');
+        if (attacker) this.addStyle(attacker, 6 * c.n, c.n >= 4 ? 'CHAIN REACTION' : 'CHAIN');
+        this.fx.cam?.shake?.(0.25 + c.n * 0.05);
+      }
+    } else if (lit > 0 || !source?.chainDepth) {
+      this.chain = { by: attacker, n: 1, t: this.time };
+    }
+  }
+
+  /** Set a flammable prop burning: it chars, smokes, spreads to neighbours and cooks fuses. */
+  ignite(obj, by = null) {
+    if (!obj?.body || obj.broken || obj.burning > 0) return;
+    const fl = FLAMMABLE[obj.def.material];
+    if (!fl) return;
+    obj.burning = fl.time * (0.8 + Math.random() * 0.4);
+    obj.burnTotal = obj.burning;
+    obj.burnBy = by;
+    obj.burnTick = 0;
+    if (!obj._charMats && obj.mesh) {
+      obj._charMats = [];
+      obj.mesh.traverse(m => {
+        if (!m.isMesh || !m.material || Array.isArray(m.material) || !m.material.color) return;
+        m.material = m.material.clone();
+        obj._charMats.push({ mat: m.material, base: m.material.color.clone() });
+      });
+    }
+    (this.burning ??= []).push(obj);
+    const p = obj.getPosition();
+    this.fx._toyWord?.('FWOOSH!', { x: p.x, y: p.y + 0.8, z: p.z }, 0xff7a1a);
+  }
+
+  _updateBurning(dt) {
+    if (!this.burning?.length) return;
+    for (let i = this.burning.length - 1; i >= 0; i--) {
+      const obj = this.burning[i];
+      if (obj.broken || !obj.body) { this.burning.splice(i, 1); continue; }
+      obj.burning -= dt;
+      obj.burnTick += dt;
+      const p = obj.getPosition();
+      const char = 1 - Math.max(0, obj.burning) / (obj.burnTotal || 1);
+      if (obj._charMats) for (const c of obj._charMats) c.mat.color.copy(c.base).lerp(_CHAR, Math.min(0.85, char));
+      // Splashing into water puts it out
+      if (p.y < -1.2) { obj.burning = 0; this.burning.splice(i, 1); continue; }
+      if (obj.burnTick > 0.12) {
+        obj.burnTick = 0;
+        const ps = this.fx.particles;
+        if (ps?.emit) {
+          _fire.set(p.x, p.y + 0.35, p.z);
+          ps.emit(_fire, { count: 2, colors: [0xffd23f, 0xff6a1f, 0xff3b1f], speed: 1.2, up: 3, size: 0.13, life: 0.45 });
+          if (Math.random() < 0.35) ps.emit(_fire, { count: 1, colors: [0x3a3a3a, 0x555555], speed: 0.6, up: 2.2, size: 0.22, life: 0.9 });
+        }
+        // Spread: neighbours catch, explosives cook off
+        for (const { obj: o, dist } of this.arena.getObjectsNear(p, 1.6)) {
+          if (o === obj || o.broken || !o.body || o.isDebris) continue;
+          if (o.def.explosive && !(o.fuse > 0) && (dist ?? 0) < 1.3) { o.chainDepth = 1; this.lightFuse(o, obj.burnBy, 0.9); }
+          else if (FLAMMABLE[o.def.material] && !(o.burning > 0) && Math.random() < 0.12) this.ignite(o, obj.burnBy);
+        }
+        // Hot foot: Dweebs touching a burning prop hop off it
+        for (const t of this.dweebs) {
+          if (!t.active || t.hazardCd > 0 || t.held === obj) continue;
+          const tp = t.getPosition();
+          if (Math.hypot(tp.x - p.x, tp.z - p.z) > 1.0 || Math.abs(tp.y - p.y) > 1.4) continue;
+          t.hazardCd = 0.9;
+          _dir.set(tp.x - p.x, 0, tp.z - p.z);
+          if (_dir.lengthSq() < 1e-4) _dir.set(1, 0, 0);
+          _dir.normalize(); _dir.y = 1.2;
+          const launch = t.receiveHit({ dir: _dir, ...A.explosion(0.18), attacker: obj.burnBy, time: this.time });
+          if (launch > 0) this.fx._toyWord?.('HOT FOOT!', { x: tp.x, y: tp.y + 1.4, z: tp.z }, 0xff7a1a);
+        }
+      }
+      // Holding a burning prop is a hot potato: after a beat you yelp and let go
+      const g = obj.isGrabbed ? this.dweebs.find(t => t.held === obj) : null;
+      if (g) {
+        obj.heldHot = (obj.heldHot || 0) + dt;
+        if (obj.heldHot > 1.4) { obj.heldHot = 0; this.drop(g); this.fx._toyWord?.('OW OW OW!', g.getPosition(), 0xff7a1a); }
+      }
+      if (obj.burning <= 0) {
+        this.burning.splice(i, 1);
+        // Cardboard and fabric burn to ash; wood stays as a charred husk
+        if (FLAMMABLE[obj.def.material].ash) {
+          const h = obj.isGrabbed ? this.dweebs.find(t => t.held === obj) : null;
+          if (h) this.drop(h);
+          this.breakObject(obj, null);
+        }
+      }
+    }
+  }
+
   breakObject(obj, by = null) {
     const pos = obj.getPosition();
+    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
     if (by) this.addStyle(by, 5);
     const color = obj.def.color ?? 0xc4a06a;
+    const mass = obj.def.mass ?? 1;
+    const dims = obj.def.dims || {};
+    const bulk = Math.max(dims.hx ?? 0, dims.hy ?? 0, dims.hz ?? 0, dims.radius ?? 0, dims.halfHeight ?? 0, 0.3);
+    const vel = obj.body?.linvel?.() ?? { x: 0, y: 0, z: 0 };
+    const speed = hit?.speed ?? Math.hypot(vel.x, vel.y, vel.z);
+    let dir = hit?.dir;
+    if (!dir) { const l = Math.hypot(vel.x, vel.z) || 1; dir = { x: vel.x / l, y: 0, z: vel.z / l }; }
+    const count = Math.round(Math.min(16, Math.max(6, 5 + mass * 2.5 + bulk * 4)));
     obj.broken = true;
     this.arena.removeObject(obj);
-    this.arena.spawnDebris(pos, color, 8, obj.def.material, obj.def.breakColors);
+    this.arena.spawnDebris(pos, color, count, obj.def.material, obj.def.breakColors,
+      { vel, dir, power: Math.min(18, speed), size: Math.min(1.8, Math.max(0.8, bulk / 0.35)) });
+    // Shockwave: heavy smashes kick nearby loose props.
+    const shove = Math.min(6, mass * 0.8 + speed * 0.15);
+    if (shove > 1.2) {
+      for (const o of this.arena.objects) {
+        if (o === obj || o.isDebris || o.broken || o.isGrabbed || !o.body) continue;
+        const op = o.getPosition(), dx = op.x - pos.x, dz = op.z - pos.z, dd = Math.hypot(dx, dz);
+        if (dd > 2.8 || dd < 1e-3) continue;
+        const k = shove * (1 - dd / 2.8) * Math.min(1, (o.def?.mass ?? 1));
+        this.physics.applyImpulse(o.body, { x: dx / dd * k, y: k * 0.5, z: dz / dd * k });
+      }
+    }
     this.fx.break(pos, obj);
+
+    // Piñata Loot Burst: spill candies if this object has spill metadata
+    if (obj.def?.spill) {
+      const { key, count = 6 } = obj.def.spill;
+      const candyDef = getObjectDef(key);
+      if (candyDef) {
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+          const radius = 0.4 + Math.random() * 0.3;
+          const x = pos.x + Math.cos(angle) * radius;
+          const z = pos.z + Math.sin(angle) * radius;
+          const y = pos.y + 0.5 + Math.random() * 0.5;
+          const candy = this.arena.spawnItem(key, { x, y, z });
+          if (candy && candy.body) {
+            const speed = 4 + Math.random() * 3;
+            candy.body.setLinvel({
+              x: Math.cos(angle) * speed * 0.7,
+              y: 3 + Math.random() * 4,
+              z: Math.sin(angle) * speed * 0.7,
+            }, true);
+            candy.body.setAngvel({
+              x: (Math.random() - 0.5) * 8,
+              y: (Math.random() - 0.5) * 8,
+              z: (Math.random() - 0.5) * 8,
+            }, true);
+            candy.candyLife = 12; // uneaten candy melts away
+            candy.candyGrace = 0.5; // can't be eaten mid-burst
+          }
+        }
+        if (Math.random() < 0.15) {
+          this.arena.spawnPowerUp(null);
+        }
+        // Juicy feedback
+        this.fx._toyWord?.('SWEET!', pos, 0xffd23f, 'big');
+        this.fx.cam?.shake?.(0.25);
+        this.arena.excite?.(0.3);
+      }
+    }
+  }
+
+  /**
+   * Shatter a prop. `hit` (optional): { dir, speed } of the blow. Chunk count and size come from
+   * the prop's mass and bulk, chunks carry the prop's momentum and blow out along the hit, and a
+   * big enough smash shoves nearby loose props, so breaking things is a physical event.
+   */
+  breakObject(obj, by = null, hit = null) {
+    const pos = obj.getPosition();
+    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
+    if (by) this.addStyle(by, 5);
+    const color = obj.def.color ?? 0xc4a06a;
+    const mass = obj.def.mass ?? 1;
+    const dims = obj.def.dims || {};
+    const bulk = Math.max(dims.hx ?? 0, dims.hy ?? 0, dims.hz ?? 0, dims.radius ?? 0, dims.halfHeight ?? 0, 0.3);
+    const vel = obj.body?.linvel?.() ?? { x: 0, y: 0, z: 0 };
+    const speed = hit?.speed ?? Math.hypot(vel.x, vel.y, vel.z);
+    let dir = hit?.dir;
+    if (!dir) { const l = Math.hypot(vel.x, vel.z) || 1; dir = { x: vel.x / l, y: 0, z: vel.z / l }; }
+    const count = Math.round(Math.min(16, Math.max(6, 5 + mass * 2.5 + bulk * 4)));
+    obj.broken = true;
+    this.arena.removeObject(obj);
+    this.arena.spawnDebris(pos, color, count, obj.def.material, obj.def.breakColors,
+      { vel, dir, power: Math.min(18, speed), size: Math.min(1.8, Math.max(0.8, bulk / 0.35)) });
+    // Shockwave: heavy smashes kick nearby loose props.
+    const shove = Math.min(6, mass * 0.8 + speed * 0.15);
+    if (shove > 1.2) {
+      for (const o of this.arena.objects) {
+        if (o === obj || o.isDebris || o.broken || o.isGrabbed || !o.body) continue;
+        const op = o.getPosition(), dx = op.x - pos.x, dz = op.z - pos.z, dd = Math.hypot(dx, dz);
+        if (dd > 2.8 || dd < 1e-3) continue;
+        const k = shove * (1 - dd / 2.8) * Math.min(1, (o.def?.mass ?? 1));
+        this.physics.applyImpulse(o.body, { x: dx / dd * k, y: k * 0.5, z: dz / dd * k });
+      }
+    }
+    this.fx.break(pos, obj);
+
+    // Piñata Loot Burst: spill candies if this object has spill metadata
+    if (obj.def?.spill) {
+      const { key, count = 6 } = obj.def.spill;
+      const candyDef = getObjectDef(key);
+      if (candyDef) {
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+          const radius = 0.4 + Math.random() * 0.3;
+          const x = pos.x + Math.cos(angle) * radius;
+          const z = pos.z + Math.sin(angle) * radius;
+          const y = pos.y + 0.5 + Math.random() * 0.5;
+          const candy = this.arena.spawnItem(key, { x, y, z });
+          if (candy && candy.body) {
+            const speed = 4 + Math.random() * 3;
+            candy.body.setLinvel({
+              x: Math.cos(angle) * speed * 0.7,
+              y: 3 + Math.random() * 4,
+              z: Math.sin(angle) * speed * 0.7,
+            }, true);
+            candy.body.setAngvel({
+              x: (Math.random() - 0.5) * 8,
+              y: (Math.random() - 0.5) * 8,
+              z: (Math.random() - 0.5) * 8,
+            }, true);
+            candy.candyLife = 12; // uneaten candy melts away
+            candy.candyGrace = 0.5; // can't be eaten mid-burst
+          }
+        }
+        if (Math.random() < 0.15) {
+          this.arena.spawnPowerUp(null);
+        }
+        // Juicy feedback
+        this.fx._toyWord?.('SWEET!', pos, 0xffd23f, 'big');
+        this.fx.cam?.shake?.(0.25);
+        this.arena.excite?.(0.3);
+      }
+    }
+  }
+
+  /** Spilled piñata candy: walk over it to eat it (small heal + a short sugar buzz). */
+  _updateCandy(dt) {
+    const objs = this.arena?.objects;
+    if (!objs) return;
+    for (let i = objs.length - 1; i >= 0; i--) {
+      const o = objs[i];
+      if (o.candyLife === undefined || o.broken || o.isGrabbed) continue;
+      o.candyLife -= dt;
+      o.candyGrace -= dt;
+      if (o.candyLife <= 0) { this.arena.removeObject(o); continue; }
+      if (o.candyGrace > 0) continue;
+      const p = o.getPosition();
+      for (const d of this.dweebs) {
+        if (!d.active || d.grabbedBy) continue;
+        const q = d.getPosition();
+        const dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
+        if (dx * dx + dz * dz > 0.81 || Math.abs(dy) > 1.4) continue;
+        d.percent = Math.max(0, d.percent - 2);
+        d.sugarTimer = Math.max(d.sugarTimer || 0, 1.5);
+        this.fx._toyWord?.('YUM!', p, 0xff4d5e, 'small');
+        this.arena.removeObject(o);
+        break;
+      }
+    }
+  }
+
+  /** Damage a breakable: shatter it, or chip a few flakes off so you can see it's going. */
+  damageObject(obj, force, by = null, hit = null) {
+    if (obj.applyDamage(force)) { this.breakObject(obj, by, hit); return true; }
+    if (obj.def.breakable && !obj.broken && force > 300) {
+      const pos = obj.getPosition();
+      const chips = obj.wear > 0.6 ? 2 : 1;
+      this.arena.spawnDebris(pos, obj.def.color ?? 0xc4a06a, chips, obj.def.material, obj.def.breakColors,
+        { vel: { x: 0, y: 0, z: 0 }, dir: hit?.dir, power: 3, size: 0.45 });
+    }
+    return false;
   }
 
   // ═══ Per-frame ═══
 
   update(dt, time) {
     this.time = time;
+    this._updateCandy(dt);
 
     for (const d of this.dweebs) {
       if (!d.active) {
@@ -1024,7 +1781,18 @@ export class CombatSystem {
         continue;
       }
       d.hazardCd = Math.max(0, (d.hazardCd || 0) - dt);
+      d.slipCd = Math.max(0, (d.slipCd || 0) - dt);
       if (d.swingT > 0) d.swingT -= dt;
+      // Shooter weapon cooldown
+      if (d._shooterCd > 0) d._shooterCd = Math.max(0, d._shooterCd - dt);
+
+      // Signature passives queue a one-shot world event from Dweeb.postStep.
+      if (d.signatureEvent) {
+        const ev = d.signatureEvent;
+        d.signatureEvent = null;
+        if (ev.kind === 'pogo') this._signaturePogo(d, ev.fall);
+        else if (ev.kind === 'quake') this._signatureQuake(d, ev.fall);
+      }
 
       if (d.isCharging) {
         if (!d.canAct) { d.isCharging = false; d.charging = 0; }
@@ -1043,14 +1811,44 @@ export class CombatSystem {
       if (d.slamActive && d.grounded) this._resolveSlam(d);
       if (d.dropkickTimer > 0) this._checkDropkick(d);
       if (d.magnetTimer > 0) this._magnetPull(d, dt);
+      if (d.grapple) this._updateGrapple(d, dt);
       this._checkLedge(d);
       this._updateStyle(d, dt);
     }
 
     this._updateFuses(dt);
+    this._updateBurning(dt);
     this._updateProjectiles(dt);
+    this._updateBananaPeels();
     this._updateHazards();
     this._updatePickups();
+  }
+
+  /**
+   * Carry sway: a spring-damped offset between where the hands are and where the held thing
+   * actually is. Accelerating drags the load behind you, stopping swings it forward, and heavy
+   * props lag and wobble far more than featherweights. Purely kinematic (no joints), so it is
+   * cheap and stays put through hitstop; the swing is fed back into throws and drops.
+   */
+  _swayStep(d, held, dt, mass) {
+    const sw = held.sway || (held.sway = { x: 0, z: 0, y: 0, vx: 0, vz: 0, vy: 0, pvx: 0, pvz: 0, pvy: 0, init: false });
+    const v = d.body.linvel();
+    if (!sw.init) { sw.pvx = v.x; sw.pvz = v.z; sw.pvy = v.y; sw.init = true; }
+    const h = Math.max(1e-3, Math.min(dt, 1 / 30));
+    // Carrier acceleration pushes the load the opposite way (inertia), scaled by heft.
+    const ax = (v.x - sw.pvx) / h, az = (v.z - sw.pvz) / h, ay = (v.y - sw.pvy) / h;
+    sw.pvx = v.x; sw.pvz = v.z; sw.pvy = v.y;
+    const heft = Math.min(2.2, 0.35 + mass * 0.28);
+    const k = 90 / heft, c = 2 * Math.sqrt(k) * 0.32; // underdamped: a couple of visible swings
+    sw.vx += (-ax * 0.018 * heft - k * sw.x - c * sw.vx) * h;
+    sw.vz += (-az * 0.018 * heft - k * sw.z - c * sw.vz) * h;
+    sw.vy += (-ay * 0.012 * heft - k * 1.6 * sw.y - c * sw.vy) * h;
+    sw.x += sw.vx * h; sw.z += sw.vz * h; sw.y += sw.vy * h;
+    const lim = 0.25 + heft * 0.2;
+    const r = Math.hypot(sw.x, sw.z);
+    if (r > lim) { sw.x *= lim / r; sw.z *= lim / r; sw.vx *= 0.5; sw.vz *= 0.5; }
+    sw.y = Math.max(-0.35, Math.min(0.3, sw.y));
+    return sw;
   }
 
   _updateHeld(d, dt) {
@@ -1061,15 +1859,30 @@ export class CombatSystem {
 
     if (held.kind === 'dweeb') {
       const t = held.ref;
-      if (!t.active) { d.held = null; t.setGrabbed(null); return; }
+      if (!t.active) { d.held = null; t.setGrabbed(null); d.giantSwing = null; return; }
+      if (this._giantSwing(d, t, dt, pos, s)) return;
       t.body.setTranslation({ x: pos.x, y: pos.y + 1.15 * s, z: pos.z }, true);
+      const sw = this._swayStep(d, held, dt, 3);
+      // Struggling victims kick the spring: the less time left to escape, the harder they thrash.
+      const thrash = Math.max(0, 1 - t.escapeTimer / 1.5);
+      sw.vx += (Math.random() - 0.5) * (0.6 + thrash * 3) * dt * 10;
+      sw.vz += (Math.random() - 0.5) * (0.6 + thrash * 3) * dt * 10;
+      t.body.setTranslation({ x: pos.x + sw.x, y: pos.y + 1.15 * s + sw.y, z: pos.z + sw.z }, true);
       t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       t.yaw = d.yaw + Math.PI / 2;
+      // The held Dweeb is also a shield: a point out front soaks incoming throws.
+      const S = BALANCE.humanShield;
+      const sp = t.shieldPoint ?? (t.shieldPoint = { x: 0, y: 0, z: 0 });
+      sp.x = pos.x + f.x * S.reach;
+      sp.y = pos.y + S.height;
+      sp.z = pos.z + f.z * S.reach;
+      t.yaw = d.yaw + Math.PI / 2 + sw.x * 0.6 - sw.z * 0.6;
+      t.carrySwayX = sw.x; t.carrySwayZ = sw.z;
       t.escapeTimer -= dt;
       if (t.escapeTimer <= 0) {
-        // Wriggled free!
+        // Wriggled free! Out the way they were swinging.
         this.drop(d);
-        t.body.setLinvel({ x: -f.x * 5, y: 7, z: -f.z * 5 }, true);
+        t.body.setLinvel({ x: -f.x * 5 + sw.vx * 2, y: 7, z: -f.z * 5 + sw.vz * 2 }, true);
         d.hitstun = 0.35;
         this.fx.escape(t);
       }
@@ -1078,26 +1891,167 @@ export class CombatSystem {
 
     const obj = held.ref;
     if (!obj.body || obj.broken) { d.held = null; return; }
+
+    // Pogo stick: auto-bounce off the floor, steer a little in the air, and stomp rivals below.
+    const pogo = obj.def.pogo;
+    if (pogo) {
+      d.pogoCd = Math.max(0, (d.pogoCd ?? 0) - dt);
+      d.pogoStompCd = Math.max(0, (d.pogoStompCd ?? 0) - dt);
+      const lv = d.body.linvel();
+      if (d.grounded && d.pogoCd <= 0 && d.hitstun <= 0 && !d.ragdolling) {
+        d.body.setLinvel({ x: lv.x, y: BALANCE.move.jumpVel * pogo.bounceVel, z: lv.z }, true);
+        d.pogoCd = pogo.minInterval;
+        d.pogoCount = (d.pogoCount ?? 0) + 1;
+        if (d.pogoCount % 3 === 0) {
+          const pp = d.getPosition();
+          this.fx.popup('BOING!', { x: pp.x, y: pp.y + 1.2, z: pp.z }, 'small', 0xff8a1f);
+        }
+        obj.pop?.(0.4);
+      } else if (!d.grounded && lv.y < 0) {
+        d.body.setLinvel({
+          x: lv.x + d.moveInput.x * pogo.airSteer * dt,
+          y: lv.y,
+          z: lv.z + d.moveInput.y * pogo.airSteer * dt,
+        }, true);
+        if (d.pogoStompCd <= 0) {
+          const pos = d.getPosition();
+          for (const t of this.dweebs) {
+            if (t === d || !t.active || t.grabbedBy) continue;
+            const tp = t.getPosition();
+            const gap = pos.y - tp.y;
+            const away = Math.hypot(tp.x - pos.x, tp.z - pos.z);
+            if (away > 0.8 || gap < 0.6 || gap > 1.6) continue;
+            const dir = new THREE.Vector3(tp.x - pos.x, -0.3, tp.z - pos.z).normalize();
+            t.receiveHit({ dir, damage: 6, base: 6, growth: 0.4, attacker: d, time: this.time });
+            d.pogoStompCd = 0.5;
+            const sv = d.body.linvel();
+            d.body.setLinvel({ x: sv.x, y: BALANCE.move.jumpVel * pogo.bounceVel, z: sv.z }, true); // bounce off their head
+            this.fx.popup('POGO STOMP!', { x: tp.x, y: tp.y + 1.2, z: tp.z }, 'small', 0xff8a1f);
+            break;
+          }
+        }
+      }
+    }
+
+    const mass = obj.def.mass ?? 1;
+    const sw = this._swayStep(d, held, dt, obj.isWeapon ? Math.min(mass, 1.2) : mass);
     let x, y, z;
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), d.yaw);
+    const q = _heldQ.setFromAxisAngle(_UP, d.yaw);
     if (obj.isWeapon) {
       // Hammer held out front, head up; swings down on attack
       const swing = d.swingT > 0 ? Math.sin((1 - d.swingT / 0.3) * Math.PI) : 0;
       const raise = d.isCharging ? -0.8 * d.charging : 0;
       const pitch = 0.2 + swing * 1.5 + raise;
       const reach = 0.75 + swing * 0.5;
-      x = pos.x + f.x * reach;
-      z = pos.z + f.z * reach;
-      y = pos.y + 0.7 - swing * 0.5;
-      q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch));
+      x = pos.x + f.x * reach + sw.x * 0.5;
+      z = pos.z + f.z * reach + sw.z * 0.5;
+      y = pos.y + 0.7 - swing * 0.5 + sw.y * 0.5;
+      q.multiply(_heldQ2.setFromAxisAngle(_RIGHT, pitch));
     } else {
-      x = pos.x + f.x * 0.15;
-      z = pos.z + f.z * 0.15;
+      // Heavy loads sag lower and tremble once you've held them a while.
+      d.carryHeldT = (d.carryHeldT || 0) + dt;
+      const heavy = mass >= (BALANCE.carry.heavyFrom ?? 2.5);
+      const sag = heavy ? Math.min(0.18, d.carryHeldT * 0.03) : 0;
+      const shake = heavy ? Math.sin(this.time * 47) * 0.012 * Math.min(1, d.carryHeldT * 0.25) : 0;
+      x = pos.x + f.x * 0.15 + sw.x;
+      z = pos.z + f.z * 0.15 + sw.z;
       const hy = obj.def.dims.hy ?? obj.def.dims.radius ?? obj.def.dims.halfHeight ?? 0.3;
-      y = pos.y + 0.75 * s + hy + 0.05;
+      y = pos.y + 0.75 * s + hy + 0.05 + sw.y - sag + shake;
+      // Tilt the load toward its swing so it reads as hanging off the hands, not glued on.
+      _heldE.set(sw.z * 1.4 + shake * 3, 0, -sw.x * 1.4);
+      q.premultiply(_heldQ2.setFromEuler(_heldE));
+    }
+    const floaty = obj.def.floaty;
+    if (floaty) {
+      y += Math.sin(this.time * 3.2) * 0.04;
+      if (!d.grounded) {
+        const v = d.body.linvel();
+        let vy = v.y + G * floaty.gravityCancel * dt;
+        if (vy < -floaty.maxFall) vy = -floaty.maxFall;
+        d.body.setLinvel({ x: v.x, y: vy, z: v.z }, true);
+      }
     }
     obj.body.setNextKinematicTranslation({ x, y, z });
     obj.body.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+  }
+
+  // ═══ Giant Swing ═══
+
+  /**
+   * Hold attack while carrying a Dweeb and you start whirling them around by the ankles: the spin
+   * ramps up with charge, the swung Dweeb bonks anyone in the circle, and letting go flings them
+   * with bonus power. Spin too long and you get dizzy and lose your grip.
+   * Returns true while it owns the held Dweeb's transform this frame.
+   */
+  _giantSwing(d, t, dt, pos, s) {
+    const G = GIANT_SWING;
+    const winding = d.isCharging || d.throwCharging;
+    if (!winding || d.charging < G.startCharge || d.ledge) {
+      if (!winding) d.giantSwing = null;
+      return false;
+    }
+    let g = d.giantSwing;
+    if (!g) {
+      g = d.giantSwing = { angle: d.yaw, start: d.yaw, spin: 0, time: 0, wind: 1, laps: 0, lastLap: 0, called: false };
+      this.fx._toyWord?.('GIANT SWING!', { x: pos.x, y: pos.y + 2.2, z: pos.z }, 0xffd23f);
+    }
+    g.time += dt;
+    // Spin rate ramps with charge: a lazy twirl into a blur
+    const rate = G.minRate + (G.maxRate - G.minRate) * Math.min(1, (d.charging - G.startCharge) / (1 - G.startCharge));
+    g.spin = rate;
+    g.angle += rate * dt;
+    g.laps = Math.floor((g.angle - g.start) / (Math.PI * 2));
+    d.yaw = g.angle;
+    const r = G.radius * s;
+    const ca = Math.sin(g.angle), sa = Math.cos(g.angle);
+    // The swung Dweeb is out at arm's length and lifts as the spin speeds up (centrifugal)
+    const lift = 0.55 + Math.min(0.6, rate * 0.05);
+    const hx = pos.x + ca * r, hz = pos.z + sa * r;
+    t.body.setTranslation({ x: hx, y: pos.y + lift * s, z: hz }, true);
+    t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    t.yaw = g.angle + Math.PI;
+    // Hard to wriggle out of a blur, but not impossible
+    t.escapeTimer += dt * G.escapeSlow;
+    if (g.laps > g.lastLap) {
+      g.lastLap = g.laps;
+      this.fx.cam?.shake?.(0.08 + rate * 0.01);
+      if (g.laps === 3 && !g.called) { g.called = true; this.fx._toyWord?.('WHEEEE!', { x: hx, y: pos.y + 1.8, z: hz }, 0x7dd3fc); }
+    }
+    // Bonk anyone the swung Dweeb sweeps through
+    const tvx = Math.cos(g.angle), tvz = -Math.sin(g.angle);   // tangent of the swing
+    for (const o of this.dweebs) {
+      if (o === d || o === t || !o.active || o.grabbedBy) continue;
+      if ((o.swingHitCd || 0) > this.time) continue;
+      const op = o.getPosition();
+      if (Math.hypot(op.x - hx, op.z - hz) > G.hitRadius || Math.abs(op.y - pos.y) > 1.6) continue;
+      o.swingHitCd = this.time + 0.6;
+      _tmp.set(tvx * 0.7 + ca * 0.7, 0.5, tvz * 0.7 + sa * 0.7).normalize();
+      const k = Math.min(1, rate / G.maxRate);
+      const atk = scaled(A.dweebThrow(0.25 + k * 0.5), d.powerScale * 0.75, d.powerScale * 0.75);
+      const launch = o.receiveHit({ dir: _tmp, ...atk, attacker: d, time: this.time });
+      if (launch > 0) {
+        this.fx.hit(o, d, launch, 'throw');
+        this.fx._toyWord?.('CLOBBERED!', op, 0xff6fb5);
+        this.addStyle(d, 6 + launch * 0.4, 'GIANT SWING');
+      }
+      // The swung Dweeb feels it too
+      t.percent = (t.percent || 0) + 2;
+    }
+    // Too long in the spin cycle: you get dizzy and let go in whatever direction you're facing
+    if (g.time > G.dizzyAfter) {
+      d.isCharging = false;
+      d.throwCharging = false;
+      d.charging = 0;
+      const launchYaw = g.angle + Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1) * 0.3;
+      d.yaw = launchYaw;
+      d.giantSwing = { ...g, release: true };
+      this.throwHeld(d, 1);
+      d.giantSwing = null;
+      d.hitstun = Math.max(d.hitstun || 0, 0.7);
+      this.fx._toyWord?.('TOO DIZZY!', pos, 0xb794f4);
+      return true;
+    }
+    return true;
   }
 
   _checkDive(d) {
@@ -1121,10 +2075,84 @@ export class CombatSystem {
     }
   }
 
+  /** Boomerang props curve out, then home back to the thrower; a clean catch re-grabs and pays style. */
+  _updateBoomerang(obj, dt) {
+    const B = obj.def.boomerang, owner = obj.thrownBy;
+    obj.boomT = (obj.boomT || 0) + dt;
+    obj.body.setAngvel({ x: 0, y: 22, z: 0 }, true); // flat helicopter spin
+    if (!owner?.active || obj.boomT > B.maxTime) { obj.boomT = 0; obj.thrownTime = Math.min(obj.thrownTime, 0.3); return false; }
+    const v = obj.body.linvel();
+    if (obj.boomT < B.delay) {
+      // Outbound: a gentle sideways curve and hang-time
+      const sp = Math.hypot(v.x, v.z) || 1;
+      obj.body.setLinvel({ x: v.x - (v.z / sp) * 6 * dt, y: v.y + 9.81 * 0.85 * dt, z: v.z + (v.x / sp) * 6 * dt }, true);
+      return false;
+    }
+    // Return leg: steer toward the owner's hands; reset the hit list once so it can tag on the way back
+    if (!obj.boomReturning) { obj.boomReturning = true; obj.hitList.clear(); obj.hitList.add(owner); }
+    const op = obj.getPosition(), pp = owner.getPosition();
+    const dx = pp.x - op.x, dy = pp.y + 0.6 - op.y, dz = pp.z - op.z, dist = Math.hypot(dx, dy, dz) || 1;
+    const k = Math.min(1, dt * 5);
+    obj.body.setLinvel({
+      x: v.x + (dx / dist * B.returnSpeed - v.x) * k,
+      y: v.y + (dy / dist * B.returnSpeed - v.y) * k + 9.81 * dt,
+      z: v.z + (dz / dist * B.returnSpeed - v.z) * k,
+    }, true);
+    if (Math.hypot(dx, dz) < B.catchRadius && Math.abs(dy) < 2.6) {
+      obj.boomT = 0; obj.boomReturning = false;
+      if (!owner.held && !owner.grabbedBy && owner.hitstun <= 0) {
+        this._holdObject(owner, obj);
+        this.addStyle(owner, 12, 'CATCH!');
+        this.fx.hud?.popup?.('CATCH!', pp, 'small', 0x3fa9ff);
+        this.fx.grab?.(owner, obj);
+        return true;
+      }
+      obj.thrownTime = Math.min(obj.thrownTime, 0.2); // hands full: it bonks down at their feet
+    }
+    return false;
+  }
+
+  _updateBananaPeels() {
+    for (const obj of this.arena.objects) {
+      if (!obj.def?.slip || obj.isDebris || obj.isGrabbed || obj.broken || !obj.body) continue;
+      const pp = obj.getPosition();
+      for (const d of this.dweebs) {
+        if (!d.active || !d.grounded || d.grabbedBy || d.held || d.ledge) continue;
+        if ((d.slipCd || 0) > 0 || d.hitstun > 0 || d.ragdolling || d.freezeTimer > 0 || d.invulnTimer > 0) continue;
+        const dp = d.getPosition();
+        if (Math.abs(pp.y - dp.y) > 0.65) continue;
+        const dx = pp.x - dp.x, dz = pp.z - dp.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > SLIP.radius) continue;
+
+        const f = d.forward;
+        const v = d.body.linvel();
+        const side = (f.x * dz - f.z * dx) >= 0 ? 1 : -1;
+        d.hitstun = Math.max(d.hitstun, SLIP.stun);
+        d.slipCd = SLIP.cooldown;
+        d.charging = 0;
+        d.isCharging = false;
+        d.attackAnim = 0;
+        d.diveTimer = 0;
+        d.slamActive = false;
+        d.flipSpin = Math.max(d.flipSpin || 0, 0.9);
+        d.body.setLinvel({
+          x: v.x * 0.4 + f.x * SLIP.forward,
+          y: Math.max(v.y, 1.5) + SLIP.up,
+          z: v.z * 0.4 + f.z * SLIP.forward,
+        }, true);
+        d.body.setAngvel({ x: side * SLIP.spin, y: side * 2, z: side * SLIP.spin * 0.5 }, true);
+        obj.pop(0.25);
+        this.fx.slip(d);
+      }
+    }
+  }
+
   _updateProjectiles(dt) {
     for (const obj of [...this.arena.objects]) {
       if (obj.isDebris || !obj.thrownBy || obj.thrownTime <= 0 || !obj.body) continue;
       obj.thrownTime -= dt;
+      if (obj.def.boomerang && this._updateBoomerang(obj, dt)) continue;
       const v = obj.body.linvel();
       const speed = Math.hypot(v.x, v.y, v.z);
       const op = obj.getPosition();
@@ -1144,6 +2172,11 @@ export class CombatSystem {
       const r = (obj.def.dims.radius ?? Math.max(obj.def.dims.hx ?? 0.3, obj.def.dims.hz ?? 0.3)) + 0.5;
       for (const t of this.dweebs) {
         if (!t.active || obj.hitList.has(t) || t.grabbedBy) continue;
+        // A held Dweeb soaks the throw before it reaches the holder.
+        if (this._humanShieldBlock(t, obj, prev, op, v)) {
+          if (obj.broken) break;
+          continue;
+        }
         if (segDist(prev, op, t.getPosition()) > r) continue;
         obj.hitList.add(t);
         const by = obj.thrownBy;
@@ -1162,6 +2195,7 @@ export class CombatSystem {
         _dir.y = 0.45;
         const launch = t.receiveHit({ dir: _dir, ...scaled(A.thrown(w, sk), yeet, yeet), attacker: by, time: this.time });
         if (launch > 0) {
+          this.status?.onHit(t, by, obj);
           this.fx.hit(t, by, launch, 'throw');
           // Rare drops land their own hit-effects: a thrown anvil should not read like a cake.
           // (Explosive rares go through explode() instead — the blast is their effect.)
@@ -1173,9 +2207,42 @@ export class CombatSystem {
         // Bowling balls plough on through; everything else rebounds off the victim
         const keep = obj.def.multiHit ? 0.7 : -0.25;
         obj.body.setLinvel({ x: v.x * keep, y: Math.abs(v.y) * 0.3 + (obj.def.roll ? 0.5 : 3), z: v.z * keep }, true);
-        if (obj.applyDamage(2500)) { this.breakObject(obj, by); break; }
+        if (this.damageObject(obj, 2500, by, { dir: { x: v.x, y: 0, z: v.z }, speed: Math.hypot(v.x, v.z) })) break;
       }
     }
+  }
+
+  /** A held Dweeb intercepts an incoming thrown prop: redirect ~60% of the hit to the shield. */
+  _humanShieldBlock(holder, obj, prev, op, v) {
+    const shield = holder.held?.kind === 'dweeb' ? holder.held.ref : null;
+    const S = BALANCE.humanShield;
+    if (!shield || !shield.active || !shield.shieldPoint) return false;
+    if (obj.def?.explosive || obj.thrownBy === shield) return false;
+    const dims = obj.def?.dims ?? {};
+    const pr = dims.radius ?? Math.max(dims.hx ?? 0.3, dims.hz ?? 0.3);
+    if (segDist(prev, op, shield.shieldPoint) > pr + S.pad) return false;
+
+    obj.hitList.add(holder);
+    const by = obj.thrownBy;
+    const speed = Math.hypot(v.x, v.y, v.z);
+    const w = (obj.def?.damage ?? 1) * (0.75 + Math.min(1, obj.body.mass() / 4) * 0.5);
+    const yeet = obj.superYeet ? SUPER : 1;
+    const sk = Math.min(1.4, speed / 18);
+    _dir.set(v.x, 0, v.z);
+    if (_dir.lengthSq() < 1e-4) _dir.set(holder.forward.x, 0, holder.forward.z);
+    _dir.normalize();
+    _dir.y = 0.45;
+    const atk = scaled(A.thrown(w, sk), yeet * S.damageScale, yeet * S.damageScale);
+    const launch = shield.receiveHit({ dir: _dir, ...atk, attacker: by, time: this.time });
+    shield.escapeTimer = Math.max(0, shield.escapeTimer || 0) + S.escapeBonus;
+    this.fx.humanShield?.(holder, shield, launch);
+    this.addStyle(holder, S.style, 'BLOCKED!');
+    if (!shield.active || shield.out || shield.eliminated) this.drop(holder);
+    obj.superYeet = false;
+    const keep = obj.def.multiHit ? 0.7 : -0.25;
+    obj.body.setLinvel({ x: v.x * keep, y: Math.abs(v.y) * 0.3 + (obj.def.roll ? 0.5 : 3), z: v.z * keep }, true);
+    if (obj.applyDamage(2500)) this.breakObject(obj, by);
+    return true;
   }
 
   /** Style points for a thrown hit: distance, bank shots, ricochets, air shots. Each adds knockback. */
@@ -1288,12 +2355,57 @@ export class CombatSystem {
           else if (pu.kind === 'magnet') {
             d.applyPowerUp('magnet');
             this.fx.magnet?.(d);
+          } else if (pu.kind === 'swap') {
+            this._doSwap(d);
           } else d.applyPowerUp(pu.kind);
           this.fx.pickup(d, pu);
           this.arena.removePowerUp(pu);
           break;
         }
       }
+    }
+  }
+
+  /** SWAP powerup: find nearest active non-eliminated non-grabbed rival within 18m; swap positions (+0.3y) and velocities; give both invulnTimer = max(current, 0.7); fx + audio. If no rival, give 3s sugar-like speed boost. */
+  _doSwap(d) {
+    const pos = d.getPosition();
+    let best = null, bestDist = 18;
+    for (const t of this.dweebs) {
+      if (t === d || !t.active || t.grabbedBy) continue;
+      const tp = t.getPosition();
+      const dist = Math.hypot(tp.x - pos.x, tp.y - pos.y, tp.z - pos.z);
+      if (dist < bestDist) { bestDist = dist; best = t; }
+    }
+    const swapColor = 0xb07cff;
+    if (best) {
+      const tp = best.getPosition();
+      const dpos = { x: pos.x, y: pos.y + 0.3, z: pos.z };
+      const tpos = { x: tp.x, y: tp.y + 0.3, z: tp.z };
+      const dvel = d.body.linvel();
+      const tvel = best.body.linvel();
+      d.body.setTranslation(tpos, true);
+      best.body.setTranslation(dpos, true);
+      d.body.setLinvel(tvel, true);
+      best.body.setLinvel(dvel, true);
+      d.invulnTimer = Math.max(d.invulnTimer, 0.7);
+      best.invulnTimer = Math.max(best.invulnTimer, 0.7);
+      this.fx.particles.confetti(pos, 24);
+      this.fx.particles.confetti(tp, 24);
+      this.fx.particles.ring(pos, { color: swapColor, size: 3, life: 0.4 });
+      this.fx.particles.ring(tp, { color: swapColor, size: 3, life: 0.4 });
+      this.fx.hud.popup('SWAP!', pos, 'big', swapColor);
+      this.fx.hud.popup('SWAP!', tp, 'big', swapColor);
+      this.fx.audio.playWhoosh(this.fx._pan(pos), 0.7);
+      this.fx.audio.playWhoosh(this.fx._pan(tp), 0.7);
+    } else {
+      // No rival: sugar-like speed boost for 3s
+      if (BALANCE.powerups.sugar) {
+        d.sugarTimer = Math.max(d.sugarTimer, 3);
+      }
+      this.fx.particles.confetti(pos, 16);
+      this.fx.particles.ring(pos, { color: swapColor, size: 2.5, life: 0.3 });
+      this.fx.hud.popup('SWAP!', pos, 'big', swapColor);
+      this.fx.audio.playWhoosh(this.fx._pan(pos), 0.7);
     }
   }
 }
