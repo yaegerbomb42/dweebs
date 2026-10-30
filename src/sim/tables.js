@@ -25,7 +25,7 @@ export const DROP_ITEMS = [
   // rare: the KO makers
   { key: 'giantHammer', w: 1.5 }, { key: 'toyRocket', w: 1.5 }, { key: 'explosiveBarrel', w: 1.5 }, { key: 'anvil', w: 1 },
   // gadget weapons: uncommon
-  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 },
+  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'extinguisher', w: 2 },
   // fast hands
   { key: 'boxingGlove', w: 3 },
 ];
@@ -83,6 +83,7 @@ export const ITEM_DEFS = {
   anvil: { shape: 'box', hx: 0.36, hy: 0.24, hz: 0.2, mass: 5.5, heft: 0.9, weapon: true },
   freezeRay: { shape: 'cylinder', r: 0.26, hy: 0.5, mass: 2.0, heft: 0.3 },
   magnet: { shape: 'box', hx: 0.32, hy: 0.26, hz: 0.36, mass: 2.4, heft: 0.36 },
+  extinguisher: { shape: 'cylinder', r: 0.13, hy: 0.3, mass: 1.3, heft: 0.25 },
 };
 
 /** Fallback for an unknown key, so a stale id simulates as a light crate rather than as NaN. */

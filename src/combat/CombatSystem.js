@@ -268,6 +268,64 @@ export class CombatSystem {
       return true;
     }
 
+    if (kind === 'extinguisher') {
+      if (obj.charges == null) obj.charges = G.charges;
+      const posAboveHead = { x: pos.x, y: pos.y + 1.7, z: pos.z };
+      if (obj.charges <= 0) {
+        this.fx.hud?.popup('PFFT...', pos, 'small', 0xd8d8d8);
+        return true;
+      }
+      obj.charges--;
+
+      // Recoil: blast backwards along the facing axis, with extra lift for rocket-jump recovery.
+      const v = d.body.linvel();
+      let rx = v.x - f.x * G.recoil, rz = v.z - f.z * G.recoil;
+      const hSpeed = Math.hypot(rx, rz);
+      if (hSpeed > G.maxSpeed) {
+        const s = G.maxSpeed / hSpeed;
+        rx *= s;
+        rz *= s;
+      }
+      d.body.setLinvel({ x: rx, y: v.y + (d.grounded ? G.lift : G.airLift), z: rz }, true);
+
+      // Foam cone: rivals in front get shoved away.
+      const range = G.range * (0.85 + charge * 0.3);
+      const cosCone = Math.cos(G.cone);
+      let hit = false;
+      for (const t of this.dweebs) {
+        if (t === d || !t.active || t.grabbedBy) continue;
+        const tp = t.getPosition();
+        const dx = tp.x - pos.x, dz = tp.z - pos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > range || dist < 0.01) continue;
+        if ((dx * f.x + dz * f.z) / dist < cosCone) continue;
+        const launch = t.receiveHit({
+          dir: { x: dx / dist, y: 0.2, z: dz / dist },
+          damage: 2, base: 3, growth: 0.2, attacker: d, time: this.time,
+          noParry: true,
+        });
+        if (launch > 0) {
+          hit = true;
+          this.addStyle(d, G.style, 'EXTINGUISHER');
+        }
+      }
+
+      // Loose props near the nozzle get a light forward puff.
+      const nozzle = { x: pos.x + f.x * 0.55, y: pos.y + 0.2, z: pos.z + f.z * 0.55 };
+      const propRange = G.range * 0.55;
+      for (const { obj: o, dist } of this.arena.getObjectsNear(nozzle, propRange)) {
+        if (o === obj) continue;
+        const falloff = 1 - dist / propRange;
+        const m = Math.sqrt(o.body.mass());
+        const imp = (2 + 3 * falloff) * m;
+        this.physics.applyImpulse(o.body, { x: f.x * imp, y: imp * 0.25, z: f.z * imp });
+      }
+
+      this.fx.gadget?.(d, 'extinguisher', hit);
+      this.fx.hud?.popup('WHOOSH!', posAboveHead, 'small', 0xffffff);
+      return true;
+    }
+
     if (kind === 'magnet') {
       const range = G.range * (0.85 + charge * 0.3);
       let pulled = 0;

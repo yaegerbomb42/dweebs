@@ -225,6 +225,7 @@ export const BALANCE = {
   gadgets: {
     freezeRay: { range: 7.5, cone: 0.55, cooldown: 0.85, freeze: 1.5, style: 7 },
     magnet: { range: 8, cooldown: 1.15, pull: 16, style: 5 },
+    extinguisher: { range: 5, cone: 0.6, cooldown: 0.45, charges: 6, recoil: 11, lift: 4, airLift: 7, maxSpeed: 18, style: 6 },
   },
 
   // Style meter (Spec: gains, tiers, decay). Single source of truth — CombatSystem.STYLE,
