@@ -2262,9 +2262,25 @@ function wireCivCameraControls() {
       }
     } else if (e.key === 'e' || e.key === 'E') {
       if (buildingManager && buildingManager.activeBlueprint) {
-        const res = buildingManager.confirmPlacement(colony, currentMeadowlands);
+        // Shift+E = queue for Builders; E = instant placement
+        const queue = e.shiftKey;
+        const res = buildingManager.confirmPlacement(colony, currentMeadowlands, { queue });
         if (res && !res.success) {
-          hud?.toast?.(res.reason || 'Cannot place here');
+          hud?.feed?.(`<b>${res.reason || 'Cannot place here'}</b>`, 'ko');
+        } else if (res && res.success) {
+          if (res.queued) {
+            hud?.feed?.(`<b>📋 Queued for Builders</b> · paid when they raise it`, 'style');
+          } else {
+            hud?.feed?.(`<b>🔨 Built instantly!</b>`, 'style');
+          }
+        }
+      } else if (e.shiftKey && colony && colony.buildQueue && colony.buildQueue.length > 0) {
+        // Shift+E with no active blueprint = cancel last queued build
+        const res = buildingManager.cancelLastQueuedBuild(colony);
+        if (res.success) {
+          hud?.feed?.(`<b>❌ Unqueued the ${res.name}</b>`, 'ko');
+        } else {
+          hud?.feed?.(`<b>${res.reason}</b>`, 'ko');
         }
       } else if (currentGatherTarget && colony && currentMeadowlands) {
         const silos = buildingManager
