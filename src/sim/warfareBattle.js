@@ -34,6 +34,20 @@ export const FORT_ALARM = 16;
 export const PEN_REACH = 4;
 export const SPAWN_GAP = 8;
 export const VERSUS_INCOME = 4;          // coins per second per side in versus
+
+// Army morale (separate from per-unit shouldRetreat): losses shake the whole line, kills steady it.
+export const MORALE_ROUT_AT = 0.3;       // below this a broken army starts to rout
+export const MORALE_RALLY_BOOST = 0.35;  // a commander's rally order steadies the line
+export const MORALE_RECOVER = 0.00025;   // passive recovery per tick (slow, ~0.0075/s)
+export const MORALE_HURT_LOSS = 0.03;    // morale lost over a full unit's worth of HP damage
+export const MORALE_HURT_GAIN = 0.006;   // morale gained by the attacker over the same damage
+export const MORALE_FORT_RESTORE = 0.2;  // routed units reaching home steady the army
+export const MORALE_RALLY_GAIN = 0.012;  // small morale bump for every kill
+export const MORALE_BOSS_GAIN = 0.25;    // felling a boss is a big swing
+export const MORALE_BOSS_LOSS = 0.4;     // losing a boss is a big swing
+export const ROUT_TICKS = 4 * WF_HZ;     // a rout is dramatic but temporary
+export const ROUT_COOLDOWN = 6 * WF_HZ;  // grace before the same unit can break again
+export const ROUT_TAKE_DMG = 0.5;        // routed units take reduced damage while fleeing
 /** Commander stances and their army-wide speed multiplier. */
 export const STANCE_SPEED = Object.freeze({ charge: 1.35, defense: 0.8 });
 /** Ticks a supply drop's +35% speed boost lasts (then the army falls back to its stance pace). */
@@ -174,6 +188,8 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins, d
     prepTicks: versus ? 0 : PREP_FIRST,
     spawnQueue: [], spawnCd: 0, scaling: { hpMul: 1, dmgMul: 1 },
     winner: null, income: versus ? VERSUS_INCOME : 0, incomeRed: versus ? VERSUS_INCOME * aiLevel : 0,
+    morale: { blue: 1, red: 1 },
+    routed: { blue: false, red: false },
     stats: { blue: teamStats(), red: teamStats(), wavesCleared: 0 },
   };
   // Personalities come from their own seeded stream so the draw never perturbs the main
@@ -230,6 +246,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
     dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), boostMul: 1, boostT: 0, cdMul: 1,
+    routTicks: 0, routCd: 0,
     kills: 0, rank: 0, name: null, rankSpeedMul: 1,
     rageT: 0,
     lastAttackerId: 0, lastHurtTick: -1e9, grudgeId: 0, pushT: 0,
@@ -241,6 +258,63 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
 
 const dirOf = team => (team === 'blue' ? 1 : -1);
 
+const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+function ensureMoraleState(st) {
+  if (!st) return;
+  if (!st.morale || typeof st.morale !== 'object') st.morale = { blue: 1, red: 1 };
+  if (typeof st.morale.blue !== 'number' || !Number.isFinite(st.morale.blue)) st.morale.blue = 1;
+  if (typeof st.morale.red !== 'number' || !Number.isFinite(st.morale.red)) st.morale.red = 1;
+  if (!st.routed || typeof st.routed !== 'object') st.routed = { blue: false, red: false };
+}
+
+function moraleOf(st, team) {
+  const m = st && st.morale ? st.morale[team] : undefined;
+  return typeof m === 'number' && Number.isFinite(m) ? m : 1;
+}
+
+function dropCarry(st, u) {
+  if (!u || !u.carrying) return;
+  const v = st && st.byId && typeof st.byId.get === 'function' ? st.byId.get(u.carrying) : null;
+  if (v) v.carriedBy = 0;
+  u.carrying = 0;
+}
+
+/** Pull every routed unit of a team back into the fight (rally / morale recovery). */
+function clearRout(st, team) {
+  if (!st || !Array.isArray(st.units)) return;
+  for (const u of st.units) {
+    if (!u || u.team !== team || u.state !== 'rout') continue;
+    u.state = 'fight';
+    u.routTicks = 0;
+    u.targetId = 0;
+  }
+}
+
+/**
+ * Change one army's morale. Crossing the rout threshold emits a single rout event per army;
+ * climbing back above it emits a rally event so routed units stop fleeing.
+ */
+function setMorale(st, team, value, source = '') {
+  if (!st || (team !== 'blue' && team !== 'red')) return;
+  if (!Array.isArray(st.events)) st.events = [];
+  ensureMoraleState(st);
+  const prev = st.morale[team];
+  const next = clamp01(value);
+  st.morale[team] = next;
+  const fort = st.forts && st.forts[team];
+  const x = fort ? fort.x : 0;
+  const z = fort ? fort.z : 0;
+  if (prev >= MORALE_ROUT_AT && next < MORALE_ROUT_AT && !st.routed[team]) {
+    st.routed[team] = true;
+    st.events.push({ type: 'rout', team, morale: next, x, z, source });
+  } else if (prev < MORALE_ROUT_AT && next >= MORALE_ROUT_AT && st.routed[team]) {
+    st.routed[team] = false;
+    clearRout(st, team);
+    if (source !== 'rally') st.events.push({ type: 'rally', team, morale: next, recovered: true, x, z, source });
+  }
+}
+
 /** Effective damage multiplier: wave scaling times the war-horn rage bonus. */
 const dmgMulOf = u => (u.rageT > 0 ? u.dmgMul * WARHORN_DMG_MUL : u.dmgMul);
 
@@ -249,7 +323,16 @@ export function applyCommand(st, c) {
   if (!c || st.phase === 'won' || st.phase === 'lost') return false;
   if (c.type === 'rally') {
     st.rally[c.team] = { x: clamp(+c.x || 0, -FIELD.halfX + 2, FIELD.halfX - 2), z: clamp(+c.z || 0, -FIELD.halfZ + 2, FIELD.halfZ - 2) };
-    st.events.push({ type: 'rally', team: c.team, x: st.rally[c.team].x, z: st.rally[c.team].z });
+    ensureMoraleState(st);
+    // Moving the rally flag only steadies a line that is actually breaking (so spam-clicking it
+    // is not a free morale pump); then it is the commander's big "hold the line!" moment.
+    const wasRouted = !!st.routed[c.team] || moraleOf(st, c.team) < MORALE_ROUT_AT;
+    if (wasRouted) {
+      st.morale[c.team] = clamp01(moraleOf(st, c.team) + MORALE_RALLY_BOOST);
+      st.routed[c.team] = false;
+      clearRout(st, c.team);
+    }
+    st.events.push({ type: 'rally', team: c.team, x: st.rally[c.team].x, z: st.rally[c.team].z, morale: st.morale[c.team], recovered: wasRouted });
     return true;
   }
   if (c.type === 'recruit') {
@@ -396,8 +479,12 @@ function kill(st, u, attTeam, kx, kz, attId = 0) {
   u.hp = 0;
   st.events.push({ type: 'death', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, kx, kz });
   st.stats[u.team].lost++;
+  const bossDeath = u.type === 'boss';
+  const loss = bossDeath ? MORALE_BOSS_LOSS : u.type === 'brute' ? 0.09 : 0.05;
+  setMorale(st, u.team, moraleOf(st, u.team) - loss, 'death');
   if (attTeam && attTeam !== u.team) {
     st.stats[attTeam].kills++;
+    setMorale(st, attTeam, moraleOf(st, attTeam) + (bossDeath ? MORALE_BOSS_GAIN : MORALE_RALLY_GAIN), 'kill');
     creditKill(st, attId, attTeam);
     const b = bounty(u.type);
     if (!(st.mode === 'defense' && attTeam === 'red')) {
@@ -420,7 +507,11 @@ function kill(st, u, attTeam, kx, kz, attId = 0) {
 /** Damage `t` from an attacker of (team, type) at (ax, az), crediting/retaliating against unit `attId`. */
 function hurt(st, t, dmg, attTeam, attType, ax, az, attId = 0) {
   if (!t.alive || dmg <= 0) return;
+  if (t.state === 'rout') dmg *= ROUT_TAKE_DMG;
   t.hp -= dmg;
+  const frac = Math.min(1, dmg / Math.max(1, t.maxHp));
+  setMorale(st, t.team, moraleOf(st, t.team) - frac * MORALE_HURT_LOSS, 'damage');
+  if (attTeam && attTeam !== t.team) setMorale(st, attTeam, moraleOf(st, attTeam) + frac * MORALE_HURT_GAIN, 'damage');
   const dx = t.x - ax, dz = t.z - az;
   const d = Math.sqrt(dx * dx + dz * dz) || 1;
   const kb = knockback(dmg, stats(t.type).mass);
@@ -465,6 +556,10 @@ function hurtFort(st, team, dmg, attType) {
   if (f.invulnerable || f.hp <= 0) return;
   dmg *= FORT_DMG_MULT;
   f.hp = Math.max(0, f.hp - dmg);
+  const frac = dmg / Math.max(1, f.maxHp);
+  setMorale(st, team, moraleOf(st, team) - Math.min(0.12, frac * 2.5), 'fort');
+  const enemy = otherTeam(team);
+  setMorale(st, enemy, moraleOf(st, enemy) + Math.min(0.03, frac * 0.5), 'fort');
   st.events.push({ type: 'fortHit', team, dmg, src: attType, x: f.x, z: f.z });
 }
 
@@ -641,6 +736,46 @@ function updateUnit(st, u, enemies) {
   const home = st.forts[u.team];
   const enemyTeam = otherTeam(u.team);
   const efort = st.forts[enemyTeam];
+
+  // Army morale: a broken line routs away from the front for a few seconds.
+  if (u.routCd > 0) u.routCd--;
+  const armyMorale = moraleOf(st, u.team);
+  if (u.state === 'rout') {
+    u.routTicks = Math.max(0, (u.routTicks || 0) - 1);
+    const dx = home.x - u.x, dz = home.z - u.z;
+    const nearHome = dx * dx + dz * dz <= (home.r + 4) * (home.r + 4);
+    if (nearHome) {
+      // Reaching the fort steadies the army and ends this unit's rout.
+      u.state = 'fight';
+      u.routTicks = 0;
+      u.routCd = ROUT_COOLDOWN;
+      u.targetId = 0;
+      setMorale(st, u.team, moraleOf(st, u.team) + MORALE_FORT_RESTORE, 'fort');
+      halt(u);
+      return;
+    }
+    if (u.routTicks <= 0) {
+      u.state = 'fight';
+      u.routCd = ROUT_COOLDOWN;
+      u.targetId = 0;
+    } else {
+      dropCarry(st, u);
+      seek(u, home.x, home.z, speed * 1.15);
+      return;
+    }
+  }
+  if (u.state !== 'rout' && u.type !== 'boss' && u.routCd <= 0 && armyMorale < MORALE_ROUT_AT) {
+    u.state = 'rout';
+    u.routTicks = ROUT_TICKS;
+    u.targetId = 0;
+    dropCarry(st, u);
+    if (st.routed && !st.routed[u.team]) {
+      st.routed[u.team] = true;
+      st.events.push({ type: 'rout', team: u.team, morale: armyMorale, x: u.x, z: u.z, source: 'unit' });
+    }
+    seek(u, home.x, home.z, speed * 1.15);
+    return;
+  }
 
   // Stealer hauling a captive home
   if (u.carrying) {
@@ -954,6 +1089,11 @@ export function stepBattle(st, commands = []) {
   for (const c of commands) applyCommand(st, c);
   for (const u of st.units) if (!st.byId.has(u.id)) st.byId.set(u.id, u);
   updatePhase(st);
+  ensureMoraleState(st);
+  for (const team of ['blue', 'red']) {
+    const m = st.morale[team];
+    if (m < 1) setMorale(st, team, m + MORALE_RECOVER, 'time');
+  }
   for (const u of st.units) if (!st.byId.has(u.id)) st.byId.set(u.id, u);
 
   const blue = [], red = [];
@@ -1005,10 +1145,15 @@ export function battleHash(st) {
     const s = st.stance && st.stance[team];
     mix(s === 'defense' ? 2 : s === 'charge' ? 3 : 1);
   }
+  mix(Math.round(moraleOf(st, 'blue') * 1000));
+  mix(Math.round(moraleOf(st, 'red') * 1000));
+  mix(st.routed?.blue ? 1 : 0); mix(st.routed?.red ? 1 : 0);
   for (const u of st.units) {
     mix(u.id); mix(u.team === 'blue' ? 1 : 2);
     mix(Math.round(u.x * 1000)); mix(Math.round(u.z * 1000)); mix(Math.round(u.hp * 100));
     mix(u.carrying); mix(u.carriedBy); mix(u.rank || 0); mix(u.kills || 0); mix(u.rageT || 0);
+    mix(u.state === 'rout' ? 1 : u.state === 'retreat' ? 2 : 3);
+    mix(u.routTicks || 0); mix(u.routCd || 0);
   }
   return h >>> 0;
 }

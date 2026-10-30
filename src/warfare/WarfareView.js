@@ -193,6 +193,7 @@ export class WarfareView {
       e.carried = !!u.carriedBy;
       e.carrying = !!u.carrying;
       e.retreat = u.state === 'retreat';
+      e.rout = u.state === 'rout';
       e.hpFrac = u.hp / u.maxHp;
       e.rank = u.rank || 0;
       e.name = u.name || '';
@@ -318,7 +319,21 @@ export class WarfareView {
           fx.shockwave(ev.x, ev.z, 2.4, 0xd4a73a);
           break;
         }
-        case 'rally': this.rally[ev.team].pulse = 0.5; break;
+        case 'rally': {
+          const r = this.rally[ev.team];
+          if (r) r.pulse = 0.5;
+          if (ev.recovered) {
+            const color = TEAM_COLORS[ev.team] ?? 0xffffff;
+            fx.shockwave(ev.x, ev.z, 7, color);
+            fx.number(ev.x, 4.2, ev.z, 'RALLY!', 'word');
+          }
+          break;
+        }
+        case 'rout': {
+          fx.shockwave(ev.x, ev.z, 6, 0xffffff);
+          fx.number(ev.x, 4.2, ev.z, 'ROUT!', 'weak');
+          break;
+        }
         case 'warhorn': fx.shockwave(ev.x, ev.z, 12, 0xffd23f); fx.number(ev.x, 3.4, ev.z, 'WAR HORN!', 'word'); fx.addShake(0.3); break;
         case 'repair': fx.number(ev.x, 3.2, ev.z, `+${ev.amount} FORT`, 'word'); fx.shockwave(ev.x, ev.z, 6, 0x5ee06a); break;
         case 'trap': fx.puff(ev.x, ev.z); break;
@@ -385,8 +400,8 @@ export class WarfareView {
         for (let i = 0; i < e.m.rank.children.length; i++) e.m.rank.children[i].visible = i < rk;
         if (rk > 0) e.m.rank.scale.setScalar(1 + Math.sin(t * 4 + e.x) * 0.06);
       }
-      // retreat flag: a little white plastic flag on a dowel
-      if (e.retreat && !e.flag) {
+      // retreat/rout flag: a little white plastic flag on a dowel
+      if ((e.retreat || e.rout) && !e.flag) {
         const f = new THREE.Group();
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.9, 4), sharedMats().wood);
         pole.position.y = 0.45;
@@ -396,7 +411,7 @@ export class WarfareView {
         f.position.set(-0.3, e.m.height + 0.1, 0);
         tilt.add(f);
         e.flag = f;
-      } else if (!e.retreat && e.flag) { tilt.remove(e.flag); e.flag = null; }
+      } else if (!e.retreat && !e.rout && e.flag) { tilt.remove(e.flag); e.flag = null; }
       if (e.flag) e.flag.rotation.y = Math.sin(t * 9) * 0.4;
     }
     this._syncTethers(st, null, false);
