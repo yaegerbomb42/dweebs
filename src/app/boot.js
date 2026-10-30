@@ -200,6 +200,11 @@ function wireTitle({ nodes, router, toast }) {
     launchGameMode('build', 'stadium', 'traitbrawl');
   });
 
+  // Dweeb Wilds: open-world survival spectator mode
+  nodes.title.querySelector('#app-btn-wilds')?.addEventListener('click', () => {
+    launchGameMode('build', 'stadium', 'wilds');
+  });
+
   // Game 5 (Dweeb Warfare) and submodes
   nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
     launchGameMode('warfare', 'stadium', 'defense');

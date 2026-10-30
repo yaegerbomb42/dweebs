@@ -60,6 +60,7 @@ import { assignTeams, teamById, TeamRings } from './game/Teams.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
 import { TraitPicker } from './builder/traits/TraitPicker.js';
 import { TraitBrawlMode } from './builder/traits/TraitBrawlMode.js';
+import { WildsMode } from './builder/traits/WildsMode.js';
 import { BuildADweebLab, recordGauntletBout, loadGauntletState, TOURNAMENT_KEY } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
 import { TournamentBracket } from './builder/Tournament.js';
@@ -992,6 +993,7 @@ function openTraitPicker() {
     core: currentBuildLab.config?.traitCore || {},
     onChange: (traits, traitCore) => currentBuildLab?.updateConfig({ traits, traitCore }),
     onBrawl: () => openBrawlSim(),
+    onWilds: () => openWilds(),
   });
 }
 function openBrawlSim({ fromHub = false } = {}) {
@@ -1000,6 +1002,27 @@ function openBrawlSim({ fromHub = false } = {}) {
   traitBrawl = new TraitBrawlMode({
     onExit: () => {
       traitBrawl = null;
+      if (!fromHub) return;
+      toMenu();
+      $('main-menu')?.classList.add('hidden');
+      if (window.__dweebsApp?.router) {
+        window.__dweebsApp.router.setMatchLock(false);
+        window.__dweebsApp.router.go('/');
+      } else {
+        $('main-menu')?.classList.remove('hidden');
+      }
+    },
+  });
+}
+
+// Dweeb Wilds: open-world survival spectator mode (src/builder/traits/WildsMode.js)
+let wildsMode = null;
+function openWilds({ fromHub = false } = {}) {
+  if (wildsMode) return;
+  currentBuildLab?.saveConfig?.();
+  wildsMode = new WildsMode({
+    onExit: () => {
+      wildsMode = null;
       if (!fromHub) return;
       toMenu();
       $('main-menu')?.classList.add('hidden');
@@ -1057,6 +1080,7 @@ function startBuildLab() {
     onExit: exitBuildLab,
     onOpenTraits: () => openTraitPicker(),
     onOpenBrawlSim: () => openBrawlSim(),
+    onOpenWilds: () => openWilds(),
     onLaunchArena: oppType => {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
@@ -1355,6 +1379,10 @@ function startMatch() {
   if (launch?.mode && GAME_MODES[launch.mode]) settings.mode = launch.mode;
   if (launch?.arena && ARENAS.some(a => a.id === launch.arena)) settings.arena = launch.arena;
   for (const id of ['game-switcher-modal', 'pause-screen']) $(id)?.classList.add('hidden');
+  if ((settings.mode || 'derby') === 'build' && launch?.submode === 'wilds') {
+    $('main-menu')?.classList.add('hidden');
+    return openWilds({ fromHub: true });
+  }
   if ((settings.mode || 'derby') === 'build' && launch?.submode === 'traitbrawl') {
     $('main-menu')?.classList.add('hidden');
     return openBrawlSim({ fromHub: true });

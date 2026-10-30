@@ -87,6 +87,7 @@ export const MALL_MODES = [
     btnClass: 'purple',
     subgames: [
       { id: 'app-btn-traitbrawl', label: '🤖 Brawl Sim', title: 'Trait-driven auto-battler in the Toy Playroom', launch: { mode: 'build', arena: 'stadium', submode: 'traitbrawl' }, difficulty: 1 },
+      { id: 'app-btn-wilds', label: '🌲 Dweeb Wilds', title: 'Open-world survival: watch your Dweeb try to survive on its own', launch: { mode: 'build', arena: 'stadium', submode: 'wilds' }, difficulty: 1 },
     ],
     launch: { id: 'app-btn-builder', label: 'ENTER 3D LAB', difficulty: 1, launch: { mode: 'build', arena: 'stadium' } },
   },
