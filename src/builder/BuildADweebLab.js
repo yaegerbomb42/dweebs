@@ -37,7 +37,7 @@ import {
 } from './BattleSim.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
-const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+export const TOURNAMENT_KEY = 'dweebs-tournament-v1';
 const SLOTS_KEY = 'dweebs-build-slots-v1';
 const DOJO_RECORDS_KEY = 'dweebs-dojo-records-v1';
 const MAX_SLOTS = 3;
