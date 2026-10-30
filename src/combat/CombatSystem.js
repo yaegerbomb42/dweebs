@@ -2554,6 +2554,15 @@ export class CombatSystem {
           if (obj.superYeet) this.fx.superYeet(t, by);
           if (by !== t) this.addStyle(by, 5 + launch * 0.4);
         }
+        if (obj.def.sticky && by !== t) {
+          const tp = t.getPosition();
+          t.gumTimer = obj.def.sticky.time;
+          t.gumDef = obj.def.sticky;
+          this.fx.hud?.popup('GUMMED!', { x: tp.x, y: tp.y + 1.2, z: tp.z }, 'big', 0xff7ac8);
+          if (this.addStyle && by) this.addStyle(by, 6, 'GUMMED');
+          this.arena.removeObject(obj);
+          break;
+        }
         obj.superYeet = false;
         // Bowling balls plough on through; everything else rebounds off the victim
         const keep = obj.def.multiHit ? 0.7 : -0.25;
