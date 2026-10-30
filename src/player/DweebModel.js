@@ -323,6 +323,20 @@ function frownGeo() {
   return g;
 }
 
+function faceStarGeo(r = 0.05) {
+  const s = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const a = (i * Math.PI) / 5 - Math.PI / 2;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const x = Math.cos(a) * rad;
+    const y = Math.sin(a) * rad;
+    if (i === 0) s.moveTo(x, y);
+    else s.lineTo(x, y);
+  }
+  s.closePath();
+  return new THREE.ShapeGeometry(s, 5);
+}
+
 function screamMouth() {
   const group = new THREE.Group();
   const shape = new THREE.Shape();
@@ -659,6 +673,62 @@ export function buildDweebModel(d, darken) {
   d.screamMouth.visible = false;
   d.bodyGroup.add(d.screamMouth);
 
+  // ─── Combat face props (hidden until a face state needs them) ───
+  const topEye = L.eyes.reduce((best, e) => (e.y + e.r > best.y + best.r ? e : best), L.eyes[0]);
+  const rightEye = L.eyes.reduce((best, e) => (e.x > best.x ? e : best), L.eyes[0]);
+
+  const sweatX = Math.min(0.36, rightEye.x + rightEye.r * 0.95);
+  const sweatY = rightEye.y + rightEye.r * 0.55;
+  const sweatZ = surfaceZ(sweatX, sweatY) + 0.035;
+  const sweat = new THREE.Mesh(
+    cached('sweatDrop', () => {
+      const g = new THREE.SphereGeometry(0.034, 8, 6);
+      g.scale(0.78, 1.35, 0.72);
+      g.translate(0, -0.018, 0);
+      return g;
+    }),
+    new THREE.MeshBasicMaterial({ color: 0x8fe9ff })
+  );
+  sweat.position.set(sweatX, sweatY, sweatZ);
+  sweat.userData.baseX = sweatX;
+  sweat.userData.baseY = sweatY;
+  sweat.userData.baseZ = sweatZ;
+  sweat.visible = false;
+  noOutline(sweat);
+  d.bodyGroup.add(sweat);
+  d.faceSweat = sweat;
+
+  const starY = topEye.y + topEye.r + 0.16;
+  const stars = new THREE.Group();
+  stars.position.set(0, starY, surfaceZ(0, topEye.y) + 0.06);
+  stars.userData.baseY = starY;
+  const starMat = new THREE.MeshBasicMaterial({ color: 0xffe45c, side: THREE.DoubleSide });
+  const starGeo = cached('faceStar', faceStarGeo);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const s = new THREE.Mesh(starGeo, starMat);
+    s.position.set(Math.cos(a) * 0.24, Math.sin(a) * 0.068, 0);
+    stars.add(s);
+  }
+  stars.visible = false;
+  noOutline(stars);
+  d.bodyGroup.add(stars);
+  d.faceStars = stars;
+
+  const tongue = new THREE.Mesh(
+    cached('faceTongue', () => {
+      const g = new THREE.CapsuleGeometry(0.028, 0.075, 3, 8);
+      g.translate(0, -0.028, 0);
+      return g;
+    }),
+    new THREE.MeshBasicMaterial({ color: 0xff6f91 })
+  );
+  tongue.position.set(0.02, L.mouthY - 0.07, mz + 0.014);
+  tongue.visible = false;
+  noOutline(tongue);
+  d.bodyGroup.add(tongue);
+  d.faceTongue = tongue;
+
   // ─── Limbs & Arms ───
   const armLen = 0.32;
   const armGeo = cached('arm', () => {
@@ -768,9 +838,21 @@ const lerpK = (dt, rate) => 1 - Math.exp(-rate * dt);
 /** Face, appendages & physics-reacting ears/tentacles. Once per frame. */
 export function animateDweebFace(d, dt, time) {
   const L = d.layout;
-  const knocked = d.ragdolling;
-  const screaming = knocked || d.hitstun > 0.15 || !!d.grabbedBy || d.swimFlail > 0;
-  const gritting = !screaming && d.charging > 0;
+  if (!L) return;
+
+  // Derived combat face state. Presentation only: all of these read existing combat fields.
+  const knocked = !!d.ragdolling;
+  const grabbed = !!d.grabbedBy;
+  const heldDweeb = d.held?.kind === 'dweeb';
+  const strain = !grabbed && (heldDweeb || (d.grabSettle ?? 0) > 0);
+  const hurt = !knocked && !grabbed && !strain && d.hitstun > 0.15;
+  const focus = !knocked && !grabbed && !strain && !hurt && (d.charging ?? 0) > 0;
+  const flailing = !knocked && !grabbed && !strain && !hurt && !focus && (d.swimFlail ?? 0) > 0;
+  const faceState = knocked ? 'dizzy' : grabbed ? 'panic' : strain ? 'strain' : hurt ? 'hurt'
+    : focus ? 'focus' : flailing ? 'panic' : 'idle';
+  const screaming = knocked || grabbed || hurt || flailing;
+  const gritting = focus;
+  const agitated = screaming || strain;
 
   if (d.kos > d._seenKOs) { d._seenKOs = d.kos; d.gloatTimer = 2.5; }
   d.gloatTimer -= dt;
@@ -781,27 +863,80 @@ export function animateDweebFace(d, dt, time) {
     d.idleMood = r < 0.6 ? L.mood : r < 0.85 ? (L.mood === 'grumpy' ? 'calm' : 'grumpy') : 'smug';
   }
   d.mood = d.gloatTimer > 0 ? 'smug' : d.percent >= 100 ? 'worried' : d.idleMood;
-  const m = MOODS[d.mood];
-  const browTarget = screaming || gritting ? 1.15 : m.brow;
-  d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);
-  d._mouthCurve += (m.mouth - d._mouthCurve) * lerpK(dt, 10);
+  const m = MOODS[d.mood] ?? MOODS.calm;
 
-  // Eyes: tracking, blinking, scream squint, X-eyes
+  let browTarget = m.brow;
+  if (faceState === 'panic') browTarget = -0.75;      // scared brows up, not angry
+  else if (faceState === 'dizzy') browTarget = -0.2;
+  else if (agitated || gritting) browTarget = 1.15;  // strain / hurt / focus: brows down
+  d._browAnger += (browTarget - d._browAnger) * lerpK(dt, 14);
+
+  let mouthTarget = m.mouth;
+  if (faceState === 'panic') mouthTarget = 0.55;
+  else if (faceState === 'strain') mouthTarget = 0.85 + Math.sin(time * 17) * 0.18;
+  else if (faceState === 'hurt' || faceState === 'focus' || faceState === 'dizzy') mouthTarget = 1;
+  d._mouthCurve += (mouthTarget - d._mouthCurve) * lerpK(dt, faceState === 'idle' ? 10 : 16);
+
+  // Eyes: tracking, blinking, panic widening, hurt squint, dizzy X-eyes
   d.blinkTimer -= dt;
   let blink = 1;
   if (d.blinkTimer < 0) {
     blink = 0.1;
     if (d.blinkTimer < -0.1) d.blinkTimer = 1.5 + Math.random() * 3.5;
   }
-  const lookX = Math.max(-0.35, Math.min(0.35, d.velocity.x * 0.04)) + Math.sin(time * 1.7 + d.index) * 0.12;
-  const lookY = Math.max(-0.3, Math.min(0.3, d.velocity.y * 0.03));
-  const squeeze = screaming && !knocked;
 
-  for (const eye of d.eyes) {
-    eye.group.visible = !screaming;
-    eye.lid.visible = squeeze;
-    eye.xEye.visible = knocked;
-    eye.group.scale.y = blink * (gritting ? 0.8 : 1);
+  let lookX = Math.max(-0.35, Math.min(0.35, d.velocity.x * 0.04)) + Math.sin(time * 1.7 + d.index) * 0.12;
+  let lookY = Math.max(-0.3, Math.min(0.3, d.velocity.y * 0.03));
+  if (faceState === 'panic') {
+    // Lock onto whoever is holding us (fall back to a panicked darting look).
+    const holder = d.grabbedBy;
+    const holderPos = typeof holder?.getPosition === 'function' ? holder.getPosition() : null;
+    const selfPos = typeof d.getPosition === 'function' ? d.getPosition() : d.mesh?.position;
+    if (holderPos && selfPos) {
+      const dx = holderPos.x - selfPos.x;
+      const dy = holderPos.y - selfPos.y;
+      const dz = holderPos.z - selfPos.z;
+      const c = Math.cos(d.yaw || 0), s = Math.sin(d.yaw || 0);
+      const right = dx * c - dz * s;
+      const forward = dx * s + dz * c;
+      const dist = Math.hypot(right, forward) || 1;
+      lookX = Math.max(-0.6, Math.min(0.6, (right / dist) * 0.6)) * (forward < 0 ? 0.5 : 1);
+      lookY = Math.max(-0.5, Math.min(0.5, dy * 0.7));
+    } else {
+      lookX = Math.sin(time * 26) * 0.3;
+      lookY = Math.sin(time * 21) * 0.25;
+    }
+  } else if (faceState === 'dizzy') {
+    lookX = Math.sin(time * 9) * 0.2;
+    lookY = Math.cos(time * 7) * 0.2;
+  } else if (faceState === 'strain') {
+    lookX = Math.sin(time * 30) * 0.08;
+    lookY = -0.08;
+  }
+
+  const eyeCount = d.eyes?.length ?? 0;
+  for (let i = 0; i < eyeCount; i++) {
+    const eye = d.eyes[i];
+    let visible = true, lid = false, xEye = false;
+    let sx = 1, sy = blink, sz = 1;
+
+    if (faceState === 'dizzy') {
+      visible = false; xEye = true;
+    } else if (faceState === 'panic') {
+      sx = sz = 1.16; sy = 1.12;                 // wide, unblinking eyes
+    } else if (faceState === 'hurt') {
+      if (eyeCount > 1 && i === 0) { visible = false; lid = true; } // one squeezed shut
+      else sy = blink * 0.35;                    // …and one squinted
+    } else if (faceState === 'strain') {
+      sy = Math.min(blink, 0.72);                // gritted effort squint
+    } else if (gritting) {
+      sy = blink * 0.78;
+    }
+
+    eye.group.visible = visible;
+    eye.lid.visible = lid;
+    eye.xEye.visible = xEye;
+    eye.group.scale.set(sx, sy, sz);
     eye.pupil.position.x = lookX * eye.r;
     eye.pupil.position.y = lookY * eye.r;
   }
@@ -809,21 +944,82 @@ export function animateDweebFace(d, dt, time) {
   for (const b of d.brows) {
     const a = d._browAnger, base = b.userData.base;
     b.rotation.z = b.userData.side * 0.42 * a;
-    b.position.set(base.x, base.y - 0.03 * a + (squeeze ? -0.02 : 0), base.z);
+    b.position.set(base.x, base.y - 0.03 * a + (screaming ? -0.02 : 0), base.z);
   }
 
-  // Mouths
-  d.mouth.visible = !screaming && !gritting;
+  // Mouths: tiny O (panic), wobbling grimace (strain), gritted teeth (hurt/focus), tongue out (dizzy)
+  const showScream = faceState === 'panic' || faceState === 'hurt' || faceState === 'focus' || faceState === 'dizzy';
+  d.mouth.visible = !showScream;
   d.mouth.scale.y = d._mouthCurve;
-  d.screamMouth.visible = screaming || gritting;
-  if (d.screamMouth.visible) {
-    const open = gritting ? 0.35 + d.charging * 0.15 : 1.3 + Math.sin(time * 38) * 0.1;
-    d.screamMouth.scale.set(gritting ? 1.3 : 1.45, open, 1);
+  d.mouth.scale.x = faceState === 'strain' ? 1.1 + Math.sin(time * 17) * 0.06 : 1;
+  d.screamMouth.visible = showScream;
+  d.screamMouth.rotation.z = 0;
+  if (showScream) {
+    if (faceState === 'panic') {
+      const o = 0.5 + Math.sin(time * 20) * 0.04;
+      d.screamMouth.scale.set(o * 1.1, o, 1);
+      d.screamMouth.rotation.z = Math.sin(time * 18) * 0.05;
+    } else if (faceState === 'hurt') {
+      d.screamMouth.scale.set(1.25, 0.5 + Math.sin(time * 30) * 0.04, 1);
+    } else if (faceState === 'focus') {
+      d.screamMouth.scale.set(1.15, 0.34 + (d.charging ?? 0) * 0.12, 1);
+    } else {
+      d.screamMouth.scale.set(1.35, 0.7 + Math.sin(time * 10) * 0.08, 1);
+      d.screamMouth.rotation.z = Math.sin(time * 6) * 0.12;
+    }
+  }
+
+  // Sweat drop: panic & effort. Slides down the temple then pops back.
+  if (d.faceSweat) {
+    const show = faceState === 'panic' || faceState === 'strain';
+    d.faceSweat.visible = show;
+    if (show) {
+      const rate = faceState === 'panic' ? 1.8 : 1.1;
+      const t = (time * rate) % 1;
+      d.faceSweat.position.set(
+        d.faceSweat.userData.baseX + Math.sin(time * 9) * 0.006,
+        d.faceSweat.userData.baseY - t * 0.13,
+        d.faceSweat.userData.baseZ
+      );
+      d.faceSweat.scale.setScalar(0.7 + Math.sin(t * Math.PI) * 0.45);
+      d.faceSweat.rotation.z = Math.sin(time * 12) * 0.2;
+    }
+  }
+
+  // Dizzy stars: orbit and twinkle over the head while ragdolling.
+  if (d.faceStars) {
+    const show = faceState === 'dizzy';
+    d.faceStars.visible = show;
+    if (show) {
+      d.faceStars.rotation.z = time * 2.2;
+      d.faceStars.position.y = d.faceStars.userData.baseY + Math.sin(time * 4) * 0.02;
+      d.faceStars.children.forEach((s, i) => {
+        const pulse = Math.abs(Math.sin(time * 5 + i * 2.1));
+        s.scale.setScalar(0.55 + pulse * 0.55);
+      });
+    }
+  }
+
+  // Tongue: lolls out when dizzy, bitten at the corner while charging.
+  if (d.faceTongue) {
+    const show = faceState === 'dizzy' || faceState === 'focus';
+    d.faceTongue.visible = show;
+    if (show) {
+      if (faceState === 'dizzy') {
+        d.faceTongue.position.set(0.02, L.mouthY - 0.09, d.mouth.position.z + 0.012);
+        d.faceTongue.rotation.z = Math.sin(time * 8) * 0.25;
+        d.faceTongue.scale.set(1, 1 + Math.sin(time * 9) * 0.1, 1);
+      } else {
+        d.faceTongue.position.set(0.068, L.mouthY + 0.005, d.mouth.position.z + 0.016);
+        d.faceTongue.rotation.z = -0.5 + Math.sin(time * 5) * 0.06;
+        d.faceTongue.scale.set(0.55, 0.5, 0.6);
+      }
+    }
   }
 
   // Appendage dynamic physics wobble (ears, stalks, tails, antenna)
   if (d.wiggleItems) {
-    const speedMult = screaming ? 2.5 : 1.0;
+    const speedMult = screaming ? 2.5 : strain ? 1.8 : focus ? 1.2 : 1.0;
     for (const item of d.wiggleItems) {
       const axis = item.axis || 'z';
       const rot = Math.sin(time * item.speed * speedMult) * item.amp * (screaming ? 1.8 : 1.0);
@@ -833,7 +1029,7 @@ export function animateDweebFace(d, dt, time) {
 
   // Tentacles
   if (d.tentacles) {
-    const amp = screaming ? 0.16 : 0.05, spd = screaming ? 14 : 3.2;
+    const amp = screaming ? 0.16 : strain ? 0.1 : 0.05, spd = screaming ? 14 : strain ? 7 : 3.2;
     for (const t of d.tentacles) {
       const p = time * spd + t.userData.phase;
       t.rotation.set(Math.sin(p) * amp, Math.sin(p * 0.7) * amp, Math.cos(p * 1.1) * amp);
