@@ -48,6 +48,7 @@ export const DROP_ITEMS = [
   { key: 'giantRubberDuck', w: 6 }, { key: 'trafficCone', w: 6 }, { key: 'box', w: 6 }, { key: 'poolRing', w: 5 },
   { key: 'teddyBear', w: 5 }, { key: 'pinata', w: 5 }, { key: 'piggyBank', w: 4 }, { key: 'gumballMachine', w: 4 },
   { key: 'fishBowl', w: 4 }, { key: 'boombox', w: 4 }, { key: 'lamp', w: 4 }, { key: 'giantDie', w: 4 },
+  { key: 'partyBalloon', w: 4 },
   // mid: solid throwables and furniture
   { key: 'crate', w: 5 }, { key: 'tire', w: 4 }, { key: 'tv', w: 3 }, { key: 'ladder', w: 3 }, { key: 'mattress', w: 3 },
   { key: 'shoppingCart', w: 3 }, { key: 'couch', w: 2 }, { key: 'bowlingBall', w: 3 }, { key: 'spikyBall', w: 3 },

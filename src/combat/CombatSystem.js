@@ -1096,6 +1096,16 @@ export class CombatSystem {
       const hy = obj.def.dims.hy ?? obj.def.dims.radius ?? obj.def.dims.halfHeight ?? 0.3;
       y = pos.y + 0.75 * s + hy + 0.05;
     }
+    const floaty = obj.def.floaty;
+    if (floaty) {
+      y += Math.sin(this.time * 3.2) * 0.04;
+      if (!d.grounded) {
+        const v = d.body.linvel();
+        let vy = v.y + G * floaty.gravityCancel * dt;
+        if (vy < -floaty.maxFall) vy = -floaty.maxFall;
+        d.body.setLinvel({ x: v.x, y: vy, z: v.z }, true);
+      }
+    }
     obj.body.setNextKinematicTranslation({ x, y, z });
     obj.body.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
   }

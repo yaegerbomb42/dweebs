@@ -360,6 +360,23 @@ const BUILDERS = {
     k.add(Cyl(0.025, 0.025, 0.03, 6), W, { p: [0, 0.3, 0] });
   },
 
+  partyBalloon(k) {
+    const pink = 0xff4d8d, dark = 0xc21b38;
+    // Balloon body floats above the grab point; the string curls down below it.
+    k.add(new THREE.SphereGeometry(0.3, 16, 12), pink, { p: [0, 0.48, 0], s: [1, 1.08, 1] });
+    k.add(Ico(0.07, 1), 0xffb3d9, { p: [-0.1, 0.63, 0.16], s: [1, 0.55, 0.45] });
+    k.add(Cone(0.05, 0.07, 6), dark, { p: [0, 0.17, 0], r: [PI, 0, 0] });
+    for (let i = 0; i < 6; i++) {
+      const y = 0.12 - i * 0.075;
+      k.add(Cyl(0.008, 0.008, 0.085, 4), W, {
+        p: [Math.sin(i * 1.35) * 0.035, y, Math.cos(i * 1.1) * 0.03],
+        r: [Math.sin(i * 1.7) * 0.4, 0, Math.cos(i * 1.3) * 0.5],
+      });
+    }
+    k.eye([-0.09, 0.53, 0.27], [-0.32, 0.12, 1], 0.055);
+    k.eye([0.09, 0.53, 0.27], [0.32, 0.12, 1], 0.055);
+  },
+
   bowlingBall(k) {
     k.add(paint(Ico(0.15, 2), c => Math.sin(c.x * 34 + Math.sin(c.y * 28) * 2.4 + c.z * 12) > 0.55 ? 0xb56cff : 0x4b2fa8), 'vc');
     for (const d of [[0, 0.8, 0.6], [-0.2, 0.62, 0.76], [0.2, 0.62, 0.76]]) {
