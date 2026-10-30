@@ -1076,6 +1076,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) window.__dweebs.matchEvents = matchEvents;
   if (import.meta.env.DEV) Object.defineProperty(window, '__db', { get: () => currentDweebball, configurable: true });
   if (import.meta.env.DEV) Object.defineProperty(window, '__river', { get: () => currentMeadowlands?.river, configurable: true });
   if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'wardrobe', { get: () => ({ wardrobe, wardrobeRack, colony }), configurable: true });
@@ -1517,6 +1518,14 @@ const matchEvents = {
       }
     } catch (e) { console.warn('career record failed', e); }
 
+    // Podium awards + match report
+    try {
+      const awardsEl = $('result-awards');
+      const reportEl = $('result-report');
+      if (awardsEl) awardsEl.innerHTML = buildAwardCards(match, dweebs);
+      if (reportEl) reportEl.innerHTML = buildMatchReport(dweebs);
+    } catch { /* never throw */ }
+
     if (currentMode === 'build_arena') {
       $('rematch-vote')?.classList.add('hidden');
       $('btn-play-again')?.classList.add('hidden');
@@ -1557,6 +1566,54 @@ const matchEvents = {
     }
   },
 };
+
+const escName = d => String(nameOf(d) ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hexOf = d => '#' + ((d.color ?? 0xffffff) >>> 0).toString(16).padStart(6, '0').slice(-6);
+
+function buildAwardCards(match, dweebs) {
+  const mvp = dweebs.reduce((a, d) => (d.totalKos || 0) > (a?.totalKos || 0) ? d : a, null);
+  const h = match.highlights;
+  let yeet = null;
+  if (h?.launch && h.launchOn) {
+    yeet = { dweeb: h.launchBy || h.launchOn, value: Math.round(h.launch), label: `${Math.round(h.launch)} launch power` };
+  } else {
+    const air = dweebs.reduce((a, d) => (d.maxAir || 0) > (a?.maxAir || 0) ? d : a, null);
+    if (air && air.maxAir > 0) yeet = { dweeb: air, value: air.maxAir, label: `${air.maxAir.toFixed(1)}s` };
+  }
+  const showman = dweebs.reduce((a, d) => (d.stylePeak || 0) > (a?.stylePeak || 0) ? d : a, null);
+
+  const cards = [];
+  if (mvp) {
+    const color = hexOf(mvp);
+    const nameTag = `<span style="color:${color}">${escName(mvp)}</span>`;
+    cards.push(`<div class="award-card"><div class="award-emoji">🏆</div><div class="award-title">MVP</div><div class="award-name">${nameTag}</div><div class="award-value">${mvp.totalKos} KO${mvp.totalKos === 1 ? '' : 's'}</div></div>`);
+  }
+  if (yeet?.dweeb) {
+    const color = hexOf(yeet.dweeb);
+    const nameTag = `<span style="color:${color}">${escName(yeet.dweeb)}</span>`;
+    cards.push(`<div class="award-card"><div class="award-emoji">🚀</div><div class="award-title">BIGGEST YEET</div><div class="award-name">${nameTag}</div><div class="award-value">${yeet.label}</div></div>`);
+  }
+  if (showman) {
+    const color = hexOf(showman);
+    const nameTag = `<span style="color:${color}">${escName(showman)}</span>`;
+    cards.push(`<div class="award-card"><div class="award-emoji">✨</div><div class="award-title">SHOWMAN</div><div class="award-name">${nameTag}</div><div class="award-value">${Math.round(showman.stylePeak)} style</div></div>`);
+  }
+  return `<div class="award-grid">${cards.join('')}</div>`;
+}
+
+function buildMatchReport(dweebs) {
+  const rows = dweebs.map(d => {
+    const color = hexOf(d);
+    const nameTag = `<span style="color:${color}">${escName(d)}</span>`;
+    const kos = d.totalKos || 0;
+    const falls = d.totalFalls || 0;
+    const dmg = Math.round(d.damageDealt || 0);
+    const tricks = d.trickshots || 0;
+    const air = d.maxAir ? d.maxAir.toFixed(1) : '0.0';
+    return `<tr><td>${nameTag}</td><td>${kos}</td><td>${falls}</td><td>${dmg}</td><td>${tricks}</td><td>${air}s</td></tr>`;
+  }).join('');
+  return `<table class="report-table"><thead><tr><th>Dweeb</th><th>KOs</th><th>Falls</th><th>Dmg</th><th>Tricks</th><th>Air</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
 
 function bannersHtml(list) {
   return list.map(b => `<div class="banner">${b.title}<small>${b.sub}</small></div>`).join('');
