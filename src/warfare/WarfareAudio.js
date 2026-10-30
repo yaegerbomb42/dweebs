@@ -3,7 +3,7 @@
 // boss drone, win fanfare, lose trombone, UI clicks. Mute persists in localStorage.
 const KEY = 'dweebs-warfare-muted';
 const store = typeof localStorage !== 'undefined' ? localStorage : { getItem: () => null, setItem: () => {} };
-const LIMITS = { hit: 14, death: 8, pop: 6, explode: 6, fire: 8, slam: 4, grab: 4, convert: 4, fortHit: 4, recruit: 6, warhorn: 2, repair: 2, trap: 4 };
+const LIMITS = { hit: 14, death: 8, pop: 6, explode: 6, fire: 8, slam: 4, grab: 4, convert: 4, fortHit: 4, recruit: 6, warhorn: 2, repair: 2, trap: 4, burrow: 4, surface: 4 };
 
 export class WarfareAudio {
   constructor({ enabled = true } = {}) {
@@ -151,6 +151,16 @@ export class WarfareAudio {
     [523.3, 659.3, 784, 1046.5].forEach((f, i) => this._tone({ type: 'square', f0: f, dur: 0.16, vol: 0.09, at: i * 0.08, filter: 3000 }));
   }
   enrage() { if (!this.live) return; this._tone({ type: 'sawtooth', f0: 90, f1: 45, dur: 0.9, vol: 0.3, filter: 700 }); this._noise({ dur: 0.6, vol: 0.25, type: 'lowpass', f0: 800, f1: 100 }); }
+  burrow(x) { this._noise({ dur: 0.35, vol: 0.25, f0: 400, f1: 120, type: 'lowpass', q: 1.2, x }); }
+  surface(x) {
+    this._noise({ dur: 0.25, vol: 0.35, f0: 600, f1: 200, type: 'bandpass', q: 2, x });
+    this._tone({ type: 'triangle', f0: 350, f1: 180, dur: 0.2, vol: 0.15, x });
+  }
+  magnet(x) {
+    if (!this.live) return;
+    this._tone({ type: 'sine', f0: 120, f1: 60, dur: 1.2, vol: 0.25, attack: 0.3, filter: 300, x });
+    this._noise({ dur: 0.8, vol: 0.15, type: 'bandpass', f0: 800, f1: 400, q: 3, x });
+  }
   warhorn(x) {
     if (!this.live) return;
     [196, 261.6, 329.6].forEach((f, i) => this._tone({ type: 'sawtooth', f0: f * 0.99, f1: f, dur: 0.5, vol: 0.16, at: i * 0.16, attack: 0.06, filter: 1400, x }));
@@ -195,6 +205,9 @@ export class WarfareAudio {
         case 'waveStart': this.waveStart(ev.boss); break;
         case 'waveClear': this.waveClear(); break;
         case 'enrage': this.enrage(); break;
+        case 'burrow': if (this._take('burrow')) this.burrow(ev.x); break;
+        case 'surface': if (this._take('surface')) this.surface(ev.x); break;
+        case 'magnet': if (this._take('explode')) this.magnet(ev.x); break;
         case 'warhorn': if (this._take('warhorn')) this.warhorn(ev.x); break;
         case 'repair': if (this._take('repair')) this.mend(ev.x); break;
         case 'trap': if (this._take('trap')) this.trapSnap(ev.x); break;

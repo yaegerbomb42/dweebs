@@ -144,6 +144,15 @@ export class Meadowlands {
     this.locust = null;       // active swarm state while weather === 'locusts'
     this.beetleTimer = 20;    // seconds until the first friendly beetle wanders in
 
+    // Dust devil state
+    this.dustDevil = null;    // { x, z, vx, vz, radius, life, maxLife, mesh, particles }
+    this.DUSTDEVIL_RADIUS = 5.0;
+    this.DUSTDEVIL_LIFETIME = 12 + Math.random() * 6;  // 12-18s
+    this.DUSTDEVIL_FORCE_DWEEB = 8.0;   // tangential force on Dweebs
+    this.DUSTDEVIL_LIFT_DWEEB = 12.0;   // upward force on Dweebs
+    this.DUSTDEVIL_FORCE_PROP = 18.0;   // tangential force on loose props
+    this.DUSTDEVIL_LIFT_PROP = 22.0;    // upward force on loose props
+
     this._buildWorld();
     // Three visible village stockpiles around the campfire. Foragers deliver
     // berries here (or to a pile beside the nearest silo when one exists).
@@ -217,6 +226,92 @@ export class Meadowlands {
     this.group.add(this.rainDrops);
   }
 
+  /** Create the dust devil visual: a spinning cone/torus of dust particles. */
+  _createDustDevilMesh(x, z) {
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+
+    // Main dust column: a cone of particles
+    const coneCount = 180;
+    const conePositions = new Float32Array(coneCount * 3);
+    for (let i = 0; i < coneCount; i++) {
+      const h = Math.random() * 12; // height 0-12
+      const r = (1 - h / 12) * this.DUSTDEVIL_RADIUS * 1.2; // wider at bottom
+      const a = Math.random() * Math.PI * 2;
+      conePositions[i * 3] = Math.cos(a) * r;
+      conePositions[i * 3 + 1] = h;
+      conePositions[i * 3 + 2] = Math.sin(a) * r;
+    }
+    const coneGeo = new THREE.BufferGeometry();
+    coneGeo.setAttribute('position', new THREE.BufferAttribute(conePositions, 3));
+    const coneMat = new THREE.PointsMaterial({
+      color: 0xc9a876,
+      size: 0.5,
+      transparent: true,
+      opacity: 0.6,
+      vertexColors: false,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const cone = new THREE.Points(coneGeo, coneMat);
+    cone.frustumCulled = false;
+    group.add(cone);
+    this.dustDevilCone = cone;
+
+    // Ground dust ring
+    const ringGeo = new THREE.RingGeometry(this.DUSTDEVIL_RADIUS * 0.5, this.DUSTDEVIL_RADIUS, 32);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xb8956a,
+      transparent: true,
+      opacity: 0.25,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.y = 0.1;
+    group.add(ring);
+    this.dustDevilRing = ring;
+
+    // Swirling debris particles (larger chunks)
+    const debrisCount = 24;
+    const debrisPositions = new Float32Array(debrisCount * 3);
+    const debrisVel = [];
+    for (let i = 0; i < debrisCount; i++) {
+      const h = Math.random() * 8;
+      const r = (1 - h / 8) * this.DUSTDEVIL_RADIUS * 1.5;
+      const a = Math.random() * Math.PI * 2;
+      debrisPositions[i * 3] = Math.cos(a) * r;
+      debrisPositions[i * 3 + 1] = h;
+      debrisPositions[i * 3 + 2] = Math.sin(a) * r;
+      debrisVel.push({
+        angle: a,
+        radius: r,
+        height: h,
+        speed: 2 + Math.random() * 3,
+        rise: 0.5 + Math.random() * 1.5,
+      });
+    }
+    const debrisGeo = new THREE.BufferGeometry();
+    debrisGeo.setAttribute('position', new THREE.BufferAttribute(debrisPositions, 3));
+    const debrisMat = new THREE.PointsMaterial({
+      color: 0x8d7558,
+      size: 0.6,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const debris = new THREE.Points(debrisGeo, debrisMat);
+    debris.frustumCulled = false;
+    group.add(debris);
+    this.dustDevilDebris = debris;
+    this.dustDebrisVel = debrisVel;
+
+    this.group.add(group);
+    return group;
+  }
+
   /** A hungry locust swarm: one recycled Points cloud that drifts bush to bush. */
   _createLocustSwarm() {
     const count = 220;
@@ -243,13 +338,13 @@ export class Meadowlands {
   }
 
   /**
-   * Unified weather state machine: clear breaks into rain, fog, wind or locusts,
+   * Unified weather state machine: clear breaks into rain, fog, wind, locusts or a dust devil,
    * then clears. Rain triples berry growth and hurries critters; locusts devour
    * ripe bushes; fog banks roll in (thicker at night) and make torchlight the
    * village's lifeline; wind spins windmill blades twice as fast. Wired into the
-   * day/night cycle.
+   * day/night cycle. Dust devils wander the meadow, flinging Dweebs and loose props.
    */
-  _updateWeather(dt, colony) {
+  _updateWeather(dt, dweebs, colony) {
     this.weatherTimer -= dt;
     if (this.weatherTimer <= 0) this._rollWeather(colony);
     if (this.weather === 'rain' && this.rainDrops) {
@@ -262,11 +357,161 @@ export class Meadowlands {
       pos.needsUpdate = true;
     }
     if (this.weather === 'locusts') this._updateLocusts(dt, colony);
+    // Dust devil: update visual and physics
+    if (this.weather === 'dustdevil' && this.dustDevil) {
+      this._updateDustDevil(dt, dweebs, colony);
+    }
+  }
+
+  /** Update dust devil position, visual effects, and apply physics forces. */
+  _updateDustDevil(dt, dweebs, colony) {
+    const dd = this.dustDevil;
+    if (!dd) return;
+
+    dd.life -= dt;
+
+    // Wander: slowly change direction
+    dd.wandering += dt;
+    const wanderStrength = 0.8;
+    dd.vx += (Math.random() - 0.5) * wanderStrength * dt;
+    dd.vz += (Math.random() - 0.5) * wanderStrength * dt;
+    // Clamp speed
+    const speed = Math.hypot(dd.vx, dd.vz);
+    const maxSpeed = 4.5;
+    if (speed > maxSpeed) {
+      dd.vx = (dd.vx / speed) * maxSpeed;
+      dd.vz = (dd.vz / speed) * maxSpeed;
+    }
+    // Keep within meadow bounds (bounce off edges)
+    const bound = 55;
+    let bounced = false;
+    if (dd.x + dd.vx * dt > bound) { dd.vx = -Math.abs(dd.vx); bounced = true; }
+    if (dd.x + dd.vx * dt < -bound) { dd.vx = Math.abs(dd.vx); bounced = true; }
+    if (dd.z + dd.vz * dt > bound) { dd.vz = -Math.abs(dd.vz); bounced = true; }
+    if (dd.z + dd.vz * dt < -bound) { dd.vz = Math.abs(dd.vz); bounced = true; }
+    if (bounced) {
+      // Add some randomness on bounce
+      dd.vx += (Math.random() - 0.5) * 2;
+      dd.vz += (Math.random() - 0.5) * 2;
+    }
+
+    // Move
+    dd.x += dd.vx * dt;
+    dd.z += dd.vz * dt;
+    if (dd.mesh) dd.mesh.position.set(dd.x, 0, dd.z);
+
+    // Animate visual: spin the cone and debris
+    if (this.dustDevilCone) {
+      this.dustDevilCone.rotation.y += dt * 3.5; // fast spin
+      // Pulse the cone scale slightly
+      const pulse = 1 + Math.sin(this.clock * 8) * 0.08;
+      this.dustDevilCone.scale.setScalar(pulse);
+    }
+    if (this.dustDevilRing) {
+      this.dustDevilRing.rotation.y -= dt * 2.0; // counter-rotate
+      const ringPulse = 1 + Math.sin(this.clock * 6) * 0.15;
+      this.dustDevilRing.scale.setScalar(ringPulse);
+      this.dustDevilRing.material.opacity = 0.15 + Math.sin(this.clock * 10) * 0.1;
+    }
+    if (this.dustDevilDebris && this.dustDebrisVel) {
+      this.dustDevilDebris.rotation.y += dt * 5.0;
+      const posAttr = this.dustDevilDebris.geometry.attributes.position;
+      for (let i = 0; i < this.dustDebrisVel.length; i++) {
+        const dv = this.dustDebrisVel[i];
+        dv.angle += dv.speed * dt;
+        dv.height += dv.rise * dt;
+        if (dv.height > 10) {
+          dv.height = 0;
+          dv.radius = Math.random() * dd.radius * 1.5;
+          dv.angle = Math.random() * Math.PI * 2;
+        }
+        dv.radius = Math.min(dd.radius * 1.5, dv.radius + dt * 0.5); // spiral out
+        posAttr.setX(i, Math.cos(dv.angle) * dv.radius);
+        posAttr.setY(i, dv.height);
+        posAttr.setZ(i, Math.sin(dv.angle) * dv.radius);
+      }
+      posAttr.needsUpdate = true;
+    }
+
+    // Fade out near end of life
+    const lifeRatio = Math.max(0, dd.life / dd.maxLife);
+    if (lifeRatio < 0.2) {
+      const fade = lifeRatio / 0.2;
+      if (this.dustDevilCone) this.dustDevilCone.material.opacity = 0.6 * fade;
+      if (this.dustDevilRing) this.dustDevilRing.material.opacity = 0.25 * fade;
+      if (this.dustDevilDebris) this.dustDevilDebris.material.opacity = 0.7 * fade;
+    }
+
+    // Physics forces on Dweebs and loose props
+    const radiusSq = dd.radius * dd.radius;
+    const centerX = dd.x;
+    const centerZ = dd.z;
+
+    // All dweebs (citizens + player) from the passed array
+    for (const d of dweebs) {
+      if (!d || !d.body) continue;
+      const p = d.body.translation();
+      const dx = p.x - centerX;
+      const dz = p.z - centerZ;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < radiusSq && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
+        // Tangential force (orbit)
+        const tx = -dz / dist;
+        const tz = dx / dist;
+        // Swirl around the funnel and get sucked up, strongest at the core; the lift is an
+        // acceleration (not a velocity floor) and caps out, so dweebs bob and get flung out
+        // the side instead of rocketing to the sky.
+        const core = 1 - dist / dd.radius;
+        const curVel = d.body.linvel();
+        const lift = curVel.y < 7 ? this.DUSTDEVIL_LIFT_DWEEB * 4 * core * dt : 0;
+        d.body.setLinvel({
+          x: curVel.x + tx * this.DUSTDEVIL_FORCE_DWEEB * 2 * dt + (dx / dist) * 3 * dt,
+          y: curVel.y + lift,
+          z: curVel.z + tz * this.DUSTDEVIL_FORCE_DWEEB * 2 * dt + (dz / dist) * 3 * dt,
+        }, true);
+        if (!(d._dustStuntAt > this.clock - 3)) {
+          d._dustStuntAt = this.clock;
+          this._pushStunt('dustdevil', dd.x, dd.z);
+        }
+      }
+    }
+
+    // Loose props
+    if (this.looseProps) {
+      for (const prop of this.looseProps) {
+        if (!prop.body) continue;
+        const p = prop.body.translation();
+        const dx = p.x - centerX;
+        const dz = p.z - centerZ;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < radiusSq * 1.5 && distSq > 0.01) { // larger radius for props
+          const dist = Math.sqrt(distSq);
+          const tx = -dz / dist;
+          const tz = dx / dist;
+          const curVel = prop.body.linvel();
+          const lift = curVel.y < 9 ? this.DUSTDEVIL_LIFT_PROP * 3 * dt : 0;
+          prop.body.setLinvel({
+            x: curVel.x + tx * this.DUSTDEVIL_FORCE_PROP * dt,
+            y: curVel.y + lift,
+            z: curVel.z + tz * this.DUSTDEVIL_FORCE_PROP * dt,
+          }, true);
+        }
+      }
+    }
+
+    // End dust devil when lifetime expires
+    if (dd.life <= 0) {
+      this._endWeather();
+      this.weather = 'clear';
+      this.weatherTimer = 50 + Math.random() * 60;
+      colony?._addLog('🌪️ The dust devil dissipates, leaving a calm meadow behind.');
+    }
   }
 
   _rollWeather(colony) {
     const was = this.weather;
-    if (was === 'rain' || was === 'fog' || was === 'wind' || was === 'locusts') {
+    if (was === 'rain' || was === 'fog' || was === 'wind' || was === 'locusts' || was === 'dustdevil') {
       this._endWeather();
       this.weather = 'clear';
       this.weatherTimer = 50 + Math.random() * 60;
@@ -282,9 +527,11 @@ export class Meadowlands {
     const r = Math.random();
     const fogChance = this.isNight ? 0.3 : 0.15;
     const locustChance = this.isNight ? 0.04 : 0.12;
+    const dustDevilChance = 0.08; // 8% chance for a dust devil
     if (r < 0.35) this._startRain(colony);
     else if (r < 0.35 + fogChance) this._startFog(colony);
     else if (r < 0.35 + fogChance + locustChance) this._startLocusts(colony);
+    else if (r < 0.35 + fogChance + locustChance + dustDevilChance) this._startDustDevil(colony);
     else this._startWind(colony);
   }
 
@@ -303,6 +550,56 @@ export class Meadowlands {
     if (this._baseFog === undefined) this._baseFog = this.scene ? this.scene.fog : null;
     if (this.scene) this.scene.fog = new THREE.Fog(0x9fb0c3, 8, 40);
     colony?._addLog('🌫️ Fog rolls in — the village torches are the only light to trust!');
+  }
+
+  /** A dust devil spawns at a map edge and wanders across the meadow. */
+  _startDustDevil(colony) {
+    this.weather = 'dustdevil';
+    this.DUSTDEVIL_LIFETIME = 12 + Math.random() * 6; // 12-18s
+    this.weatherTimer = this.DUSTDEVIL_LIFETIME;
+
+    // Spawn at a random edge of the meadow
+    const edge = Math.floor(Math.random() * 4);
+    let x, z, vx, vz;
+    const margin = 55;
+    if (edge === 0) { // North
+      x = (Math.random() - 0.5) * 80;
+      z = -margin;
+      vx = (Math.random() - 0.5) * 1.5;
+      vz = 2 + Math.random() * 2;
+    } else if (edge === 1) { // South
+      x = (Math.random() - 0.5) * 80;
+      z = margin;
+      vx = (Math.random() - 0.5) * 1.5;
+      vz = -2 - Math.random() * 2;
+    } else if (edge === 2) { // West
+      x = -margin;
+      z = (Math.random() - 0.5) * 80;
+      vx = 2 + Math.random() * 2;
+      vz = (Math.random() - 0.5) * 1.5;
+    } else { // East
+      x = margin;
+      z = (Math.random() - 0.5) * 80;
+      vx = -2 - Math.random() * 2;
+      vz = (Math.random() - 0.5) * 1.5;
+    }
+
+    const mesh = this._createDustDevilMesh(x, z);
+    this.dustDevil = {
+      x, z, vx, vz,
+      radius: this.DUSTDEVIL_RADIUS,
+      life: this.DUSTDEVIL_LIFETIME,
+      maxLife: this.DUSTDEVIL_LIFETIME,
+      mesh,
+      wandering: 0,
+    };
+
+    colony?._addLog('🌪️ A dust devil spins up at the edge of the meadow — watch your step!');
+    if (this.fx) {
+      this.fx.windGustFx?.(Math.atan2(vz, vx));
+      this.fx.audio?.playWhoosh?.(0, 0.8);
+      this.fx.cam?.shake?.(0.15);
+    }
   }
 
   /** A locust swarm descends on the berry fields and starts chewing. */
@@ -340,6 +637,22 @@ export class Meadowlands {
     if (this.locustSwarm) this.locustSwarm.visible = false;
     this.locust = null;
     if (this.scene && this._baseFog !== undefined) this.scene.fog = this._baseFog;
+    // Clean up dust devil
+    if (this.dustDevil && this.dustDevil.mesh) {
+      this.group.remove(this.dustDevil.mesh);
+      this.dustDevil.mesh.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+          else obj.material.dispose();
+        }
+      });
+      this.dustDevil = null;
+      this.dustDevilCone = null;
+      this.dustDevilRing = null;
+      this.dustDevilDebris = null;
+      this.dustDebrisVel = null;
+    }
   }
 
   /** Nearest berry bush that still has ripe berries for the swarm to chew. */
@@ -2557,7 +2870,7 @@ export class Meadowlands {
     const prevTod = this.timeOfDay;
     this._updateDayNight(dt);
     if (this.timeOfDay < prevTod) this._onNewDay(colony);
-    this._updateWeather(dt, colony);
+    this._updateWeather(dt, dweebs, colony);
     this._updateSupplyPiles(dt, dweebs);
     this._updateHaulProps(dt);
     this._updateBushRegrowth(dt, colony);

@@ -145,6 +145,7 @@ export class Arena {
   constructor(scene, physicsWorld) {
     this.scene = scene;
     this.physicsWorld = physicsWorld;
+    this.combat = null;       // set by CombatSystem (round-reset cleanup)
     this.objects = [];        // InteractiveObject instances (and debris)
     this.segments = [];       // crumbling outer ring tiles
     this.platforms = [];      // { x, z, hw, hd, top }
@@ -2649,6 +2650,7 @@ export class Arena {
   }
 
   reset() {
+    this.combat?.clearIcePatches?.();
     for (const obj of [...this.objects]) this.removeObject(obj);
     this.objects = [];
     this.physicsWorld.debrisCount = 0;
