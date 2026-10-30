@@ -300,8 +300,11 @@ export class Hud {
       this.chargeFill.style.width = `${Math.round(player.charging * 100)}%`;
       this.chargeEl.classList.toggle('full', player.charging >= 1);
     } else this.chargeEl.classList.remove('show');
-    this.holdEl.classList.toggle('show', !!player?.held);
-    if (player?.held) {
+    const grabbed = !!player?.grabbedBy;
+    this.holdEl.classList.toggle('show', !!player?.held || grabbed);
+    if (grabbed) {
+      this.holdEl.innerHTML = '<kbd>SPACE</kbd>/<kbd>LMB</kbd>/<kbd>E</kbd> MASH TO BREAK FREE!';
+    } else if (player?.held) {
       const gadget = player.held.ref.def?.gadget;
       if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'magnet') this.holdEl.innerHTML = '<kbd>LMB</kbd> MAGNET PULL · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';

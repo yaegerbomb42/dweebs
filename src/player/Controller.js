@@ -48,6 +48,12 @@ export class Controller {
     this.keys[e.code] = true;
     if (!this.live || e.repeat) return;
     const d = this.dweeb;
+    // Captured: Space/E become struggle presses instead of actions.
+    if (d.grabbedBy && (e.code === 'Space' || e.code === 'KeyE')) {
+      d.mashEscape?.();
+      e.preventDefault();
+      return;
+    }
     switch (e.code) {
       case 'Space':
         // Down + jump on a floating platform slips you through it instead of hopping.
@@ -84,8 +90,14 @@ export class Controller {
 
   _onMouseDown(e) {
     if (!this.live) return;
+    const d = this.dweeb;
+    // Captured: LMB is another struggle press.
+    if (d.grabbedBy && e.button === 0) {
+      d.mashEscape?.();
+      e.preventDefault();
+      return;
+    }
     if (e.button === 0) {
-      const d = this.dweeb;
       // In the air with empty hands, LMB is an aerial: S+LMB slams straight down,
       // otherwise you commit to a drop-kick.
       if (!d.grounded && !d.held) {

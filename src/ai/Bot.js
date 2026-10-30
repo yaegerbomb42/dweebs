@@ -33,6 +33,7 @@ export class Bot {
     this.strafeTimer = 0;
     this.jumpCd = 0;
     this.recoverJumpCd = 0;
+    this.mashTimer = 0;
 
     // Personality
     this.grudge = 0.5 + Math.random();
@@ -74,11 +75,16 @@ export class Bot {
     d.fastFallInput = !d.grounded && vel.y < 0 && below && this.arena.isOverGround(pos.x, pos.z, 0.6) &&
       Math.random() < this.p.aggression;
 
-    // Held by someone: wriggle!
+    // Held by someone: struggle at a steady rate that scales with aggression.
     if (d.grabbedBy) {
-      if (Math.random() < dt * 6 * (0.5 + this.p.aggression)) d.escapeTimer -= 0.06;
+      this.mashTimer += dt * (0.5 + this.p.aggression * 0.6); // ~2.5-3.5 presses/s
+      while (this.mashTimer >= 0.3) {
+        this.mashTimer -= 0.3;
+        d.mashEscape?.();
+      }
       return;
     }
+    this.mashTimer = 0;
 
     // ── Hanging off the lip: climb after a beat ──
     if (d.ledge) {

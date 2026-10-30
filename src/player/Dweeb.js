@@ -59,6 +59,9 @@ export class Dweeb {
     this.held = null;           // { kind: 'object'|'dweeb', ref }
     this.grabbedBy = null;
     this.escapeTimer = 0;
+    this.escapeMash = 0;        // built up by mashing while grabbed; speeds the escape
+    this.escapeMashDecay = 2.5;   // how fast escapeMash bleeds off (per second)
+    this.mashWordCd = 0;
     this.flashTimer = 0;
     this.diBudget = 0;          // Δv left to steer this launch with (directional influence)
     this.landLag = 0;
@@ -963,6 +966,9 @@ export class Dweeb {
 
   setGrabbed(holder) {
     this.grabbedBy = holder;
+    this.escapeMash = 0;
+    this.escapeMashDecay = 2.5;
+    this.mashWordCd = 0;
     if (holder) {
       this.escapeTimer = (1.4 + this.percent * 0.008) * this.stats.escape;
       this.charging = 0;
@@ -972,6 +978,14 @@ export class Dweeb {
       this.body.setGravityScale(this._grav(1), true);
       this.collider.setCollisionGroups(this.defaultGroups);
     }
+  }
+
+  /** A grab/jump/attack press while captured: build up struggle. */
+  mashEscape() {
+    if (!this.grabbedBy) return false;
+    this.escapeMash = Math.min(5, (this.escapeMash || 0) + 1);
+    this.escapeMashDecay = 2.5;
+    return true;
   }
 
   applyPowerUp(kind) {
@@ -1065,6 +1079,9 @@ export class Dweeb {
     this.sugarTimer = 0;
     this.lastHitBy = null;
     this.grabbedBy = null;
+    this.escapeMash = 0;
+    this.escapeMashDecay = 2.5;
+    this.mashWordCd = 0;
     this.punchStreak = 0;
     this.punchStreakT = -99;
     this.body.setEnabled(true);

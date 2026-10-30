@@ -1065,13 +1065,29 @@ export class CombatSystem {
       t.body.setTranslation({ x: pos.x, y: pos.y + 1.15 * s, z: pos.z }, true);
       t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       t.yaw = d.yaw + Math.PI / 2;
-      t.escapeTimer -= dt;
+      const mash = Math.max(0, t.escapeMash || 0);
+      const mashedOut = mash > 0;
+      t.escapeTimer -= dt * (1 + mash * 0.4); // full mash (5) = 3x faster escape
+      t.escapeMash = Math.max(0, mash - dt * (t.escapeMashDecay || 2.5));
+      if (mash > 0) {
+        t.mashWordCd = (t.mashWordCd || 0) - dt;
+        if (t.mashWordCd <= 0) {
+          t.mashWordCd = 0.22;
+          this.fx?._toyWord?.('MASH!', t.getPosition(), t.color ?? 0xffd23f, 'small');
+          if (t.isPlayer || d.isPlayer) this.fx?.cam?.shake?.(0.04 + Math.min(0.06, mash * 0.012));
+        }
+      }
       if (t.escapeTimer <= 0) {
         // Wriggled free!
         this.drop(d);
         t.body.setLinvel({ x: -f.x * 5, y: 7, z: -f.z * 5 }, true);
         d.hitstun = 0.35;
         this.fx.escape(t);
+        if (mashedOut) {
+          this.addStyle(t, 10, 'MASH-OUT');
+          this.fx?._toyWord?.('MASH-OUT!', t.getPosition(), 0x5ee06a, 'big');
+          if (t.isPlayer || d.isPlayer) this.fx?.cam?.shake?.(0.25);
+        }
       }
       return;
     }
