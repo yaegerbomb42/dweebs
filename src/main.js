@@ -25,6 +25,7 @@ import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
+import { ComboDirector } from './game/ComboDirector.js';
 import { Sky, Water } from './render/Sky.js';
 import { Particles } from './render/Particles.js';
 import { Trails, Bursts, Decals } from './render/Juice.js';
@@ -102,6 +103,7 @@ let paused = false;
 let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
+let comboDirector = null; // hit chains / juggles / assists (game/ComboDirector.js)
 let rematch = null;
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
@@ -180,6 +182,8 @@ async function init() {
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  comboDirector = new ComboDirector({ hud, audio, particles });
+  fx.combo = comboDirector;
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
   match = new Match();
@@ -978,6 +982,7 @@ function startRound() {
   arena.hazardsActive = false;
   arena.reset();
   resetSuddenDeathFx();
+  comboDirector?.reset?.();
   hud.clearTransient();
   trails.clear();
   bursts.clear();
@@ -1074,6 +1079,7 @@ const matchEvents = {
   onKO(d, credited, kind, pos) {
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
+    comboDirector?.registerKO?.(d, credited, performance.now() / 1000);
     if (deathCinema) {
       let cause = 'VAPORIZED IN THE VOID';
       if (kind === 'splash') cause = 'DROWNED IN THE LAGOON';
@@ -1358,6 +1364,7 @@ function loop() {
 
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
+  comboDirector?.update?.(rawDt);
   const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
 
   if (inGame && dweebs.length) {
