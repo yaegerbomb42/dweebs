@@ -112,6 +112,14 @@ export const OBJECT_DEFS = {
     material: 'rubber', mass: 1.8, grabbable: true, throwable: true,
     breakable: false, breakForce: 10000, damage: 0.7, color: 0x333333,
   },
+  trampoline: {
+    name: 'Trampoline',
+    shape: 'cylinder', dims: { halfHeight: 0.12, radius: 0.7 },
+    visualScale: [1.4, 0.24, 1.4],
+    material: 'rubber', mass: 2.2, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.8, color: 0x3fa9ff,
+    bouncy: { vel: 17, propVel: 12, cd: 0.25 },
+  },
   trafficCone: {
     name: 'Traffic Cone',
     shape: 'cylinder', dims: { halfHeight: 0.3, radius: 0.15 },
