@@ -48,6 +48,8 @@ export class Bot {
     this.strafeTimer = 0;
     this.jumpCd = 0;
     this.recoverJumpCd = 0;
+    this.hill = null;          // { x, z, r } in King of the Hill (set by main each round)
+    this.hillCommit = false;
 
     // Personality
     this.grudge = 0.5 + Math.random();
@@ -177,6 +179,9 @@ export class Bot {
       return;
     }
 
+    // ── King of the Hill: run for the zone unless a rival is right here to fight ──
+    if (this.hill && this.hillCommit && this._hillRun(dweebs, pos)) return;
+
     // ── Go for an item or power-up ──
     if (this.goal) {
       const gp = this.goal.type === 'powerup' ? this.goal.ref.group.position : this.goal.ref.body && this.goal.ref.getPosition();
@@ -205,8 +210,30 @@ export class Bot {
     this._brawl(dt, pos, t);
   }
 
+  /** Steer onto the hill (mirrors sim/bot.js _hillRun): fight if someone is close, else take the zone. */
+  _hillRun(dweebs, pos) {
+    const d = this.dweeb, h = this.hill;
+    for (const o of dweebs) {
+      if (o === d || !o.active) continue;
+      if (d.team != null && o.team === d.team) continue;
+      const op = o.getPosition();
+      if (Math.hypot(op.x - pos.x, op.z - pos.z) < 3.5) return false;   // someone to fight: brawl
+    }
+    const dist = Math.hypot(h.x - pos.x, h.z - pos.z);
+    // Inside: drift toward the middle (and strafe a little so they don't stack on one pixel)
+    if (dist < h.r * 0.55) {
+      d.moveInput.set(0.25 * this.strafe, 0);
+      return true;
+    }
+    this._steerTo(h.x, h.z, 1);
+    this._edgeGuard(pos);
+    return true;
+  }
+
   _think(dweebs, pos) {
     const d = this.dweeb;
+    // Hill commitment is re-rolled every think: aggressive bots camp, easy bots wander off
+    if (this.hill) this.hillCommit = Math.random() < 0.35 + this.p.aggression * 0.65;
     // Pick a target
     let best = null, bestScore = -Infinity;
     for (const o of dweebs) {
