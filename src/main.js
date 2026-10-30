@@ -792,6 +792,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   ];
 
   controller = new Controller(player, cam, combat);
+  controller.onPausePressed = () => { if (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN || paused) setPaused(!paused); };
   controller.enabled = false;
 
   combat.setDweebs(dweebs);
@@ -861,6 +862,7 @@ function startMatch() {
   for (const d of dweebs) wireDweeb(d);
 
   controller = new Controller(player, cam, combat);
+  controller.onPausePressed = () => { if (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN || paused) setPaused(!paused); };
   combat.setDweebs(dweebs);
   // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
@@ -1334,6 +1336,7 @@ function loop() {
   const inGame = match.phase !== Phase.MENU && match.phase !== Phase.RESULTS;
 
   if (paused) {
+    controller?.pollPadWhilePaused?.(); // Start on a gamepad unpauses
     effect.render(scene, camera);
     return;
   }
