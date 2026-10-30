@@ -36,6 +36,7 @@ import { statsFor, BALANCE } from './game/Balance.js';
 import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
+import { loadWardrobe, applyWardrobe, syncOwned, cycle as cycleWardrobe, buildWardrobeRack, refreshRack } from './world/Cosmetics.js';
 import { BuildingManager } from './adventure/building.js';
 import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
@@ -56,6 +57,8 @@ let lastBuilderOppType = 'random';
 
 let currentMeadowlands = null;
 let colony = null;
+let wardrobe = null, wardrobeRack = null, wardrobeSyncT = 0; // vault cosmetics (hats/tools)
+const WARDROBE_POS = { x: -3.2, z: -4.2 };
 let buildingManager = null;
 let currentEscapeSandbox = null;
 let currentMimicLab = null;
@@ -225,6 +228,7 @@ async function init() {
   cam.snapTo(0, 1, 0);
   setupMenu();
   window.addEventListener('resize', onResize);
+  window.addEventListener('keydown', onWardrobeKey);
   document.addEventListener('pointerlockchange', onPointerLockChange);
   canvas.addEventListener('click', (e) => {
     if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) {
@@ -464,6 +468,7 @@ function applyAudioSettings() {
 }
 
 function toMenu() {
+  $('wardrobe-prompt')?.remove(); wardrobeRack = null;
   if (currentMeadowlands) {
     if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
     currentMeadowlands.dispose();
@@ -851,6 +856,7 @@ function startMatch() {
   const myColor = PALETTE[settings.color] ?? PALETTE.yellow;
   player = new Dweeb(scene, physics, { isPlayer: true, name: 'You', type: settings.type, color: myColor, index: 0, position: arena.getSpawnPoint(0, total) });
   dweebs.push(player);
+  applyWardrobe(player);
   for (let i = 0; i < botCount; i++) {
     // A bot wearing the player's colour swaps into the yellow the player gave up
     const r = ROSTER[i].color === myColor ? { ...ROSTER[i], color: PALETTE.yellow } : ROSTER[i];
@@ -866,6 +872,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'wardrobe', { get: () => ({ wardrobe, wardrobeRack, colony }), configurable: true });
   fx.player = player;
   hud.setup(dweebs);
 
@@ -915,6 +922,14 @@ function startMatch() {
       const restored = applySave(savedVillage, { colony, buildingManager, world: currentMeadowlands });
       colony._addLog(`📂 Welcome back! Restored ${restored.citizens} citizens and ${restored.structures} structures.`);
     }
+    try {
+      wardrobe = loadWardrobe();
+      syncOwned(wardrobe, colony);
+      const wy = currentMeadowlands._getHeight?.(WARDROBE_POS.x, WARDROBE_POS.z) ?? 0;
+      wardrobeRack = buildWardrobeRack(currentMeadowlands.group, WARDROBE_POS.x, wy, WARDROBE_POS.z);
+      refreshRack(wardrobeRack, wardrobe);
+      if (player) applyWardrobe(player, wardrobe);
+    } catch (e) { console.warn('[wardrobe]', e); wardrobeRack = null; }
 
     for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
     $('hud')?.classList.remove('hidden');
@@ -1422,6 +1437,7 @@ function loop() {
       buildingManager.updatePlaced(rawDt, dweebs);
     }
     currentMeadowlands.update(dt, dweebs, colony);
+    updateWardrobe(dt);
 
     // Gently rescue any dweeb that falls below the map
     for (const d of dweebs) {
@@ -1584,6 +1600,50 @@ function loop() {
 }
 
 /** Turn physics impacts into sound, dust and breakage. */
+function nearWardrobe() {
+  if (!currentMeadowlands || !wardrobeRack || !player) return false;
+  const p = player.getPosition();
+  return Math.hypot(p.x - WARDROBE_POS.x, p.z - WARDROBE_POS.z) < 2.8;
+}
+
+function updateWardrobe(dt) {
+  if (!wardrobe || !colony) return;
+  wardrobeSyncT -= dt;
+  if (wardrobeSyncT <= 0) {
+    wardrobeSyncT = 1;
+    const fresh = syncOwned(wardrobe, colony);
+    if (fresh.length) {
+      hud.announce('NEW COSMETIC!', fresh.join(' · ') + ' — try it on at the wardrobe', 2);
+      if (wardrobeRack) refreshRack(wardrobeRack, wardrobe);
+    }
+  }
+  let el = $('wardrobe-prompt');
+  const near = nearWardrobe();
+  if (near && !el) {
+    el = document.createElement('div');
+    el.id = 'wardrobe-prompt';
+    el.style.cssText = 'position:fixed;left:50%;bottom:190px;transform:translateX(-50%);background:rgba(27,16,48,.85);color:#fff;font:900 16px Nunito,sans-serif;padding:10px 18px;border-radius:12px;border-left:6px solid #ffd23f;z-index:90;pointer-events:none';
+    document.body.appendChild(el);
+  }
+  if (el) {
+    el.style.display = near ? 'block' : 'none';
+    if (near) el.textContent = (wardrobe.hats.length || wardrobe.tools.length)
+      ? `👒 WARDROBE · [H] hat: ${wardrobe.hat || 'none'} · [T] tool: ${wardrobe.tool || 'none'}`
+      : '👒 WARDROBE · Open ancient vaults to find hats and tools!';
+  }
+}
+
+function onWardrobeKey(e) {
+  if (e.repeat || !nearWardrobe() || !wardrobe) return;
+  const slot = e.code === 'KeyH' ? 'hat' : e.code === 'KeyT' ? 'tool' : null;
+  if (!slot) return;
+  const name = cycleWardrobe(wardrobe, slot);
+  if (name === undefined) return;
+  applyWardrobe(player, wardrobe);
+  hud.popup(name ? name.toUpperCase() + '!' : 'BARE ' + (slot === 'hat' ? 'HEAD' : 'HANDS'), player.getPosition(), 'small', 0xffd23f);
+  audio.playUIClick?.();
+}
+
 function handleImpacts() {
   impactBudget = 6;
   const list = physics.getImpacts().sort((a, b) => b.speed - a.speed);
