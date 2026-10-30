@@ -45,6 +45,7 @@ const START_ITEMS = [
   ['pinata', 9, 1, -5],
   ['freezeRay', 3.5, 1, 4.5],
   ['magnet', -3.5, 1, -4.5],
+  ['extinguisher', 0, 1, -3.5],
   ['boxingGlove', 2.1, 1, -2.2],
   ['chatteringTeeth', -2.5, 1, 7.5],
   ['chatteringTeeth', 3.5, 1, -7.5],
@@ -70,6 +71,7 @@ export const DROP_ITEMS = [
   // rare: the KO makers
   { key: 'giantHammer', w: 1.5 }, { key: 'toyRocket', w: 1.5 }, { key: 'explosiveBarrel', w: 1.5 }, { key: 'anvil', w: 1 },
   // gadget weapons: uncommon, capped by the live-item guard rather than RARE
+  { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'extinguisher', w: 2 },
   { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'leafBlower', w: 2 },
   { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'grappleGlove', w: 2 },
   // fast hands: low launch, huge cadence

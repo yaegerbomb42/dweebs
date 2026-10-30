@@ -312,6 +312,14 @@ export const OBJECT_DEFS = {
     breakable: false, breakForce: 50000, damage: 0.8, color: 0xff9a3c,
     gadget: 'magnet',
   },
+  extinguisher: {
+    name: 'Fire Extinguisher',
+    shape: 'cylinder', dims: { halfHeight: 0.3, radius: 0.13 },
+    visualScale: [0.26, 0.6, 0.26],
+    material: 'metal', mass: 1.3, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.7, color: 0xe8242f,
+    gadget: 'extinguisher',
+  },
   leafBlower: {
     name: 'Turbo Leaf Blower',
     shape: 'box', dims: { hx: 0.2, hy: 0.2, hz: 0.34 },

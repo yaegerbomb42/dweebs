@@ -669,6 +669,34 @@ const BUILDERS = {
     k.eye([0.06, 0.0, 0.12], [0.4, 0.2, 1], 0.035);
   },
 
+  extinguisher(k) {
+    const red = 0xe8242f, dark = 0x1b1030, silver = 0xc9d3e6;
+    // Red tank with a rounded shoulder, black base ring and a white label band.
+    k.add(Cyl(0.11, 0.115, 0.44, 12), red, { p: [0, -0.04, 0] });
+    k.add(Ico(0.11, 1), red, { p: [0, 0.18, 0], s: [1, 0.5, 1] });
+    k.add(Cyl(0.118, 0.12, 0.035, 12), dark, { p: [0, -0.26, 0] });
+    k.add(Cyl(0.114, 0.114, 0.14, 12), W, { p: [0, -0.05, 0] });
+    // Silver valve and squeeze handle on top.
+    k.add(Cyl(0.045, 0.055, 0.08, 8), silver, { p: [0, 0.24, 0] });
+    k.add(Cyl(0.032, 0.032, 0.06, 8), silver, { p: [0, 0.29, 0] });
+    k.add(B(0.2, 0.028, 0.05, 0.01), silver, { p: [0, 0.32, 0] });
+    k.add(B(0.16, 0.024, 0.04, 0.01), dark, { p: [0.02, 0.345, 0], r: [0, 0, 0.08] });
+    // Black hose curling down the side to a forward-facing nozzle.
+    const hose = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.09, 0.23, 0),
+      new THREE.Vector3(0.19, 0.16, 0.02),
+      new THREE.Vector3(0.21, 0.0, 0.06),
+      new THREE.Vector3(0.18, -0.18, 0.1),
+      new THREE.Vector3(0.09, -0.22, 0.18),
+      new THREE.Vector3(0.02, -0.12, 0.24),
+      new THREE.Vector3(0, 0.02, 0.27),
+    ]);
+    k.add(new THREE.TubeGeometry(hose, 18, 0.022, 6), dark);
+    k.add(Cyl(0.028, 0.04, 0.1, 8), dark, { p: [0, 0.02, 0.31], r: [PI / 2, 0, 0] });
+    k.add(Tor(0.04, 0.012, 3, 10), silver, { p: [0, 0.02, 0.355] });
+    k.eye([-0.045, 0.1, 0.1], [-0.25, 0.15, 1], 0.03);
+    k.eye([0.045, 0.1, 0.1], [0.25, 0.15, 1], 0.03);
+  },
   leafBlower(k) {
     const orange = 0xff8a1f, dark = 0x2d2a3a, green = 0x5ee06a;
     // Chunky motor housing, a fat blower tube with a flared nozzle, a pull-cord and a big trigger.

@@ -341,6 +341,7 @@ export class Hud {
       if (player.catchWindow > 0) this.holdEl.innerHTML = '<b>CAUGHT!</b> <kbd>LMB</kbd>/<kbd>RMB</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'magnet') this.holdEl.innerHTML = '<kbd>LMB</kbd> MAGNET PULL · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
+      else if (gadget === 'extinguisher') this.holdEl.innerHTML = '<kbd>LMB</kbd> EXTINGUISHER · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (player.held.ref.isWeapon) {
         const wname = { spiky: 'spiky ball', glove: 'boxing glove' }[player.held.ref.def.weapon] || player.held.ref.def.weapon;
         this.holdEl.innerHTML = `<kbd>LMB</kbd> swing ${wname} · <kbd>RMB</kbd> throw · <kbd>Q</kbd> drop`;
