@@ -354,6 +354,66 @@ const MOODS_DEV = ['grumpy', 'calm', 'smug', 'worried'];
 
 // ─── Menu ───
 
+// ─── Quick Chaos + More drawer ───
+// The lobby shows 5 modes / 7 arenas; GAME_MODES and ARENAS hold far more. Quick Chaos
+// rolls a brawler mode and a compatible arena; MORE reveals everything else in-place.
+const CHAOS_POOL = ['brawl', 'derby', 'hill', 'teams', 'sudden', 'walldrop'];
+
+function quickChaos(syncArena) {
+  audio.playUIClick();
+  const mode = CHAOS_POOL[Math.floor(Math.random() * CHAOS_POOL.length)];
+  const def = GAME_MODES[mode];
+  const pool = (def?.arenas || [def?.arena || 'stadium']).filter(id => ARENAS.some(a => a.id === id));
+  const arenaId = pool[Math.floor(Math.random() * pool.length)] || 'stadium';
+  settings.mode = mode;
+  settings.arena = arenaId;
+  saveSettings();
+  for (const seg of document.querySelectorAll('.seg[data-setting="mode"], .seg[data-setting="arena"]')) {
+    const key = seg.dataset.setting;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === settings[key]));
+  }
+  syncArena?.();
+  const a = arenaById(arenaId);
+  const btn = $('btn-chaos');
+  if (btn) btn.textContent = `🎲 ${def?.name || mode} @ ${a.icon} ${a.name}`;
+  // A beat to read the roll, then go
+  setTimeout(() => { startMatch(); if (btn) btn.textContent = '🎲 QUICK CHAOS'; }, 650);
+}
+
+function buildMoreDrawer() {
+  const add = (seg, items) => {
+    if (!seg || !items.length) return;
+    const have = new Set([...seg.querySelectorAll('button')].map(b => b.dataset.v));
+    const fresh = items.filter(i => !have.has(i.v));
+    if (!fresh.length) return;
+    for (const i of fresh) {
+      const b = document.createElement('button');
+      b.dataset.v = i.v; b.title = i.title || ''; b.textContent = i.label;
+      b.classList.add('more-item'); b.style.display = 'none';
+      b.classList.toggle('on', settings[seg.dataset.setting] === i.v);
+      seg.appendChild(b);
+    }
+    const more = document.createElement('a');
+    more.href = '#'; more.className = 'more-toggle';
+    more.textContent = `+${fresh.length} MORE`;
+    more.style.cssText = 'font-weight:900;font-size:13px;margin-left:6px;align-self:center;color:inherit;text-decoration:underline;cursor:pointer';
+    more.addEventListener('click', e => {
+      e.preventDefault(); e.stopPropagation();
+      const open = more.dataset.open !== '1';
+      more.dataset.open = open ? '1' : '0';
+      seg.querySelectorAll('.more-item').forEach(b => { b.style.display = open ? '' : 'none'; });
+      more.textContent = open ? 'LESS' : `+${fresh.length} MORE`;
+      audio.playUIClick();
+    });
+    seg.appendChild(more);
+  };
+  const modeLabels = { hill: '👑 King of the Hill', teams: '🤝 Teams', sudden: '💀 Sudden Death', escape: '🏝️ Escape', mimic: '🎭 Mimic' };
+  add(document.querySelector('.seg[data-setting="mode"]'),
+    ['hill', 'teams', 'sudden'].filter(id => GAME_MODES[id]).map(id => ({ v: id, label: modeLabels[id] || GAME_MODES[id].name, title: GAME_MODES[id].tagline })));
+  add(document.querySelector('.seg[data-setting="arena"]'),
+    ARENAS.map(a => ({ v: a.id, label: `${a.icon || ''} ${a.name}`.trim(), title: a.blurb })));
+}
+
 function setupMenu() {
   const unlockAudio = () => { audio.init(); audio.resume(); applyAudioSettings(); };
   document.addEventListener('pointerdown', unlockAudio, { once: false });
@@ -387,6 +447,8 @@ function setupMenu() {
   for (const b of document.querySelectorAll('.btn')) b.addEventListener('mouseenter', () => audio.playUIHover());
 
   $('btn-play').onclick = () => { audio.playUIClick(); startMatch(); };
+  $('btn-chaos')?.addEventListener('click', () => quickChaos(syncArena));
+  buildMoreDrawer();
   $('btn-how').onclick = () => { audio.playUIClick(); $('how-to-play').classList.remove('hidden'); };
   $('btn-close-help').onclick = () => { audio.playUIClick(); $('how-to-play').classList.add('hidden'); };
   $('btn-resume').onclick = () => { audio.playUIClick(); setPaused(false); cam.lock(); };
