@@ -4,7 +4,7 @@
 // through queued blueprints), capped resource stores with silo overflow, and the
 // vault loot that citizens bring home — gold coins, cosmetic hats, special tools.
 
-import { Citizen, PERSONALITIES, ROLES, CITIZEN_STATES } from './citizen.js';
+import { Citizen, PERSONALITIES, ROLES, CITIZEN_STATES, ROLE_XP_LEVELS } from './citizen.js';
 import { BLUEPRINTS, SILO_CAP_BONUS } from './building.js';
 
 /**
@@ -24,6 +24,7 @@ export const TOWN_TIERS = [
 export const CORE_BLUEPRINTS = [
   'springboard', 'ramp', 'tent', 'firepit', 'catapult',
   'launchpad', 'ziptower', 'berrymill', 'silo', 'cannon',
+  'tradepost', 'bakery', 'garden',
 ];
 
 export class Colony {
@@ -50,7 +51,16 @@ export class Colony {
     this.hats = [];   // cosmetic hats won from treasure vaults
     this.tools = [];  // special tools won from treasure vaults
     this.buildQueue = []; // blueprint ids waiting for a Builder
+    // Transient build claims: blueprintId -> Citizen currently working on it.
+    // Prevents two Builders from hammering the same blueprint into two
+    // structures (and paying the cost twice). Never serialized.
+    this._buildClaims = new Map();
     this.expeditionTimer = 0;
+    // Berry Harvest Festival: thrown every 3rd day at dusk when the village
+    // can spare 10 berries. Everyone drops work to dance; friendships form 3x
+    // as fast while it lasts. Transient — never serialized.
+    this.festival = { active: false, timer: 0 };
+    this.lastFestivalDay = -1;
 
     // Town tier (Expedition & Dynasty milestone): Hamlet → Village → Town → Citadel.
     this.tierIndex = 0;
@@ -181,11 +191,45 @@ export class Colony {
   }
 
   /**
+   * Claim the next queued blueprint a Builder can actually afford, for that
+   * Builder. Returns the blueprint id, or null when nothing is claimable
+   * (empty queue, everything already claimed, or nothing affordable).
+   * Any previous claim held by this citizen is released first.
+   */
+  claimBuild(citizen) {
+    this.releaseBuild(citizen);
+    for (const id of this.buildQueue) {
+      if (this._buildClaims.has(id)) continue;
+      const bp = BLUEPRINTS.find(b => b.id === id);
+      if (!bp) continue;
+      let affordable = true;
+      for (const [res, count] of Object.entries(bp.cost || {})) {
+        if ((this.resources[res] || 0) < count) { affordable = false; break; }
+      }
+      if (!affordable) continue;
+      this._buildClaims.set(id, citizen);
+      return id;
+    }
+    return null;
+  }
+
+  /** Release any build claim held by a citizen (interrupted, done, re-picking). */
+  releaseBuild(citizen) {
+    for (const [id, c] of this._buildClaims) {
+      if (c === citizen) this._buildClaims.delete(id);
+    }
+  }
+
+  /**
    * A Builder finished hammering: pay the cost and raise the structure.
    * Called with the world so the structure can register its physics hooks.
+   * sitePos (optional) is where the Builder actually hammered — the structure
+   * rises there instead of the auto-picked clearing. builder (optional)
+   * releases that citizen's build claim.
    * Returns true when the build completed.
    */
-  _completeBuild(blueprintId, world) {
+  _completeBuild(blueprintId, world, sitePos = null, builder = null) {
+    if (builder) this.releaseBuild(builder);
     const bp = BLUEPRINTS.find(b => b.id === blueprintId);
     if (!bp) {
       this.cancelBuild(blueprintId);
@@ -204,8 +248,17 @@ export class Colony {
     for (const [res, count] of Object.entries(bp.cost)) {
       this.resources[res] -= count;
     }
-    const pos = this._nextBuildSite(world);
+    // The structure rises where the Builder hammered (sitePos), or at the
+    // auto-picked clearing when the build was triggered without a worker.
+    const pos = sitePos
+      ? { x: sitePos.x, y: sitePos.y, z: sitePos.z }
+      : this._nextBuildSite(world);
     const structure = world.buildingManager._instantiateStructure(bp.id, pos, world);
+    // Builder mastery L3: structures raised by a master builder are 25% tougher.
+    if (builder && builder.roleLevel >= 3 && typeof structure.maxHp === 'number') {
+      structure.maxHp = Math.round(structure.maxHp * 1.25);
+      structure.hp = structure.maxHp;
+    }
     if (bp.id === 'silo' && this.storageCap) {
       for (const res of ['wood', 'berries', 'stone']) {
         this.storageCap[res] = (this.storageCap[res] || 0) + SILO_CAP_BONUS;
@@ -245,17 +298,39 @@ export class Colony {
     return true;
   }
 
+  /**
+   * Send a citizen out on an expedition to a real point of interest. The haul
+   * is NOT granted up front — the citizen carries a pending haul and the
+   * colony collects it when they actually arrive (see Citizen._executeGoal
+   * EXPEDITION). Expeditions feel earned instead of free.
+   */
   launchExpedition(world) {
     if (!this.citizens.length) return;
     const actor = this.citizens[Math.floor(Math.random() * this.citizens.length)];
+    // Same landmarks the curiosity-driven expeditions walk to.
+    const pois = [
+      { x: 0, z: -32, y: 1.2, label: 'the Ancient Ruin' },
+      { x: 28, z: 5, y: 3.5, label: 'the Lookout Bluff' },
+      { x: -2, z: -62, y: 2.0, label: 'the Crystal Hollow' },
+      { x: 1, z: -63, y: 2.0, label: 'the Geyser Gorge' },
+      { x: -17, z: -14, y: 1.5, label: 'the Old Wooden Bridge' },
+      { x: -36, z: -22, y: 1.0, label: 'the Gauntlet of Springs' },
+      { x: 26, z: 24, y: 1.0, label: 'the Sentry Vault Ruin' },
+    ];
+    const poi = pois[Math.floor(Math.random() * pois.length)];
     actor.state = CITIZEN_STATES.EXPEDITION;
+    actor.targetPos.set(
+      poi.x + (Math.random() - 0.5) * 4, poi.y, poi.z + (Math.random() - 0.5) * 4,
+    );
+    actor.stateTimer = 30;
+    actor._expeditionHaul = {
+      poi: poi.label,
+      dest: { x: poi.x, y: poi.y, z: poi.z },
+      items: { berries: 4, wood: 2, stone: 2, gold: 1 },
+    };
+    actor.activityText = `Heading out on an expedition to ${poi.label}! 🧭`;
     actor.say?.('Heading out on an expedition! 🧭', '🧭', 3);
-    const silos = this._silosFrom(world);
-    this.addResource('berries', 4, silos);
-    this.addResource('wood', 2, silos);
-    this.addResource('stone', 2, silos);
-    this.addResource('gold', 1, silos);
-    this._addLog(`🧭 Expedition launched! ${actor.name} explored the wilderness: +4 🍓, +2 🪵, +2 🪨, +1 🪙!`);
+    this._addLog(`🧭 ${actor.name} set out on an expedition to ${poi.label}…`);
   }
 
   update(dt, world) {
@@ -267,11 +342,37 @@ export class Colony {
     // 2. Town-tier milestones: population + structures unlock blueprints & land.
     this.recalculateTier(world);
 
-    // 3. Periodic off-screen emergent civilization adventures (every ~25 seconds)
+    // 3. Berry Harvest Festival: every 3rd day at dusk, when the village can
+    // spare 10 berries for the feast. Lasts 60 seconds of pure mingling.
+    this._updateFestival(dt, world);
+
+    // 4. Periodic off-screen emergent civilization adventures (every ~25 seconds)
     this.expeditionTimer += dt;
     if (this.expeditionTimer >= 25) {
       this.expeditionTimer = 0;
       this._simulateEmergentEvent(world);
+    }
+  }
+
+  _updateFestival(dt, world) {
+    if (this.festival.active) {
+      this.festival.timer -= dt;
+      if (this.festival.timer <= 0) {
+        this.festival.active = false;
+        this._addLog('🎉 The festival winds down — full bellies, happy hearts, new best buds.');
+      }
+      return;
+    }
+    if (!world || this.citizens.length < 2) return;
+    const dayCount = world.dayCount || 0;
+    const tod = world.timeOfDay;
+    if (dayCount % 3 === 2 && dayCount !== this.lastFestivalDay &&
+        tod >= 17 && tod < 20 && this.resources.berries >= 10) {
+      this.resources.berries -= 10;
+      this.festival.active = true;
+      this.festival.timer = 60;
+      this.lastFestivalDay = dayCount;
+      this._addLog('🎉 The Berry Harvest Festival begins! 10 berries for the feast — everyone dance!');
     }
   }
 
@@ -341,6 +442,8 @@ export class Colony {
         name: c.name,
         personalityId: c.personality.id,
         role: c.role,
+        roleXp: c.roleXp,
+        roleLevel: c.roleLevel,
         hunger: c.hunger,
         energy: c.energy,
         curiosity: c.curiosity,
@@ -358,7 +461,10 @@ export class Colony {
     if (typeof data.name === 'string') this.name = data.name;
     if (typeof data.generation === 'number') this.generation = data.generation;
     if (data.resources) this.resources = { ...this.resources, ...data.resources };
-    if (data.storageCap) this.storageCap = { ...this.storageCap, ...data.storageCap };
+    // Storage caps are intentionally NOT restored from the save: every placed
+    // silo re-applies SILO_CAP_BONUS through placeSaved(), so restoring the
+    // saved caps on top would double-count every silo (199 instead of 149
+    // after one load with one silo). Caps rebuild from the structures list.
     if (Array.isArray(data.unlockedVerbs)) this.unlockedVerbs = new Set(data.unlockedVerbs);
     if (Array.isArray(data.hats)) this.hats = [...data.hats];
     if (Array.isArray(data.tools)) this.tools = [...data.tools];
@@ -382,6 +488,12 @@ export class Colony {
           if (p) c.personality = p;
         }
         if (saved.role !== undefined) c.role = saved.role;
+        if (typeof saved.roleXp === 'number') {
+          c.roleXp = saved.roleXp;
+          c.roleLevel = 1 + ROLE_XP_LEVELS.filter(t => t > 0 && c.roleXp >= t).length;
+        } else if (typeof saved.roleLevel === 'number') {
+          c.roleLevel = Math.min(3, Math.max(1, saved.roleLevel));
+        }
         if (typeof saved.hunger === 'number') c.hunger = saved.hunger;
         if (typeof saved.energy === 'number') c.energy = saved.energy;
         if (typeof saved.curiosity === 'number') c.curiosity = saved.curiosity;
