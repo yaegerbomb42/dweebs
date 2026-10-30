@@ -50,7 +50,7 @@ export function sharedMats() { shared(); return mat; }
 
 /** Toys read better a bit chunkier than their sim footprint. */
 export const VIEW_SCALE = 1.35;
-const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1 };
+const SCALE = { shield: 1, rocket: 0.92, stealer: 0.88, kami: 0.85, sneak: 0.85, brute: 1, boss: 1, medic: 0.9 };
 
 /**
  * Build one unit. Returns { root, body, gear, spark } where `body` is the mesh whose material
@@ -141,6 +141,30 @@ export function buildUnit(type, team) {
     back.position.set(-1.55, 1.7, 0);
     back.name = 'backGear';
     tilt.add(back);
+  } else if (type === 'medic') {
+    gear = new THREE.Group();
+    // Red cross backpack
+    const pack = new THREE.Mesh(geo.dowel, mat.wood);
+    pack.scale.set(0.6, 0.8, 0.4);
+    pack.position.set(-0.35, 0.9, 0);
+    pack.rotation.x = Math.PI / 6;
+    gear.add(pack);
+    const crossV = new THREE.Mesh(geo.dowel, mat.red);
+    crossV.scale.set(0.12, 0.45, 0.12);
+    crossV.position.set(-0.35, 1.1, 0.05);
+    gear.add(crossV);
+    const crossH = new THREE.Mesh(geo.dowel, mat.red);
+    crossH.scale.set(0.35, 0.12, 0.12);
+    crossH.position.set(-0.35, 1.1, 0.05);
+    crossH.rotation.z = Math.PI / 2;
+    gear.add(crossH);
+    // Small med pouch on hip
+    const pouch = new THREE.Mesh(geo.dowel, mat.darkWood);
+    pouch.scale.set(0.25, 0.3, 0.2);
+    pouch.position.set(0.4, 0.55, -0.35);
+    pouch.rotation.z = -Math.PI / 4;
+    gear.add(pouch);
+    gear.position.set(0, 0, 0);
   }
   if (gear) tilt.add(gear);
 
