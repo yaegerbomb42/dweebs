@@ -16,6 +16,21 @@ export const DIFFICULTY = {
 
 const _v = new THREE.Vector3();
 
+/**
+ * Play styles. Each bot rolls one, so a lobby is a cast, not four copies of the same AI.
+ * Weights nudge existing decisions; nothing here is a separate brain.
+ *   target: score bonuses   grab/smash: in-range move mix   itemLove: prop hunger
+ *   juggle: chase airborne victims   parry: read charges   keepAway: preferred gap with props
+ */
+export const ROLES = {
+  bruiser:    { label: 'BRUISER',    grab: 0.35, smash: 1.2, itemLove: 0.6, juggle: 0.5, parry: 0.5, keepAway: 0,   target: { hurt: 1.4, leader: 0 } },
+  zoner:      { label: 'ZONER',      grab: 0.1,  smash: 0.8, itemLove: 1.6, juggle: 0.2, parry: 0.8, keepAway: 5,   target: { hurt: 0.8, leader: 0.5 } },
+  scavenger:  { label: 'SCAVENGER',  grab: 0.2,  smash: 0.9, itemLove: 1.2, juggle: 0.3, parry: 0.6, keepAway: 0,   target: { hurt: 1, leader: 0 }, powerups: 14 },
+  instigator: { label: 'INSTIGATOR', grab: 0.3,  smash: 1.0, itemLove: 0.8, juggle: 0.9, parry: 0.4, keepAway: 0,   target: { hurt: 0.6, leader: 3 } },
+  showoff:    { label: 'SHOW-OFF',   grab: 0.2,  smash: 1.4, itemLove: 0.7, juggle: 1.0, parry: 1.0, keepAway: 0,   target: { hurt: 1, leader: 1 } },
+};
+const ROLE_KEYS = Object.keys(ROLES);
+
 export class Bot {
   constructor(dweeb, arena, combat, difficulty = 'normal') {
     this.dweeb = dweeb;
@@ -33,11 +48,34 @@ export class Bot {
     this.strafeTimer = 0;
     this.jumpCd = 0;
     this.recoverJumpCd = 0;
+    this.mashTimer = 0;
+    this.hill = null;          // { x, z, r } in King of the Hill (set by main each round)
+    this.hillCommit = false;
 
     // Personality
     this.grudge = 0.5 + Math.random();
     this.itemLove = 0.3 + Math.random() * 0.7;
     this.playerBias = 0.8 + Math.random() * 0.8;
+    this.roleKey = ROLE_KEYS[Math.floor(Math.random() * ROLE_KEYS.length)];
+    this.role = ROLES[this.roleKey];
+    this.itemLove = Math.min(1, this.itemLove * this.role.itemLove);
+    dweeb.botRole = this.roleKey;
+    // Grudge memory: who has been hurting me lately (decays), so bots hold a vendetta for a while
+    this.threat = new Map();
+    this._lastPercent = dweeb.percent || 0;
+    this.juggleCd = 0;
+    this.parryCd = 0;
+    this.adapt = 1;
+  }
+
+  /** Rubber band: ease off a player who is getting crushed, sharpen up against one who is winning. */
+  _adapt(dweebs) {
+    const pl = dweebs.find(o => o.isPlayer);
+    if (!pl) { this.adapt = 1; return; }
+    const d = this.dweeb;
+    const lead = ((d.stocks ?? 0) - (pl.stocks ?? 0)) * 60 + ((pl.percent ?? 0) - (d.percent ?? 0));
+    const target = THREE.MathUtils.clamp(1 - lead / 400, 0.7, 1.25);
+    this.adapt += (target - this.adapt) * 0.1;
   }
 
   setDifficulty(level) {
@@ -59,6 +97,14 @@ export class Bot {
 
     this.thinkTimer -= dt;
     this.actionTimer -= dt;
+    this.juggleCd -= dt;
+    this.parryCd -= dt;
+    // Threat memory: damage taken is charged to whoever hit us, and fades over ~8s
+    if (d.percent > this._lastPercent + 0.5 && d.lastHitBy && d.lastHitBy !== d) {
+      this.threat.set(d.lastHitBy, (this.threat.get(d.lastHitBy) || 0) + (d.percent - this._lastPercent));
+    }
+    this._lastPercent = d.percent;
+    for (const [k, v] of this.threat) { const nv = v * Math.exp(-dt / 8); if (nv < 0.5 || !k.active) this.threat.delete(k); else this.threat.set(k, nv); }
     this.jumpCd -= dt;
     this.recoverJumpCd -= dt;
     this.strafeTimer -= dt;
@@ -74,11 +120,16 @@ export class Bot {
     d.fastFallInput = !d.grounded && vel.y < 0 && below && this.arena.isOverGround(pos.x, pos.z, 0.6) &&
       Math.random() < this.p.aggression;
 
-    // Held by someone: wriggle!
+    // Held by someone: struggle at a steady rate that scales with aggression.
     if (d.grabbedBy) {
-      if (Math.random() < dt * 6 * (0.5 + this.p.aggression)) d.escapeTimer -= 0.06;
+      this.mashTimer += dt * (0.5 + this.p.aggression * 0.6); // ~2.5-3.5 presses/s
+      while (this.mashTimer >= 0.3) {
+        this.mashTimer -= 0.3;
+        d.mashEscape?.();
+      }
       return;
     }
+    this.mashTimer = 0;
 
     // ── Hanging off the lip: climb after a beat ──
     if (d.ledge) {
@@ -117,6 +168,17 @@ export class Bot {
 
     if (!d.canAct) return;
 
+    // Forced target override (used by Dweebball mode for simple bot steering)
+    if (this.forcedTarget) {
+      this._steerTo(this.forcedTarget.x, this.forcedTarget.z, 1);
+      // Still allow jumping if stuck
+      if (d.grounded && this.jumpCd <= 0 && Math.random() < 0.1) {
+        d.requestJump();
+        this.jumpCd = 0.5;
+      }
+      return;
+    }
+
     if (this.thinkTimer <= 0) {
       this.thinkTimer = this.p.reaction * (0.6 + Math.random() * 0.8);
       this._think(dweebs, pos);
@@ -133,6 +195,9 @@ export class Bot {
       this._useHeld(dt, pos);
       return;
     }
+
+    // ── King of the Hill: run for the zone unless a rival is right here to fight ──
+    if (this.hill && this.hillCommit && this._hillRun(dweebs, pos)) return;
 
     // ── Go for an item or power-up ──
     if (this.goal) {
@@ -162,17 +227,43 @@ export class Bot {
     this._brawl(dt, pos, t);
   }
 
+  /** Steer onto the hill (mirrors sim/bot.js _hillRun): fight if someone is close, else take the zone. */
+  _hillRun(dweebs, pos) {
+    const d = this.dweeb, h = this.hill;
+    for (const o of dweebs) {
+      if (o === d || !o.active) continue;
+      if (d.team != null && o.team === d.team) continue;
+      const op = o.getPosition();
+      if (Math.hypot(op.x - pos.x, op.z - pos.z) < 3.5) return false;   // someone to fight: brawl
+    }
+    const dist = Math.hypot(h.x - pos.x, h.z - pos.z);
+    // Inside: drift toward the middle (and strafe a little so they don't stack on one pixel)
+    if (dist < h.r * 0.55) {
+      d.moveInput.set(0.25 * this.strafe, 0);
+      return true;
+    }
+    this._steerTo(h.x, h.z, 1);
+    this._edgeGuard(pos);
+    return true;
+  }
+
   _think(dweebs, pos) {
     const d = this.dweeb;
+    // Hill commitment is re-rolled every think: aggressive bots camp, easy bots wander off
+    if (this.hill) this.hillCommit = Math.random() < 0.35 + this.p.aggression * 0.65;
     // Pick a target
     let best = null, bestScore = -Infinity;
     for (const o of dweebs) {
       if (o === d || !o.active) continue;
+      if (d.team != null && o.team === d.team) continue; // never pick on a teammate
       const op = o.getPosition();
       const dist = Math.hypot(op.x - pos.x, op.z - pos.z);
       let score = -dist;
       score += o.percent * 0.03 * this.p.aggression;
       if (o === d.lastHitBy) score += 3 * this.grudge;
+      score += Math.min(4, (this.threat.get(o) || 0) * 0.08) * this.grudge;
+      score += o.percent * 0.015 * (this.role.target.hurt - 1);
+      if (this.role.target.leader) score += ((o.kos ?? 0) * 0.8 + (o.stocks ?? 0) * 0.4) * this.role.target.leader;
       if (o.isPlayer) score += this.playerBias;
       score += (TYPE_BIAS[o.type] || 0) * (o.type === 'blob' && o.percent > 90 ? -1 : 1);
       // Spread out: fewer dogpiles, more free-for-all chaos
@@ -184,12 +275,13 @@ export class Bot {
     }
     this.target = best;
     d.botTarget = best;
+    this._adapt(dweebs);
 
     // Power-ups and items nearby?
     if (!d.held && !this.goal) {
       for (const pu of this.arena.powerups) {
         const pp = pu.group.position;
-        if (Math.hypot(pp.x - pos.x, pp.z - pos.z) < 9 && this.arena.isOverGround(pp.x, pp.z, 0.8)) {
+        if (Math.hypot(pp.x - pos.x, pp.z - pos.z) < (this.role.powerups ?? 9) && this.arena.isOverGround(pp.x, pp.z, 0.8)) {
           this.goal = { type: 'powerup', ref: pu };
           return;
         }
@@ -224,6 +316,18 @@ export class Bot {
       return;
     }
 
+    // Juggle: they're up in the air above us after a hit — chase under them, hop and dropkick
+    if (!t.grounded && (t.hitstun > 0 || t.ragdolling) && dist < 4 && tp.y - pos.y > 0.6 && tp.y - pos.y < 4 &&
+        this.juggleCd <= 0 && Math.random() < this.role.juggle * this.p.aggression * this.adapt) {
+      this._steerTo(tp.x + t.velocity.x * 0.3, tp.z + t.velocity.z * 0.3, 1);
+      if (d.grounded && this.jumpCd <= 0) { d.requestJump(); this.jumpCd = 0.35; }
+      else if (!d.grounded && Math.abs(tp.y - pos.y) < 1.2 && dist < 2.2) {
+        d.yaw = Math.atan2(dx, dz);
+        if (this.combat.airKick(d)) this.juggleCd = 1.6;
+      }
+      return;
+    }
+
     if (dist > 1.35) {
       if (dist > 3) this._steerTo(ax, az, 1);
       else this._steerTo(tp.x, tp.z, 1);
@@ -248,16 +352,17 @@ export class Bot {
       if (this.actionTimer <= 0 && d.attackCooldown <= 0) {
         d.yaw = Math.atan2(dx, dz);
         const roll = Math.random();
-        const smashChance = this.p.smash * (t.percent > 60 ? 1.4 : 0.6);
-        if (roll < 0.2 && !t.bubble) {
+        const smashChance = this.p.smash * this.role.smash * (t.percent > 60 ? 1.4 : 0.6);
+        const grabChance = this.role.grab * (Math.hypot(tp.x, tp.z) > this.arena.edgeRadius(tp.x, tp.z) - 4 ? 1.6 : 1);
+        if (roll < grabChance && !t.bubble) {
           this.combat.grab(d);
           this.holdTimer = 0.25 + Math.random() * 0.4;
-        } else if (roll < 0.2 + smashChance * 0.6) {
+        } else if (roll < grabChance + smashChance * 0.6) {
           if (this.combat.startCharge(d)) this.chargeHold = 0.25 + Math.random() * 0.5;
         } else {
           if (this.combat.startCharge(d)) this.combat.releaseAttack(d);
         }
-        this.actionTimer = (0.25 + Math.random() * 0.5) / (0.5 + this.p.aggression);
+        this.actionTimer = (0.25 + Math.random() * 0.5) / ((0.5 + this.p.aggression) * this.adapt);
       }
     }
     this._edgeGuard(pos);
@@ -312,8 +417,9 @@ export class Bot {
 
     // Throwable: get within range, face them, lob it (CombatSystem solves the arc)
     const range = this.p.range;
+    const gap = Math.max(2, this.role.keepAway);
     if (dist > range - 1) this._steerTo(tp.x, tp.z, 1);
-    else if (dist < 2) this._steerTo(pos.x - dx, pos.z - dz, 0.7);
+    else if (dist < gap) this._steerTo(pos.x - dx, pos.z - dz, 0.7);
     if (dist < range && this.actionTimer <= 0) {
       d.yaw = Math.atan2(dx, dz);
       this.combat.throwHeld(d, Math.min(1, dist / 12 + Math.random() * 0.3));
@@ -367,6 +473,12 @@ export class Bot {
       if (dist > 2.6) continue;
       const f = o.forward;
       if ((dx * f.x + dz * f.z) / dist < 0.5) continue;
+      // Read the wind-up: parry a charged swing that's about to land (better bots, cheeky roles)
+      if (dist < 1.9 && o.charging > 0.55 && this.parryCd <= 0 && Math.random() < this.p.dodge * this.role.parry * 0.25) {
+        this.parryCd = 1.5;
+        d.yaw = Math.atan2(-dx, -dz);
+        if (this.combat.startParry(d)) return true;
+      }
       if (Math.random() < this.p.dodge * 0.15) {
         // Sidestep toward the centre
         const px = -f.z, pz = f.x;
