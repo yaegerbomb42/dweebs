@@ -22,6 +22,8 @@ export class AudioManager {
     this.enabled = true;
     this.volume = 0.6;
     this.musicEnabled = true;
+    this.sfxVolume = 1;
+    this.musicVolume = 0.6;
     this._initialized = false;
     this._budgetStart = 0;
     this._budget = 0;
@@ -46,6 +48,7 @@ export class AudioManager {
       this.compressor.connect(this.masterGain);
 
       this.sfxBus = ctx.createGain();
+      this.sfxBus.gain.value = this.sfxVolume;
       this.sfxBus.connect(this.compressor);
 
       this.reverb = ctx.createConvolver();
@@ -62,7 +65,7 @@ export class AudioManager {
       this.ambBus.connect(this.compressor);
 
       this.musicGain = ctx.createGain();
-      this.musicGain.gain.value = this.musicEnabled ? 0.15 : 0;
+      this.musicGain.gain.value = this.musicEnabled ? this.musicVolume * 0.15 : 0;
       this.musicGain.connect(this.masterGain);
 
       // Shared noise buffers (read from random offsets instead of allocating per sound)
@@ -89,6 +92,18 @@ export class AudioManager {
   setEnabled(on) {
     this.enabled = on;
     this.setVolume(this.volume);
+  }
+
+  /** Set SFX bus gain (0..1). Called from settings. */
+  setSfxVolume(v) {
+    this.sfxVolume = clamp(v, 0, 1);
+    if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(this.sfxVolume, this.ctx.currentTime, 0.02);
+  }
+
+  /** Set music bus gain (0..1). Called from settings. */
+  setMusicVolume(v) {
+    this.musicVolume = clamp(v, 0, 1);
+    if (this.musicGain) this.musicGain.gain.setTargetAtTime(this.musicEnabled ? this.musicVolume * 0.15 : 0, this.ctx.currentTime, 0.02);
   }
 
   get _ok() {
@@ -817,16 +832,17 @@ export class AudioManager {
 
   setMusicEnabled(on) {
     this.musicEnabled = on;
-    if (this.musicGain) this.musicGain.gain.setTargetAtTime(on ? 0.15 : 0, this.ctx.currentTime, 0.05);
+    if (this.musicGain) this.musicGain.gain.setTargetAtTime(on ? this.musicVolume * 0.15 : 0, this.ctx.currentTime, 0.05);
   }
 
   /** Briefly lower the music so a big moment cuts through */
   duck(amount = 0.4, duration = 1) {
     if (!this._initialized || !this.musicEnabled) return;
     const g = this.musicGain.gain, t = this.ctx.currentTime;
+    const base = this.musicVolume * 0.15;
     g.cancelScheduledValues(t);
-    g.setTargetAtTime(0.15 * amount, t, 0.03);
-    g.setTargetAtTime(0.15, t + duration, 0.4);
+    g.setTargetAtTime(base * amount, t, 0.03);
+    g.setTargetAtTime(base, t + duration, 0.4);
   }
 
   _scheduleMusic() {
