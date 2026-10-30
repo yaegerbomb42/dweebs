@@ -1,3 +1,4 @@
+import { loadCareer } from './career.js';
 // hub-extras.js — the living parts of the builder-first hub.
 //
 // Presentation/shell only. This module READS the same localStorage keys the
@@ -157,6 +158,10 @@ export function applyHubStats(root, stats = readHubStats(safeStorage(), loadSett
 
   setText(root, '[data-trophy="warfare"]', stats.warfareBest != null ? `wave ${stats.warfareBest}` : '—');
   setText(root, '[data-trophy="village"]', stats.hasVillage ? String(stats.villageStructures) : '—');
+  try {
+    const c = loadCareer();
+    setText(root, '[data-trophy="career"]', c.matches ? `${c.wins}W · ${c.kos} KO` : '—');
+  } catch { /* no storage */ }
   setText(root, '[data-trophy="build"]', stats.hasBuild ? 'saved' : '—');
   return stats;
 }
