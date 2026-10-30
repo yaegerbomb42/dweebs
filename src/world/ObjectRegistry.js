@@ -169,6 +169,15 @@ export const OBJECT_DEFS = {
     material: 'rubber', mass: 0.15, grabbable: true, throwable: true,
     breakable: false, breakForce: 50000, damage: 0.05, color: 0xff4488,
   },
+  partyBalloon: {
+    name: 'Party Balloon',
+    shape: 'sphere', dims: { radius: 0.3 },
+    visualScale: [0.6, 0.6, 0.6],
+    material: 'rubber', mass: 0.15, grabbable: true, throwable: true,
+    breakable: true, breakForce: 120, damage: 0.05, color: 0xff4d8d,
+    breakWord: 'POP!', breakColors: [0xff4d8d, 0xff9ac4, 0xffffff, 0xc21b38],
+    floaty: { gravityCancel: 0.75, maxFall: 2.2, liftHop: 1.15 },
+  },
   bowlingBall: {
     name: 'Bowling Ball',
     shape: 'sphere', dims: { radius: 0.15 },

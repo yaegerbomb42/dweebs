@@ -1698,6 +1698,16 @@ export class CombatSystem {
       _heldE.set(sw.z * 1.4 + shake * 3, 0, -sw.x * 1.4);
       q.premultiply(_heldQ2.setFromEuler(_heldE));
     }
+    const floaty = obj.def.floaty;
+    if (floaty) {
+      y += Math.sin(this.time * 3.2) * 0.04;
+      if (!d.grounded) {
+        const v = d.body.linvel();
+        let vy = v.y + G * floaty.gravityCancel * dt;
+        if (vy < -floaty.maxFall) vy = -floaty.maxFall;
+        d.body.setLinvel({ x: v.x, y: vy, z: v.z }, true);
+      }
+    }
     obj.body.setNextKinematicTranslation({ x, y, z });
     obj.body.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
   }

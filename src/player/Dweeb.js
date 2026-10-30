@@ -520,7 +520,9 @@ export class Dweeb {
         vz = approach(vz, tz, accel);
       }
 
+      const lift = this.held?.kind === 'object' && this.held.ref.def.floaty ? this.held.ref.def.floaty.liftHop : 1;
       if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
+        vy = MV.jumpVel * this.stats.jump * this.jumpScale * lift;
         vy = MV.jumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
         this.jumpsLeft = 1;
         this.coyote = 0;
@@ -529,6 +531,7 @@ export class Dweeb {
         this.landSquash = -0.35;
         this.onJump?.(this, false);
       } else if (this.jumpRequested && this.jumpsLeft > 0 && !this.grounded && !this.specialFall) {
+        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * lift;
         vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
         this.jumpsLeft = 0;
         this.jumpBuffer = 0;
