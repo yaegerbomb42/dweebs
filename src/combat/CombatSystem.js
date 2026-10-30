@@ -47,6 +47,9 @@ function scaled(atk, dmg = 1, kb = 1) {
   return atk;
 }
 
+const _heldQ = new THREE.Quaternion(), _heldQ2 = new THREE.Quaternion(), _heldE = new THREE.Euler();
+const _UP = new THREE.Vector3(0, 1, 0), _RIGHT = new THREE.Vector3(1, 0, 0);
+
 export class CombatSystem {
   constructor(physicsWorld, arena, fx) {
     this.physics = physicsWorld;
@@ -453,6 +456,7 @@ export class CombatSystem {
 
   _holdObject(d, obj) {
     d.held = { kind: 'object', ref: obj };
+    d.carryHeldT = 0;
     obj.grab(d);
     // Heft: heavy props take a beat to settle and slow your walk; featherweights are instant
     const C = BALANCE.carry, mass = obj.def.mass ?? 1;
@@ -521,7 +525,9 @@ export class CombatSystem {
     const spin = 10 / Math.sqrt(Math.max(mass, 0.5));
     const fw = d.forward;
     obj.body.setTranslation(L.origin, true);
-    obj.body.setLinvel(L.vel, true);
+    // A load mid-swing whips out a little harder in the direction it was already going.
+    const sw = held.sway;
+    obj.body.setLinvel(sw ? { x: L.vel.x + sw.vx * 0.6, y: L.vel.y, z: L.vel.z + sw.vz * 0.6 } : L.vel, true);
     obj.body.setAngvel({ x: fw.z * spin, y: (Math.random() - 0.5) * spin * 0.7, z: -fw.x * spin }, true);
     obj.thrownBy = d;
     obj.thrownTime = obj.def.roll ? 3 : 2.2;
@@ -555,8 +561,18 @@ export class CombatSystem {
       held.ref.setGrabbed(null);
       held.ref.invulnTimer = 0.3;
     } else {
-      this._releaseObject(held.ref);
-      held.ref.body.setLinvel({ x: 0, y: 1, z: 0 }, true);
+      // Set it down, don't fling it: place the prop just ahead at hand height and let its swing carry.
+      const obj = held.ref, p = d.getPosition(), f = d.forward, sw = held.sway;
+      this._releaseObject(obj);
+      if (d.active && !d.ragdolling && d.hitstun <= 0) {
+        const hy = obj.def.dims?.hy ?? obj.def.dims?.radius ?? obj.def.dims?.halfHeight ?? 0.3;
+        obj.body.setTranslation({ x: p.x + f.x * (0.9 + hy), y: p.y + 0.2 + hy, z: p.z + f.z * (0.9 + hy) }, true);
+        obj.body.setLinvel({ x: (sw?.vx ?? 0) * 0.5, y: 0.3, z: (sw?.vz ?? 0) * 0.5 }, true);
+        obj.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      } else {
+        // Knocked out of your hands: it keeps whatever swing it had.
+        obj.body.setLinvel({ x: (sw?.vx ?? 0) * 1.5, y: 1.5, z: (sw?.vz ?? 0) * 1.5 }, true);
+      }
     }
   }
 
@@ -1053,6 +1069,33 @@ export class CombatSystem {
     this._updatePickups();
   }
 
+  /**
+   * Carry sway: a spring-damped offset between where the hands are and where the held thing
+   * actually is. Accelerating drags the load behind you, stopping swings it forward, and heavy
+   * props lag and wobble far more than featherweights. Purely kinematic (no joints), so it is
+   * cheap and stays put through hitstop; the swing is fed back into throws and drops.
+   */
+  _swayStep(d, held, dt, mass) {
+    const sw = held.sway || (held.sway = { x: 0, z: 0, y: 0, vx: 0, vz: 0, vy: 0, pvx: 0, pvz: 0, pvy: 0, init: false });
+    const v = d.body.linvel();
+    if (!sw.init) { sw.pvx = v.x; sw.pvz = v.z; sw.pvy = v.y; sw.init = true; }
+    const h = Math.max(1e-3, Math.min(dt, 1 / 30));
+    // Carrier acceleration pushes the load the opposite way (inertia), scaled by heft.
+    const ax = (v.x - sw.pvx) / h, az = (v.z - sw.pvz) / h, ay = (v.y - sw.pvy) / h;
+    sw.pvx = v.x; sw.pvz = v.z; sw.pvy = v.y;
+    const heft = Math.min(2.2, 0.35 + mass * 0.28);
+    const k = 90 / heft, c = 2 * Math.sqrt(k) * 0.32; // underdamped: a couple of visible swings
+    sw.vx += (-ax * 0.018 * heft - k * sw.x - c * sw.vx) * h;
+    sw.vz += (-az * 0.018 * heft - k * sw.z - c * sw.vz) * h;
+    sw.vy += (-ay * 0.012 * heft - k * 1.6 * sw.y - c * sw.vy) * h;
+    sw.x += sw.vx * h; sw.z += sw.vz * h; sw.y += sw.vy * h;
+    const lim = 0.25 + heft * 0.2;
+    const r = Math.hypot(sw.x, sw.z);
+    if (r > lim) { sw.x *= lim / r; sw.z *= lim / r; sw.vx *= 0.5; sw.vz *= 0.5; }
+    sw.y = Math.max(-0.35, Math.min(0.3, sw.y));
+    return sw;
+  }
+
   _updateHeld(d, dt) {
     const pos = d.getPosition();
     const f = d.forward;
@@ -1062,14 +1105,20 @@ export class CombatSystem {
     if (held.kind === 'dweeb') {
       const t = held.ref;
       if (!t.active) { d.held = null; t.setGrabbed(null); return; }
-      t.body.setTranslation({ x: pos.x, y: pos.y + 1.15 * s, z: pos.z }, true);
+      const sw = this._swayStep(d, held, dt, 3);
+      // Struggling victims kick the spring: the less time left to escape, the harder they thrash.
+      const thrash = Math.max(0, 1 - t.escapeTimer / 1.5);
+      sw.vx += (Math.random() - 0.5) * (0.6 + thrash * 3) * dt * 10;
+      sw.vz += (Math.random() - 0.5) * (0.6 + thrash * 3) * dt * 10;
+      t.body.setTranslation({ x: pos.x + sw.x, y: pos.y + 1.15 * s + sw.y, z: pos.z + sw.z }, true);
       t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      t.yaw = d.yaw + Math.PI / 2;
+      t.yaw = d.yaw + Math.PI / 2 + sw.x * 0.6 - sw.z * 0.6;
+      t.carrySwayX = sw.x; t.carrySwayZ = sw.z;
       t.escapeTimer -= dt;
       if (t.escapeTimer <= 0) {
-        // Wriggled free!
+        // Wriggled free! Out the way they were swinging.
         this.drop(d);
-        t.body.setLinvel({ x: -f.x * 5, y: 7, z: -f.z * 5 }, true);
+        t.body.setLinvel({ x: -f.x * 5 + sw.vx * 2, y: 7, z: -f.z * 5 + sw.vz * 2 }, true);
         d.hitstun = 0.35;
         this.fx.escape(t);
       }
@@ -1078,23 +1127,33 @@ export class CombatSystem {
 
     const obj = held.ref;
     if (!obj.body || obj.broken) { d.held = null; return; }
+    const mass = obj.def.mass ?? 1;
+    const sw = this._swayStep(d, held, dt, obj.isWeapon ? Math.min(mass, 1.2) : mass);
     let x, y, z;
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), d.yaw);
+    const q = _heldQ.setFromAxisAngle(_UP, d.yaw);
     if (obj.isWeapon) {
       // Hammer held out front, head up; swings down on attack
       const swing = d.swingT > 0 ? Math.sin((1 - d.swingT / 0.3) * Math.PI) : 0;
       const raise = d.isCharging ? -0.8 * d.charging : 0;
       const pitch = 0.2 + swing * 1.5 + raise;
       const reach = 0.75 + swing * 0.5;
-      x = pos.x + f.x * reach;
-      z = pos.z + f.z * reach;
-      y = pos.y + 0.7 - swing * 0.5;
-      q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch));
+      x = pos.x + f.x * reach + sw.x * 0.5;
+      z = pos.z + f.z * reach + sw.z * 0.5;
+      y = pos.y + 0.7 - swing * 0.5 + sw.y * 0.5;
+      q.multiply(_heldQ2.setFromAxisAngle(_RIGHT, pitch));
     } else {
-      x = pos.x + f.x * 0.15;
-      z = pos.z + f.z * 0.15;
+      // Heavy loads sag lower and tremble once you've held them a while.
+      d.carryHeldT = (d.carryHeldT || 0) + dt;
+      const heavy = mass >= (BALANCE.carry.heavyFrom ?? 2.5);
+      const sag = heavy ? Math.min(0.18, d.carryHeldT * 0.03) : 0;
+      const shake = heavy ? Math.sin(this.time * 47) * 0.012 * Math.min(1, d.carryHeldT * 0.25) : 0;
+      x = pos.x + f.x * 0.15 + sw.x;
+      z = pos.z + f.z * 0.15 + sw.z;
       const hy = obj.def.dims.hy ?? obj.def.dims.radius ?? obj.def.dims.halfHeight ?? 0.3;
-      y = pos.y + 0.75 * s + hy + 0.05;
+      y = pos.y + 0.75 * s + hy + 0.05 + sw.y - sag + shake;
+      // Tilt the load toward its swing so it reads as hanging off the hands, not glued on.
+      _heldE.set(sw.z * 1.4 + shake * 3, 0, -sw.x * 1.4);
+      q.premultiply(_heldQ2.setFromEuler(_heldE));
     }
     obj.body.setNextKinematicTranslation({ x, y, z });
     obj.body.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
