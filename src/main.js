@@ -636,6 +636,12 @@ function setupMenu() {
 function applyAudioSettings() {
   audio.setEnabled(settings.sound === 'on');
   audio.setMusicEnabled(settings.music === 'on');
+  if (typeof audio.setSfxVolume === 'function') {
+    audio.setSfxVolume(Math.max(0, Math.min(1, settings.sfx ?? 1)));
+  }
+  if (typeof audio.setMusicVolume === 'function') {
+    audio.setMusicVolume(Math.max(0, Math.min(1, settings.musicVol ?? 0.6)));
+  }
   haptics?.setEnabled(settings.rumble !== 'off');
   cam?.setShakeScale(settings.shake === 'off' ? 0 : settings.shake === 'low' ? 0.42 : 1);
 }

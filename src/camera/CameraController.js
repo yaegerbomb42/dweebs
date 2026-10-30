@@ -1,6 +1,9 @@
 // CameraController.js — Third-person camera with smooth follow, shake, and mouse orbit
 
 import * as THREE from 'three';
+import { loadSettings, onSettingsChange } from '../app/settings.js';
+
+const BASE_SENSITIVITY = 0.003;
 
 export class CameraController {
   constructor(camera, canvas) {
@@ -17,6 +20,7 @@ export class CameraController {
     this.mode = 'explorer';
     this.trackedEntity = null;
     this.targetPitch = -0.42;
+    this.targetDistance = 9;
 
     // Zoom & FOV
     this.baseFov = 60;
@@ -36,7 +40,9 @@ export class CameraController {
     this.minDistance = 5;
     this.maxDistance = 22;
     this.minCameraY = -3.5;  // never dip under the lagoon
-    this.sensitivity = 0.003;
+    this.baseSensitivity = BASE_SENSITIVITY;
+    this.sensitivity = BASE_SENSITIVITY;
+    this.invertY = false;
     this.zoomSpeed = 1.5;
 
     // High-action framing (spectator safety): the colosseum spectator follows
@@ -85,6 +91,20 @@ export class CameraController {
 
     canvas.addEventListener('wheel', this._onWheel, { passive: true });
     document.addEventListener('pointerlockchange', this._onPointerLockChange);
+
+    // Live settings sync
+    this._settingsOff = onSettingsChange(s => this._applySettings(s));
+    this._applySettings(loadSettings());
+  }
+
+  _applySettings(s) {
+    if (typeof s.sensitivity === 'number') {
+      this.baseSensitivity = BASE_SENSITIVITY * Math.max(0.1, Math.min(3, s.sensitivity));
+      this.sensitivity = this.baseSensitivity;
+    }
+    if (typeof s.invertY === 'boolean') {
+      this.invertY = s.invertY;
+    }
   }
 
   /** Detach all listeners (call when the controller is retired). */
@@ -118,7 +138,8 @@ export class CameraController {
   _onMouseMove(e) {
     if (!this.isLocked) return;
     this.yaw -= e.movementX * this.sensitivity;
-    this.pitch -= e.movementY * this.sensitivity;
+    const pitchDelta = e.movementY * this.sensitivity;
+    this.pitch -= this.invertY ? -pitchDelta : pitchDelta;
     this.pitch = Math.max(this.minPitch, Math.min(this.maxPitch, this.pitch));
   }
 
@@ -402,6 +423,15 @@ export class CameraController {
       this._rollOffset *= Math.exp(-8 * dt);
       if (Math.abs(this._rollOffset) < 0.001) this._rollOffset = 0;
       else this.camera.rotateZ(this._rollOffset);
+    }
+  }
+
+  destroy() {
+    if (this._settingsOff) this._settingsOff();
+    this.canvas.removeEventListener('wheel', this._onWheel);
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    if (this.isLocked) {
+      document.removeEventListener('mousemove', this._onMouseMove);
     }
   }
 }
