@@ -21,6 +21,8 @@ export const PREFERENCES = Object.freeze({
 
 const CLUSTER_WEIGHT = { rocket: 2.5, kami: 1.5, boss: 1, brute: 0.5 };
 const STICKY = 2.5;
+/** Decoys are irresistible bait: enemies divert even from a sticky, clustered target. */
+export const DECOY_BAIT = 30;
 
 /** How many of `units` stand within r of (x,z). */
 export function countNear(units, x, z, r) {
@@ -50,6 +52,7 @@ export function pickTarget(u, enemies) {
     const d = Math.sqrt(dx * dx + dz * dz);
     if (d > aggro) continue;
     let score = d - (pref[e.type] || 0);
+    if (e.decoy) score -= DECOY_BAIT;
     if (s.attack === 'grab' && !stats(e.type).grabbable) score += 12; // stealers tackle heavies only as a last resort
     if (cw) score -= cw * countNear(enemies, e.x, e.z, 3.4);
     score -= 3 * (1 - e.hp / e.maxHp);            // finish off the wounded

@@ -181,6 +181,11 @@ export class WarfareHud {
             <i class="wf-cd-sweep" data-cd-sweep="stance"></i>
             <span class="wf-cd-label wf-cd-overlay" data-cd-text="stance"></span>
           </button>
+          <button class="alt" data-a="decoy" title="Inflatable Decoy (F) · Costs 20 Coins">
+            <span class="wf-p-label">🎈 DECOY (F) 🪙20</span>
+            <i class="wf-cd-sweep" data-cd-sweep="decoy"></i>
+            <span class="wf-cd-label wf-cd-overlay" data-cd-text="decoy"></span>
+          </button>
         </div>
         <div class="wf-cards">${RECRUITABLE.map((t, i) => `
           <div class="wf-card" data-u="${t}"><span class="k">${i + 1}</span>
@@ -362,9 +367,9 @@ export class WarfareHud {
   updatePowers(st, powerCooldowns = {}) {
     if (!st) return;
     const coins = st.coins?.blue ?? 0;
-    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0 };
-    const costs = { artillery: 25, supply: 15, stance: 0 };
-    for (const k of ['artillery', 'supply', 'stance']) {
+    const maxCds = { artillery: 10.0, supply: 8.0, stance: 4.0, decoy: 12.0 };
+    const costs = { artillery: 25, supply: 15, stance: 0, decoy: 20 };
+    for (const k of ['artillery', 'supply', 'stance', 'decoy']) {
       const cd = Math.max(0, powerCooldowns[k] || 0);
       const cost = costs[k];
       const btn = this.q(`.wf-powers button[data-a="${k}"]`);

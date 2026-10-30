@@ -5,7 +5,7 @@
 //   playing→ defense (waves, boss every 5, win after FINAL_WAVE) or versus AI
 //   paused / over → pause menu, win/lose screen with stats and restart
 import * as THREE from 'three';
-import { createBattle, stepBattle, battleHash, WF_DT, FIELD } from '../sim/warfareBattle.js';
+import { createBattle, stepBattle, battleHash, WF_DT, FIELD, DECOY_COST } from '../sim/warfareBattle.js';
 import { commanderDecide } from '../sim/warfareAI.js';
 import { RECRUITABLE, UNIT_TYPES, COUNTER_OF } from '../sim/warfareUnits.js';
 import { DIFFICULTY, FINAL_WAVE } from '../sim/warfareWaves.js';
@@ -21,6 +21,7 @@ export const POWER_COOLDOWNS = {
   artillery: 10.0,
   supply: 8.0,
   stance: 4.0,
+  decoy: 12.0,
 };
 
 const ENEMY_HINTS = {
@@ -75,7 +76,7 @@ export class DweebWarfare {
     this.difficulty = 'normal';
     try { const d = localStorage.getItem('dweebs-warfare-diff'); if (DIFFICULTY[d]) this.difficulty = d; } catch { /* private mode */ }
     this.phase = 'title';
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, decoy: 0 };
     this.pending = [];
     this.acc = 0;
     this.seen = new Set();
@@ -141,7 +142,7 @@ export class DweebWarfare {
     const bg = getBattleground(mapId || this.mapId || 'meadow');
     this.mapId = bg.id;
     this.st = createBattle({ seed, mode, difficulty, barricades: bg.barricades, highGround: bg.highGround });
-    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0 };
+    this.powerCooldowns = { artillery: 0, supply: 0, stance: 0, decoy: 0 };
     this.pending = [];
     this.outbox = [];
     this.seen = new Set();
@@ -346,6 +347,26 @@ export class DweebWarfare {
     this._cmd({ type: 'supply', team });
   }
 
+  callDecoy(team = this.team) {
+    if (this.phase !== 'playing' || !this.st) return;
+    if (this.powerCooldowns.decoy > 0) {
+      this.audio?.deny();
+      this.hud.toast(`Decoy inflating (${this.powerCooldowns.decoy.toFixed(1)}s)`, 1.5);
+      return;
+    }
+    if (this.st.coins[team] < DECOY_COST) {
+      this.audio?.deny();
+      this.hud.toast(`Need 🪙 ${DECOY_COST} for an Inflatable Decoy`, 2.0);
+      return;
+    }
+    this.powerCooldowns.decoy = POWER_COOLDOWNS.decoy;
+    // Plant it a few strides ahead of the rally point so it baits the enemy before they reach our line.
+    const ahead = team === 'blue' ? 8 : -8;
+    const targetX = (this.st.rally[team]?.x ?? (team === 'blue' ? -18 : 18)) + ahead;
+    const targetZ = this.st.rally[team]?.z ?? 0;
+    this._cmd({ type: 'decoy', team, x: targetX, z: targetZ });
+  }
+
   toggleFormation(team = this.team) {
     if (this.phase !== 'playing') return;
     if (this.powerCooldowns.stance > 0) {
@@ -366,6 +387,7 @@ export class DweebWarfare {
     else if (a === 'artillery') this.callArtillery();
     else if (a === 'supply') this.callSupply();
     else if (a === 'stance') this.toggleFormation();
+    else if (a === 'decoy') this.callDecoy();
     else if (a.startsWith('diff-') && DIFFICULTY[a.slice(5)]) {
       this.difficulty = a.slice(5);
       try { localStorage.setItem('dweebs-warfare-diff', this.difficulty); } catch { /* private mode */ }
@@ -415,6 +437,7 @@ export class DweebWarfare {
       else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
       else if (k === 'e') { this.callSupply(); e.preventDefault(); }
       else if (k === 'r') { this.toggleFormation(); e.preventDefault(); }
+      else if (k === 'f') { this.callDecoy(); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
       // Player 2 local PvP controls (keys 7, 8, 9, 0, and [)
       else if (this.isLocalPvp) {
@@ -503,6 +526,10 @@ export class DweebWarfare {
         hud.toast(`📦 Supplies air-dropped! Nearby units healed!`, 2.5);
       } else if (ev.type === 'stance') {
         hud.toast(ev.stance === 'charge' ? `⚔️ CHARGE! Speed boosted!` : `🛡️ DEFENSIVE WALL! Holding ground!`, 2.0);
+      } else if (ev.type === 'decoy') {
+        hud.toast('🎈 Inflatable Decoy planted! The enemy will dump fire into it.', 2.8);
+      } else if (ev.type === 'pop') {
+        hud.toast('💥 POP! The decoy took the bait.', 2.2);
       } else if (ev.type === 'waveStart') {
         hud.banner(ev.boss ? 'BOSS WAVE!' : `WAVE ${ev.wave}`, ev.boss ? 'The Brass Bully rolls in' : `${ev.count} enemies incoming`, ev.boss ? 'boss' : '');
       } else if (ev.type === 'waveClear') {
@@ -573,7 +600,7 @@ export class DweebWarfare {
 
   update(rawDt) {
     const dt = Math.min(rawDt, 0.1);
-    for (const k of ['artillery', 'supply', 'stance']) {
+    for (const k of ['artillery', 'supply', 'stance', 'decoy']) {
       if (this.powerCooldowns[k] > 0) {
         this.powerCooldowns[k] = Math.max(0, this.powerCooldowns[k] - dt);
       }

@@ -23,6 +23,9 @@ export const PREP_FIRST = 25 * WF_HZ;
 export const PREP_BETWEEN = 14 * WF_HZ;
 export const ARMY_CAP = 60;
 export const DEFENSE_FORT_HP = 2000;
+/** Inflatable decoy power: coin cost, lifetime in ticks, and the pop it leaves behind. */
+export const DECOY_COST = 20;
+export const DECOY_TTL = 12 * WF_HZ;
 /** Units chip forts for this fraction of their unit damage (forts are sturdy toys). */
 export const FORT_DMG_MULT = 0.6;
 /** Defenders drop what they're doing for enemies this close to their fort. */
@@ -129,6 +132,7 @@ export function createBattle({ seed = 1, mode = 'defense', army = true, coins, d
 export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) {
   const s = stats(type);
   const id = st.nextId++;
+  const decoy = type === 'decoy';
   const u = {
     id, team, type, x, z, vx: 0, vz: 0, kx: 0, kz: 0,
     hp: s.hp * hpMul, maxHp: s.hp * hpMul, dmgMul,
@@ -136,6 +140,7 @@ export function spawnUnit(st, team, type, { x, z, hpMul = 1, dmgMul = 1 } = {}) 
     state: 'fight', targetId: 0, carrying: 0, carriedBy: 0,
     flankSide: (id & 1) ? 1 : -1, alive: true, radius: s.radius,
     dash: 0, dashCd: 60, enraged: false, speedMul: stanceSpeedMul(st, team), cdMul: 1,
+    decoy, ttl: decoy ? DECOY_TTL : 0,
   };
   st.units.push(u);
   st.events.push({ type: 'spawn', id, team, unit: type, x, z });
@@ -158,7 +163,7 @@ export function applyCommand(st, c) {
     const cost = stats(c.unit).cost;
     if (st.coins[c.team] < cost) return false;
     let n = 0;
-    for (const u of st.units) if (u.alive && u.team === c.team) n++;
+    for (const u of st.units) if (u.alive && u.team === c.team && !u.decoy) n++;
     if (n >= ARMY_CAP) return false;
     st.coins[c.team] -= cost;
     const f = st.forts[c.team];
@@ -197,6 +202,15 @@ export function applyCommand(st, c) {
       }
     }
     damageBarricades(st, tx, tz, splashR, splashDmg, c.team);
+    return true;
+  }
+  if (c.type === 'decoy') {
+    if (st.coins[c.team] < DECOY_COST) return false;
+    st.coins[c.team] -= DECOY_COST;
+    const tx = clamp(+c.x || 0, -FIELD.halfX + 2, FIELD.halfX - 2);
+    const tz = clamp(+c.z || 0, -FIELD.halfZ + 2, FIELD.halfZ - 2);
+    spawnUnit(st, c.team, 'decoy', { x: tx, z: tz });
+    st.events.push({ type: 'decoy', team: c.team, x: tx, z: tz });
     return true;
   }
   if (c.type === 'supply') {
@@ -239,8 +253,9 @@ function kill(st, u, attTeam, kx, kz) {
   u.alive = false;
   u.hp = 0;
   st.events.push({ type: 'death', id: u.id, team: u.team, unit: u.type, x: u.x, z: u.z, kx, kz });
-  st.stats[u.team].lost++;
-  if (attTeam && attTeam !== u.team) {
+  if (u.decoy) st.events.push({ type: 'pop', id: u.id, team: u.team, x: u.x, z: u.z });
+  if (!u.decoy) st.stats[u.team].lost++;           // a popped balloon is not a casualty
+  if (attTeam && attTeam !== u.team && !u.decoy) {  // ...and pays no bounty
     st.stats[attTeam].kills++;
     const b = bounty(u.type);
     if (!(st.mode === 'defense' && attTeam === 'red')) {
@@ -391,6 +406,13 @@ function updateUnit(st, u, enemies) {
     const c = st.byId.get(u.carriedBy);
     if (c && c.alive) { u.x = c.x; u.z = c.z; u.vx = c.vx; u.vz = c.vz; u.kx = 0; u.kz = 0; return; }
     u.carriedBy = 0;
+  }
+  // Inflatable decoy: no brain, no attack, just a ticking balloon that pops.
+  if (u.decoy) {
+    u.vx = 0; u.vz = 0;
+    u.ttl--;
+    if (u.ttl <= 0 || u.hp <= 0) kill(st, u, null, 0, 0);
+    return;
   }
   if (u.cd > 0) u.cd--;
   if (u.dashCd > 0) u.dashCd--;
