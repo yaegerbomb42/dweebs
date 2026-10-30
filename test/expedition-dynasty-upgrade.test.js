@@ -153,18 +153,24 @@ describe('town tiers', () => {
 // ─── 2. Multi-chamber ruin vaults ────────────────────────────────────────────
 
 describe('multi-chamber ruin vaults', () => {
-  it('each ruin has sequential plates, a stone block and a locked chest', () => {
+  it('each ruin has a trial, a stone block and a locked chest', () => {
     const { world } = worldWithColony();
-    expect(world.ruins.length).toBe(2);
+    // Merged ruins: 4 sites (plates x2, bounce, guard), every one a
+    // three-chamber vault (trial -> stone block -> blueprint chest).
+    expect(world.ruins.length).toBe(4);
     for (const ruin of world.ruins) {
-      expect(ruin.stage).toBe('plates');
-      expect(ruin.sequence).toEqual([]);
-      expect(ruin.plates.map(p => p.order)).toEqual([0, 1, 2]);
       expect(ruin.block).toBeDefined();
       expect(ruin.block.progress).toBe(0);
       expect(ruin.chest).toBeDefined();
       expect(ruin.chest.opened).toBe(false);
       expect(typeof ruin.chest.blueprint).toBe('string');
+    }
+    const platesRuins = world.ruins.filter(r => r.kind === 'plates');
+    expect(platesRuins.length).toBe(2);
+    for (const ruin of platesRuins) {
+      expect(ruin.stage).toBe('plates');
+      expect(ruin.sequence).toEqual([]);
+      expect(ruin.plates.map(p => p.order)).toEqual([0, 1, 2]);
     }
     expect(world.ruins[0].chest.blueprint).toBe('gazebo');
     expect(world.ruins[1].chest.blueprint).toBe('windmill');
@@ -503,9 +509,15 @@ describe('bug fix: citizen pathfinding at sharp building corners', () => {
       const inp = dweeb.controllerInput || { moveX: 0, moveY: 0 };
       const p = dweeb.body._p;
       const nx = p.x + inp.moveX * 4.2 * dt;
-      const nz = p.z + (-inp.moveY) * 4.2 * dt;
-      if (Math.abs(nz) < 1 && p.x < 5 && nx >= 5) {
-        p.x = 5; // blocked by the corner
+      // controllerInput.moveY is world-frame Z (unnegated, matching Dweeb.js
+      // tx = x*speed / tz = y*speed), so it applies directly to p.z.
+      const nz = p.z + inp.moveY * 4.2 * dt;
+      // A sharp building corner: a wall segment at x = 5 spanning z in (-1, 1).
+      // Pushing straight into it makes no progress (clamped at x = 5 while
+      // |z| < 1); lateral motion slides along the wall and rounds the corner.
+      if (Math.abs(nz) < 1 && p.x <= 5 && nx >= 5) {
+        p.x = 5; // blocked by the corner in x...
+        p.z = nz; // ...but slides along the wall in z
       } else {
         p.x = nx;
         p.z = nz;
