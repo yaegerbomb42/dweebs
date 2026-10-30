@@ -13,7 +13,66 @@
 
 import { el } from './dom.js';
 import { BINDING_LABELS } from './settings.js';
+import { MALL_MODES, DIFFICULTY_LABELS, difficultyStars } from './mall.js';
 
+/** One launchable sub-game button. */
+function subButton(s, btnClass) {
+  const d = DIFFICULTY_LABELS[s.difficulty] || '';
+  return `<button class="btn mall-sub-btn ${btnClass}" id="${s.id}" title="${s.title} · ${d}"
+      data-launch='${JSON.stringify(s.launch)}'>${s.label}</button>`;
+}
+
+/** Difficulty badge: star pips + label, e.g. ★★☆ NORMAL. */
+function diffBadge(level) {
+  const label = DIFFICULTY_LABELS[level] || '';
+  return `<span class="mall-diff mall-diff-${level}" title="Difficulty: ${label}"
+    aria-label="Difficulty ${label}">${difficultyStars(level)} ${label}</span>`;
+}
+
+/** One mall card, rendered from the MALL_MODES data model. */
+function mallCard(card) {
+  const subs = card.subgames.map(s => subButton(s, card.btnClass)).join('');
+  const main = card.launch;
+  return `
+  <article class="mall-card card-${card.id}" id="${card.cardId}">
+    <div class="mall-badge ${card.badgeClass}">${card.badge}</div>
+    <div class="mall-icon ${card.iconAnim}" aria-hidden="true">${card.icon}</div>
+    <h3 class="mall-card-title">${card.title}</h3>
+    ${diffBadge(card.difficulty)}
+    <p class="mall-card-desc">${card.desc}</p>
+    ${subs ? `<div class="mall-subgames">${subs}</div>` : ''}
+    <button class="btn mall-btn ${card.btnClass}" id="${main.id}"
+      data-launch='${JSON.stringify(main.launch)}'>${main.label}</button>
+  </article>`;
+}
+
+/** Pure HTML for the mall title screen — exported so tests can assert every
+ * launch button exists in the DOM boot.js wires, without needing a browser. */
+export function mallTitleHtml() {
+  const cards = MALL_MODES.map(mallCard).join('');
+  return `
+    <section id="app-title" class="app-screen hidden" aria-label="The Dweeb Mall">
+      <div class="mall-container">
+        <header class="mall-header">
+          <h1 class="mall-title">THE DWEEB MALL</h1>
+          <p class="mall-subtitle">6 toy-box physics experiences — one living universe</p>
+        </header>
+
+        <div class="mall-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 1040px; margin: 0 auto;">
+          ${cards}
+        </div>
+
+        <footer class="mall-footer">
+          <button class="btn white" id="app-btn-offline">CUSTOM LOBBY</button>
+          <button class="btn pink" id="app-btn-online">PLAY ONLINE</button>
+          <button class="btn white" id="app-btn-how">HOW TO PLAY</button>
+          <button class="btn blue" id="app-btn-settings">SETTINGS</button>
+        </footer>
+      </div>
+    </section>`;
+}
+
+/* ── Title: the builder-first hub ── (live title screen) ─────────────────── */
 export function buildScreens() {
   // ── Title: the builder-first hub ──────────────────────────────────────────
   // Build-A-Dweeb is the hero (MAIN EVENT banner, biggest CTA). The mini-games

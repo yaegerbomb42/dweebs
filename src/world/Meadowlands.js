@@ -62,6 +62,13 @@ export class Meadowlands {
     this.fx = options.fx || null;
     this.toyTown = null;      // handcrafted six-building toy district
 
+    // ── Expedition & Dynasty upgrade: weather & wildlife ──
+    this.weather = 'clear';   // 'clear' | 'rain' | 'fog'
+    this.weatherTimer = 50 + Math.random() * 40;
+    this.rainDrops = null;    // rain particle cloud, visible only while raining
+    this.beetleTimer = 20;    // seconds until the first friendly beetle wanders in
+    this._baseFog = undefined; // scene fog captured lazily before a fog event
+
     this._buildWorld();
     this._createToyTown();
   }
@@ -96,6 +103,89 @@ export class Meadowlands {
     this._createResourceNodes();
     this._createToyRuins();
     this._createDayNight();
+    this._createRainDrops();
+  }
+
+  /** A cheap rain shower: one recycled Points cloud of falling drops. */
+  _createRainDrops() {
+    const count = 500;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 80;
+      positions[i * 3 + 1] = Math.random() * 25;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 80;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({ color: 0x9ecfff, size: 0.18, transparent: true, opacity: 0.55 });
+    this.rainDrops = new THREE.Points(geo, mat);
+    this.rainDrops.visible = false;
+    this.rainDrops.frustumCulled = false;
+    this.group.add(this.rainDrops);
+  }
+
+  /**
+   * Rain showers accelerate berry growth; fog banks roll in (thicker at night)
+   * and make torchlight the village's lifeline. Wired into the day/night cycle.
+   */
+  _updateWeather(dt, colony) {
+    this.weatherTimer -= dt;
+    if (this.weatherTimer <= 0) this._rollWeather(colony);
+    if (this.weather === 'rain' && this.rainDrops) {
+      const pos = this.rainDrops.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - dt * 28;
+        if (y < 0) y = 22 + Math.random() * 3;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
+    }
+  }
+
+  _rollWeather(colony) {
+    const was = this.weather;
+    if (was === 'rain' || was === 'fog') {
+      this._endWeather();
+      this.weather = 'clear';
+      this.weatherTimer = 50 + Math.random() * 60;
+      return;
+    }
+    // Clear skies: roll the next event. Fog creeps in more often at night.
+    const r = Math.random();
+    const fogChance = this.isNight ? 0.3 : 0.15;
+    if (r < 0.35) this._startRain(colony);
+    else if (r < 0.35 + fogChance) this._startFog(colony);
+    else this.weatherTimer = 30 + Math.random() * 40; // stays clear a while longer
+  }
+
+  /** A rain shower rolls in: faster berry growth while it lasts. */
+  _startRain(colony) {
+    this.weather = 'rain';
+    this.weatherTimer = 18 + Math.random() * 17;
+    if (this.rainDrops) this.rainDrops.visible = true;
+    colony?._addLog('🌧️ A rain shower passes over the meadow — the berry bushes drink deep!');
+  }
+
+  /** A fog bank rolls in: torches become the village's lifeline. */
+  _startFog(colony) {
+    this.weather = 'fog';
+    this.weatherTimer = 15 + Math.random() * 15;
+    if (this._baseFog === undefined) this._baseFog = this.scene ? this.scene.fog : null;
+    if (this.scene) this.scene.fog = new THREE.Fog(0x9fb0c3, 8, 40);
+    colony?._addLog('🌫️ Fog rolls in — the village torches are the only light to trust!');
+  }
+
+  _endWeather() {
+    if (this.rainDrops) this.rainDrops.visible = false;
+    if (this.scene && this._baseFog !== undefined) this.scene.fog = this._baseFog;
+  }
+
+  /** True when a lit village torch stands within r meters of (x, z). */
+  _torchNear(x, z, r) {
+    for (const t of this.torchlights) {
+      if (Math.hypot(t.x - x, t.z - z) < r) return true;
+    }
+    return false;
   }
 
   _getHeight(x, z) {
@@ -196,7 +286,6 @@ export class Meadowlands {
     const mat = toonMat({
       vertexColors: true,
       flatShading: true,
-      roughness: 0.9,
     });
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -908,17 +997,25 @@ export class Meadowlands {
     this.fireflies = points;
   }
 
-  /** Two more ancient toy ruins, each with a 3-plate puzzle guarding a vault. */
+  /**
+   * Two ancient toy ruins, each a three-chamber vault:
+   *   1. Sequential pressure plates (pressed in plate order — wrong order resets),
+   *   2. a moving stone block that grinds aside,
+   *   3. a locked treasure chest holding a rare blueprint.
+   * The outer vault still pays gold, a hat and a tool when the plates complete.
+   */
   _createToyRuins() {
     const sites = [
-      { id: 'sunken', name: 'Sunken Toy Ruin', x: -20, z: 14 },
-      { id: 'bluff', name: 'Bluff Toy Ruin', x: 30, z: -6 },
+      { id: 'sunken', name: 'Sunken Toy Ruin', x: -20, z: 14, blueprint: 'gazebo' },
+      { id: 'bluff', name: 'Bluff Toy Ruin', x: 30, z: -6, blueprint: 'windmill' },
     ];
     for (const site of sites) {
       const y = this._getHeight(site.x, site.z);
       const ruin = {
         id: site.id, name: site.name, x: site.x, y, z: site.z,
         plates: [], vault: null, opened: false, progress: 0,
+        stage: 'plates', sequence: [],
+        block: null, chest: null,
         loot: {
           hat: HAT_POOL[Math.floor(Math.random() * HAT_POOL.length)],
           tool: TOOL_POOL[Math.floor(Math.random() * TOOL_POOL.length)],
@@ -929,11 +1026,50 @@ export class Meadowlands {
       const offsets = [[-3, 2], [3, 2], [0, -3.5]];
       offsets.forEach(([ox, oz], i) => {
         const plate = this._createPressurePlate(site.x + ox, y + 0.1, site.z + oz, `${site.id}_plate_${i}`);
+        plate.order = i;
         ruin.plates.push(plate);
       });
       ruin.vault = this._createVault(site.x, y, site.z);
+      // Chamber 2: a stone slab sealing the inner sanctum behind the vault.
+      ruin.block = this._createStoneBlock(site.x, y, site.z - 2.5);
+      // Chamber 3: the locked treasure chest with a rare blueprint.
+      ruin.chest = this._createChest(site.x, y, site.z - 5, site.blueprint);
       this.ruins.push(ruin);
     }
+  }
+
+  /** A stone slab that grinds sideways once the plate sequence completes. */
+  _createStoneBlock(x, y, z) {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(3.2, 2.4, 1.2),
+      toonMat({ color: 0x64748b, flatShading: true })
+    );
+    mesh.position.set(x, y + 1.2, z);
+    this.group.add(mesh);
+    return { mesh, fromX: x, toX: x + 5, progress: 0 };
+  }
+
+  /** A locked treasure chest; opening it grants a rare blueprint. */
+  _createChest(x, y, z, blueprint) {
+    const chest = new THREE.Group();
+    chest.position.set(x, y, z);
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(1.4, 0.8, 1.0),
+      toonMat({ color: 0x78350f, flatShading: true })
+    );
+    box.position.y = 0.4;
+    chest.add(box);
+    const lid = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 0.25, 1.1),
+      toonMat({ color: 0xf59e0b, flatShading: true })
+    );
+    lid.position.y = 0.9;
+    chest.add(lid);
+    const glow = new THREE.PointLight(0xffd23f, 0, 7);
+    glow.position.y = 1.2;
+    chest.add(glow);
+    this.group.add(chest);
+    return { group: chest, lid, glow, blueprint, opened: false };
   }
 
   _createVault(x, y, z) {
@@ -993,33 +1129,67 @@ export class Meadowlands {
     if (this.stuntFeed.length > 12) this.stuntFeed.shift();
   }
 
-  /** Spawn one mischief critter at the map edge, wandering toward the village. */
-  spawnCritter() {
-    if (this.critters.length >= 3) return null;
+  /**
+   * Spawn a critter at the map edge, wandering toward the village.
+   * Kinds: 'mischief' (berry-stealing pest), 'thief' (nocturnal gold thief,
+   * hunted by watchtowers), 'beetle' (friendly gatherer — never targeted).
+   */
+  spawnCritter(kind = 'mischief') {
+    const kinds = {
+      mischief: { hp: 2, speed: 2.2, hostile: true, color: 0x475569, eye: 0xef4444, size: 0.7 },
+      thief: { hp: 2, speed: 3.0, hostile: true, color: 0x232a3a, eye: 0xffd23f, size: 0.6 },
+      beetle: { hp: 1, speed: 1.6, hostile: false, color: 0x2dd4bf, eye: 0x0f172a, size: 0.45 },
+    };
+    const stats = kinds[kind] || kinds.mischief;
+    if (this.critters.length >= 5) return null;
     const ang = Math.random() * Math.PI * 2;
     const r = 45 + Math.random() * 10;
     const x = Math.cos(ang) * r;
     const z = Math.sin(ang) * r;
     const y = this._getHeight(x, z);
     const body = new THREE.Mesh(
-      new THREE.SphereGeometry(0.7, 8, 8),
-      toonMat({ color: 0x475569, flatShading: true })
+      new THREE.SphereGeometry(stats.size, 8, 8),
+      toonMat({ color: stats.color, flatShading: true })
     );
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
-    for (const ex of [-0.25, 0.25]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), eyeMat);
-      eye.position.set(ex, 0.25, 0.55);
+    if (kind === 'beetle') {
+      // A shiny shell on the friendly gatherer's back.
+      const shell = new THREE.Mesh(
+        new THREE.SphereGeometry(stats.size * 0.85, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+        toonMat({ color: 0x0d9488, flatShading: true })
+      );
+      shell.position.y = stats.size * 0.35;
+      body.add(shell);
+    }
+    if (kind === 'thief') {
+      // A burglar's mask stripe across the eyes.
+      const mask = new THREE.Mesh(
+        new THREE.BoxGeometry(stats.size * 1.1, stats.size * 0.35, 0.1),
+        new THREE.MeshBasicMaterial({ color: 0x0b0e14 })
+      );
+      mask.position.set(0, stats.size * 0.35, stats.size * 0.8);
+      body.add(mask);
+    }
+    const eyeMat = new THREE.MeshBasicMaterial({ color: stats.eye });
+    for (const ex of [-stats.size * 0.36, stats.size * 0.36]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(stats.size * 0.17, 6, 6), eyeMat);
+      eye.position.set(ex, stats.size * 0.36, stats.size * 0.78);
       body.add(eye);
     }
-    body.position.set(x, y + 0.7, z);
+    body.position.set(x, y + stats.size, z);
     noOutline(body);
     this.group.add(body);
     const critter = {
-      x, y, z, hp: 2, speed: 2.2, mesh: body,
-      state: 'approach', stealTimer: 0, chewTarget: null, homeX: x, homeZ: z,
+      kind, x, y, z, hp: stats.hp, speed: stats.speed, hostile: stats.hostile, mesh: body,
+      hover: stats.size, state: 'approach', stealTimer: 0, gatherTimer: 0,
+      chewTarget: null, homeX: x, homeZ: z,
     };
     this.critters.push(critter);
     return critter;
+  }
+
+  /** Spawn a friendly gatherer beetle (never targeted by defenders or cannons). */
+  spawnBeetle() {
+    return this.spawnCritter('beetle');
   }
 
   removeCritter(critter) {
@@ -1054,15 +1224,19 @@ export class Meadowlands {
         pos.needsUpdate = true;
       }
     }
+    // Fog banks make torchlight the village's lifeline: torches burn brighter.
+    const fogBoost = this.weather === 'fog' ? 1.6 : 1;
     for (const torch of this.torchlights) {
-      torch.light.intensity = this.isNight ? 1.6 : 0.4;
+      torch.light.intensity = (this.isNight ? 1.6 : 0.4) * fogBoost;
     }
   }
 
   _updateBushRegrowth(dt) {
+    // Rain showers accelerate crop growth.
+    const growthMult = this.weather === 'rain' ? 3 : 1;
     for (const bush of this.berryBushes) {
       if (bush.available >= 5) continue;
-      bush.regenTimer = (bush.regenTimer || 0) + dt;
+      bush.regenTimer = (bush.regenTimer || 0) + dt * growthMult;
       if (bush.regenTimer >= 20) {
         bush.regenTimer = 0;
         bush.available = Math.min(5, bush.available + 1);
@@ -1075,32 +1249,61 @@ export class Meadowlands {
 
   _updateRuins(dt, dweebs, colony) {
     for (const ruin of this.ruins) {
-      if (ruin.opened) continue;
-      let allPressed = true;
-      for (const plate of ruin.plates) {
-        let isPressed = false;
-        for (const d of dweebs) {
-          if (!d.body) continue;
-          const p = d.body.translation();
-          if (Math.hypot(p.x - plate.x, p.z - plate.z) < 1.4 && Math.abs(p.y - plate.y) < 0.8) {
-            isPressed = true;
-            break;
+      // ── Chamber 1: sequential pressure plates, in plate order. ──
+      if (ruin.stage === 'plates') {
+        for (const plate of ruin.plates) {
+          let isPressed = false;
+          for (const d of dweebs) {
+            if (!d.body) continue;
+            const p = d.body.translation();
+            if (Math.hypot(p.x - plate.x, p.z - plate.z) < 1.4 && Math.abs(p.y - plate.y) < 0.8) {
+              isPressed = true;
+              break;
+            }
+          }
+          plate.pressed = isPressed;
+          plate.depressAmount = THREE.MathUtils.lerp(plate.depressAmount, isPressed ? 0.15 : 0, dt * 10);
+          plate.mesh.position.y = plate.y + 0.15 - plate.depressAmount;
+          if (isPressed) {
+            if (plate.order === ruin.sequence.length) {
+              ruin.sequence.push(plate.order); // next plate in the sequence
+            } else if (plate.order > ruin.sequence.length) {
+              ruin.sequence.length = 0; // wrong order — the mechanism resets
+            }
           }
         }
-        plate.pressed = isPressed;
-        plate.depressAmount = THREE.MathUtils.lerp(plate.depressAmount, isPressed ? 0.15 : 0, dt * 10);
-        plate.mesh.position.y = plate.y + 0.15 - plate.depressAmount;
-        if (!isPressed) allPressed = false;
-      }
-      if (allPressed) {
-        ruin.opened = true;
-        this._pushStunt('vault', ruin.x, ruin.z);
-        if (colony) {
-          colony.resources.gold = (colony.resources.gold || 0) + ruin.loot.coins;
-          colony.hats.push(ruin.loot.hat);
-          colony.tools.push(ruin.loot.tool);
-          colony._addLog(`🏆 ${ruin.name} vault opened! Found ${ruin.loot.hat}, ${ruin.loot.tool} and ${ruin.loot.coins} gold coins!`);
+        if (ruin.sequence.length >= ruin.plates.length) {
+          ruin.opened = true;
+          ruin.stage = 'block';
+          this._pushStunt('vault', ruin.x, ruin.z);
+          if (colony) {
+            colony.resources.gold = (colony.resources.gold || 0) + ruin.loot.coins;
+            colony.hats.push(ruin.loot.hat);
+            colony.tools.push(ruin.loot.tool);
+            colony._addLog(`🏆 ${ruin.name} vault opened! Found ${ruin.loot.hat}, ${ruin.loot.tool} and ${ruin.loot.coins} gold coins!`);
+          }
         }
+      }
+      // ── Chamber 2: the stone block grinds aside, revealing the sanctum. ──
+      if (ruin.stage === 'block' && ruin.block) {
+        const b = ruin.block;
+        b.progress = Math.min(1, b.progress + dt / 2.5);
+        b.mesh.position.x = b.fromX + (b.toX - b.fromX) * b.progress;
+        if (b.progress >= 1) ruin.stage = 'chest';
+      }
+      // ── Chamber 3: the locked chest springs open with a rare blueprint. ──
+      if (ruin.stage === 'chest' && ruin.chest && !ruin.chest.opened) {
+        const chest = ruin.chest;
+        chest.opened = true;
+        chest.lid.position.y += 0.5;
+        chest.lid.rotation.x = -0.9;
+        chest.glow.intensity = 2;
+        if (colony) {
+          if (typeof colony.unlockBlueprint === 'function') colony.unlockBlueprint(chest.blueprint);
+          else if (colony.unlockedBlueprints) colony.unlockedBlueprints.add(chest.blueprint);
+          colony._addLog(`🎁 The ${ruin.name} treasure chest held a rare blueprint: ${chest.blueprint}!`);
+        }
+        ruin.stage = 'done';
       }
     }
     // Animate opened vault lids sliding open.
@@ -1116,14 +1319,26 @@ export class Meadowlands {
     this.critterTimer -= dt;
     if (this.critterTimer <= 0) {
       this.critterTimer = 45;
-      this.spawnCritter();
+      // Thieves are nocturnal: they only slink in after dark.
+      this.spawnCritter(this.isNight && Math.random() < 0.65 ? 'thief' : 'mischief');
+    }
+    // Friendly gatherer beetles wander in on their own schedule (max 2).
+    this.beetleTimer -= dt;
+    if (this.beetleTimer <= 0) {
+      this.beetleTimer = 55;
+      if (this.critters.filter(c => c.kind === 'beetle').length < 2) this.spawnBeetle();
     }
     const barricades = this.buildingManager
       ? this.buildingManager.placedStructures.filter(s => s.id === 'cannon')
       : [];
+    const silos = this.buildingManager
+      ? this.buildingManager.placedStructures.filter(s => s.id === 'silo')
+      : [];
     for (let i = this.critters.length - 1; i >= 0; i--) {
       const c = this.critters[i];
-      if (c.state === 'flee') {
+      if (c.kind === 'beetle') {
+        this._updateBeetle(c, dt, colony, silos);
+      } else if (c.state === 'flee') {
         // Run home and despawn at the edge.
         const dx = c.homeX - c.x;
         const dz = c.homeZ - c.z;
@@ -1132,12 +1347,17 @@ export class Meadowlands {
         c.z += (dz / len) * c.speed * 1.5 * dt;
         if (Math.hypot(c.x - c.homeX, c.z - c.homeZ) < 2) this.removeCritter(c);
       } else {
-        // Chew the nearest barricade if one is in the way.
+        // Thieves only prowl at night — dawn sends them fleeing.
+        if (c.kind === 'thief' && !this.isNight) c.state = 'flee';
+        // Mischief critters chew the nearest barricade if one is in the way
+        // (thieves are too sneaky to stop and chew).
         let target = null;
-        let best = 3;
-        for (const b of barricades) {
-          const d = Math.hypot(b.pos.x - c.x, b.pos.z - c.z);
-          if (d < best) { best = d; target = b; }
+        if (c.kind === 'mischief') {
+          let best = 3;
+          for (const b of barricades) {
+            const d = Math.hypot(b.pos.x - c.x, b.pos.z - c.z);
+            if (d < best) { best = d; target = b; }
+          }
         }
         if (target) {
           c.chewTarget = target;
@@ -1155,21 +1375,75 @@ export class Meadowlands {
           c.z += (dz / len) * c.speed * dt;
           c.y = this._getHeight(c.x, c.z);
         }
-        // Reached the campfire? Steal a berry, then flee.
+        // Reached the campfire? Steal, then flee.
         if (Math.hypot(c.x, c.z) < 4) {
           c.stealTimer += dt;
-          if (c.stealTimer >= 3) {
+          // Thieves strike faster; in fog they strike twice as fast again —
+          // unless a village torch is watching.
+          let threshold = c.kind === 'thief' ? 2.5 : 3;
+          if (c.kind === 'thief' && this.weather === 'fog' && !this._torchNear(c.x, c.z, 8)) {
+            threshold = 1.25;
+          }
+          if (c.stealTimer >= threshold) {
             c.stealTimer = 0;
             if (colony && colony.resources.berries > 0) {
               colony.resources.berries -= 1;
-              colony._addLog('🦝 A mischief critter snatched a berry from the campfire!');
+              colony._addLog(c.kind === 'thief'
+                ? '🥷 A nocturnal thief snatched a berry from the campfire!'
+                : '🦝 A mischief critter snatched a berry from the campfire!');
+            }
+            if (c.kind === 'thief' && colony && colony.resources.gold > 0) {
+              colony.resources.gold -= 1;
+              colony._addLog('🥷 The thief pocketed a gold coin and vanished into the dark!');
             }
             c.state = 'flee';
           }
         }
       }
       if (c.mesh) {
-        c.mesh.position.set(c.x, c.y + 0.7 + Math.sin(this.clock * 6 + c.x) * 0.08, c.z);
+        c.mesh.position.set(c.x, c.y + (c.hover || 0.7) + Math.sin(this.clock * 6 + c.x) * 0.08, c.z);
+      }
+    }
+  }
+
+  /** Friendly gatherer beetle: trundles between berry bushes, banking berries. */
+  _updateBeetle(c, dt, colony, silos) {
+    // Pick the nearest bush that still has berries.
+    let bush = null;
+    let best = Infinity;
+    for (const b of this.berryBushes) {
+      if (b.available <= 0) continue;
+      const d = Math.hypot(b.x - c.x, b.z - c.z);
+      if (d < best) { best = d; bush = b; }
+    }
+    if (!bush) {
+      // Nothing to gather — amble in a lazy circle.
+      c.x += Math.cos(this.clock * 0.4 + c.homeX) * c.speed * 0.3 * dt;
+      c.z += Math.sin(this.clock * 0.4 + c.homeZ) * c.speed * 0.3 * dt;
+      c.y = this._getHeight(c.x, c.z);
+      return;
+    }
+    const dx = bush.x - c.x;
+    const dz = bush.z - c.z;
+    const len = Math.hypot(dx, dz) || 1;
+    if (len > 2.5) {
+      c.x += (dx / len) * c.speed * dt;
+      c.z += (dz / len) * c.speed * dt;
+      c.y = this._getHeight(c.x, c.z);
+      c.gatherTimer = 0;
+    } else {
+      // Nose in the bush: every 6 seconds it hauls a berry home.
+      c.gatherTimer += dt;
+      if (c.gatherTimer >= 6) {
+        c.gatherTimer = 0;
+        bush.available -= 1;
+        if (colony) {
+          colony.addResource('berries', 1, silos);
+          if (!c.greeted) {
+            c.greeted = true;
+            colony._addLog('🪲 A friendly gatherer beetle joined the harvest — free berries!');
+          }
+        }
       }
     }
   }
@@ -1191,8 +1465,22 @@ export class Meadowlands {
         if (data.ruinsOpened.includes(ruin.id)) {
           ruin.opened = true;
           ruin.progress = 1;
-          ruin.vault.lid.position.y = 3.4;
-          ruin.vault.glow.intensity = 2.5;
+          ruin.stage = 'done';
+          ruin.sequence = ruin.plates.map(p => p.order ?? 0);
+          if (ruin.vault) {
+            ruin.vault.lid.position.y = 3.4;
+            ruin.vault.glow.intensity = 2.5;
+          }
+          if (ruin.block) {
+            ruin.block.progress = 1;
+            ruin.block.mesh.position.x = ruin.block.toX;
+          }
+          if (ruin.chest) {
+            ruin.chest.opened = true;
+            ruin.chest.lid.position.y += 0.5;
+            ruin.chest.lid.rotation.x = -0.9;
+            ruin.chest.glow.intensity = 2;
+          }
         }
       }
     }
@@ -1203,8 +1491,9 @@ export class Meadowlands {
   update(dt, dweebs = [], colony = null) {
     this.clock += dt;
 
-    // Day/night cycle, berry regrowth, vault puzzles and critters.
+    // Day/night cycle, weather, berry regrowth, vault puzzles and critters.
     this._updateDayNight(dt);
+    this._updateWeather(dt, colony);
     this._updateBushRegrowth(dt);
     this._updateCritters(dt, dweebs, colony);
 

@@ -22,7 +22,8 @@ import { refreshHub, HUB_TIPS } from './hub-extras.js';
 import { setMsg } from './dom.js';
 import { renderLobby, wireLobby, updatePing } from './lobby.js';
 import { mountSettings } from './settings-screen.js';
-import { loadSettings, saveSettings, serverUrl } from './settings.js';
+import { loadSettings, saveSettings, serverUrl, onSettingsChange, DEFAULT_BINDINGS } from './settings.js';
+import { createInput } from './input.js';
 import {
   isMatchLive, isAtResults, showOfflineMenu, hideOfflineMenu,
   startOfflineMatch, launchGameMode, watchGameScreens,
@@ -61,7 +62,14 @@ export function bootApp() {
   // (This was a silent bug: three of the four screens never reached the DOM.)
   shell.append(nodes.title, nodes.online, nodes.lobby, nodes.settings);
 
-  const ctx = { shell, nodes, net, toast, loading, settings };
+  // ─── unified input (keyboard + mouse + gamepad, app-owned) ───
+  // Lives in the app layer so it never touches src/player/Controller.js;
+  // subgames can adopt input.getState() later via window.__dweebsApp.input.
+  const input = createInput({ bindings: settings.bindings || DEFAULT_BINDINGS });
+  input.setGamepadEnabled(settings.gamepad !== false);
+  onSettingsChange(s => input.setGamepadEnabled(s.gamepad !== false));
+
+  const ctx = { shell, nodes, net, toast, loading, settings, input };
 
   const router = createRouter({ onRoute: route => onRoute(route, ctx) });
   ctx.router = router;
@@ -83,7 +91,7 @@ export function bootApp() {
   // First paint of the shell is independent of the game's loading screen.
   loading.progress(100, 'Ready');
 
-  return { router, net, toast, loading, ctx };
+  return { router, net, toast, loading, input, ctx };
 }
 
 // ─── NetClient seam ──────────────────────────────────────────────────────────
@@ -139,7 +147,20 @@ export async function upgradeNetClient(opts) {
 // ─── title ───
 
 function wireTitle({ nodes, router, toast }) {
-  // ── The Dweeb Mall: 5 Games in One Living Universe ──
+  // ── The Dweeb Mall: every launchable button carries data-launch, rendered
+  // from src/app/mall.js. One generic handler means a new mall card can never
+  // be wired to a button that doesn't exist (Escape/Mimic were, before).
+  for (const b of nodes.title.querySelectorAll('[data-launch]')) {
+    b.addEventListener('click', () => {
+      let launch;
+      try { launch = JSON.parse(b.dataset.launch); } catch { return; }
+      launchGameMode(launch.mode, launch.arena, launch.submode);
+    });
+  }
+
+  // ── Builder-first hub cabinets: the arcade buttons carry a bare data-launch
+  // marker (picked up by the shimmer hook below); their modes are wired
+  // explicitly here so every button id in the hub markup is bound in boot.js.
   nodes.title.querySelector('#app-btn-classic')?.addEventListener('click', () => {
     launchGameMode('derby', 'stadium');
   });

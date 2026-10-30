@@ -364,12 +364,15 @@ describe('bigger hub visual system in shell.css', () => {
   });
 
   it('keeps every new rule scoped so the shell cannot fight the game CSS', () => {
+    // .mall-* is the milestone hub's shell-scoped prefix (mall cards,
+    // difficulty badges, preview animations) — same shell, same guarantee.
     const lines = cssSrc.split('\n').filter(l => {
       const t = l.trim();
       return t.startsWith('.')
         && !t.startsWith('.app-') && !t.startsWith('.hub-')
         && !t.startsWith('.hero-') && !t.startsWith('.arcade-')
-        && !t.startsWith('.diff-') && !t.startsWith('.mall-badge')
+        && !t.startsWith('.diff-') && !t.startsWith('.mall-')
+        && !t.startsWith('.mall-badge')
         && !t.startsWith('.btn') && !t.startsWith('@');
     });
     expect(lines, `unscoped rules: ${lines.slice(0, 5).join(' | ')}`).toEqual([]);

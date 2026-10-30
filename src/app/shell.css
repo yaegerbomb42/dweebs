@@ -334,7 +334,7 @@
 .app-bind:focus-visible { outline: 4px solid var(--blue); outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-toast, #load-fill, .app-bind.is-listening { transition: none; animation: none; }
+  .app-toast, #load-fill, .app-bind.is-listening, .mall-icon { transition: none; animation: none; }
 }
 /* The player-facing toggle sets the same flag for in-game shake and confetti. */
 :root[data-reduced-motion="on"] #app-toasts { transition: none; }
@@ -556,6 +556,46 @@
   background-size: 220% 100%;
   animation: launchSheen .45s linear infinite;
 }
+/* ─── mall preview animations: each card's icon loops its own little motion,
+ * so the hub reads as alive before anything is pressed. Paused for
+ * prefers-reduced-motion below, same as the other shell animations. ─── */
+.mall-icon.anim-bounce { animation: mall-bounce 1.8s ease-in-out infinite; }
+.mall-icon.anim-grow   { animation: mall-grow 2.6s ease-in-out infinite; }
+.mall-icon.anim-shake  { animation: mall-shake 1.2s ease-in-out infinite; }
+.mall-icon.anim-wobble { animation: mall-wobble 2.2s ease-in-out infinite; }
+.mall-icon.anim-dash   { animation: mall-dash 1.6s ease-in-out infinite; }
+.mall-icon.anim-flip   { animation: mall-flip 2.8s ease-in-out infinite; }
+@keyframes mall-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@keyframes mall-grow   { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+@keyframes mall-shake  { 0%, 100% { transform: translateX(0) rotate(0); } 25% { transform: translateX(-3px) rotate(-4deg); } 75% { transform: translateX(3px) rotate(4deg); } }
+@keyframes mall-wobble { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+@keyframes mall-dash   { 0%, 100% { transform: translateX(-6px); } 50% { transform: translateX(6px); } }
+@keyframes mall-flip   { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(-1); } }
+/* ─── difficulty badges ─── */
+.mall-diff {
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--ink);
+  background: #fff;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 1px 10px;
+  margin-bottom: 8px;
+  box-shadow: 0 2px 0 var(--ink);
+}
+.mall-diff-1 { color: #15803d; }
+.mall-diff-2 { color: #b45309; }
+.mall-diff-3 { color: #b91c1c; }
+.mall-sub-btn { position: relative; }
+.mall-card-title {
+  font-family: var(--display);
+  font-size: 21px;
+  color: var(--ink);
+  margin-bottom: 6px;
+  line-height: 1.1;
+}
+
 @keyframes launchSheen { to { background-position: -220% 0; } }
 
 /* The hub honours reduced motion (and the player-facing toggle in Settings). */

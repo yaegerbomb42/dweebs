@@ -18,7 +18,7 @@ import { RngStreams } from './rng.js';
 import { FixedStepClock } from './accumulator.js';
 import { EventQueue } from './events.js';
 import { SimPhysics } from './physics.js';
-import { SimArena, STAGE_RADIUS, WATER_LEVEL } from './arena.js';
+import { SimArena, STAGE_RADIUS, WATER_LEVEL, TELEGRAPH_TICKS } from './arena.js';
 import { SimDweeb } from './dweeb.js';
 import { SimCombat } from './combat.js';
 import { SimMatch, Phase } from './match.js';
@@ -53,13 +53,14 @@ export class Sim {
     /** @type {string[]} item key per item id, index 0 = id 1 */
     this.itemKeys = [];
     this.powerupTimer = 0;
+    this._respawnAvoid = [];
     this.highlight = { launch: 0, id: 0, by: 0 };
   }
 
   /** Build the world. Await exactly once before adding seats or stepping. */
   async init() {
     this.physics = await SimPhysics.create();
-    this.arena = new SimArena(this.physics, this.rng.stream('drops'));
+    this.arena = new SimArena(this.physics, this.rng, this.config.arena ?? 'stadium');
     this.match = new SimMatch({ events: this.events, config: this.config });
     this.combat = new SimCombat({
       physics: this.physics,
@@ -110,6 +111,7 @@ export class Sim {
     this.arena.suddenDeath = false;
     this.arena.time = 0;
     this.arena.itemTimer = Math.round(6 * TICK_HZ);
+    this.arena.pendingDrop = null;
     this.arena.lastRareDrop = Object.create(null);
     this.powerupTimer = Math.round(10 * TICK_HZ);
     this.match.beginRound(this._api());
@@ -119,6 +121,36 @@ export class Sim {
     for (const it of this.items) this.physics.remove(it.id);
     this.items = [];
     this.itemKeys = [];
+  }
+
+  /**
+   * Telegraph the next sky drop: pick it now, warn the view, land it TELEGRAPH_TICKS later.
+   * The pick (key, position, rare cooldown stamp) happens once, up front, from the seeded
+   * stream — the drop itself is then fully determined.
+   */
+  _telegraphDrop() {
+    if (!this.config.items) return;
+    if (this.items.length >= this.arena.itemCap) return;
+    const live = new Map();
+    for (const it of this.items) live.set(it.key, (live.get(it.key) || 0) + 1);
+    const pd = this.arena.planDrop(this.match.suddenDeath ? FINALE_BIAS : null, live);
+    if (!pd) return;
+    this.events.emit('telegraph', {
+      kind: pd.key, x: pd.x, z: pd.z, mag: TELEGRAPH_TICKS / TICK_HZ,
+      tier: pd.rare ? 1 : 0, // rare drops telegraph gold
+    });
+  }
+
+  /** Land a telegraphed drop. A drop with no telegraph (restored mid-warn) is picked live. */
+  _landDrop() {
+    if (!this.config.items) return;
+    const pd = this.arena.pendingDrop;
+    this.arena.pendingDrop = null;
+    if (pd) {
+      this.spawnItem(pd.key, { x: pd.x, y: 14, z: pd.z });
+      return;
+    }
+    this.dropItem(this.match.suddenDeath ? FINALE_BIAS : null);
   }
 
   /** Drop an item from the sky, if the table allows one and the live cap is not reached. */
@@ -194,7 +226,16 @@ export class Sim {
   }
 
   _respawn(d) {
-    const p = this.arena.randomGroundPoint(5);
+    // Separate from every other dweeb AND from this tick's earlier respawns: teleporting two
+    // capsules into the same spot used to make the solver explosively depenetrate them —
+    // dweebs clipping through the floor or launching sideways on respawn.
+    const avoid = [];
+    for (const o of this.dweebs) {
+      if (o && o !== d && !o.eliminated) avoid.push({ x: o.position[0], z: o.position[2] });
+    }
+    avoid.push(...this._respawnAvoid);
+    const p = this.arena.separatedGroundPoint(5, avoid);
+    this._respawnAvoid.push(p);
     d.respawn({ x: p.x, y: 9, z: p.z });
     this.events.emit('respawn', { a: d.id, x: p.x, y: 9, z: p.z });
   }
@@ -246,6 +287,8 @@ export class Sim {
     this.tick++;
     this.time = this.tick * TICK_DT;
     this.events.tick = this.tick;
+    // Respawn points picked this tick, so simultaneous respawns separate from each other.
+    this._respawnAvoid = [];
     const seated = this.dweebs.filter(Boolean);
     const playing = this.match.phase === Phase.PLAYING;
 
@@ -268,7 +311,9 @@ export class Sim {
     for (const it of this.items) this._syncItem(it);
 
     // 4. the stage moves
-    if (this.arena.step() === 'drop') this.dropItem(this.match.suddenDeath ? FINALE_BIAS : null);
+    const stageSig = this.arena.step();
+    if (stageSig === 'telegraph') this._telegraphDrop();
+    else if (stageSig === 'drop') this._landDrop();
     if (--this.powerupTimer <= 0) {
       this.powerupTimer = Math.round(10 * TICK_HZ);
       this._dropPowerUp();
@@ -412,7 +457,8 @@ export class Sim {
       arena: {
         time: this.arena.time, itemTimer: this.arena.itemTimer,
         suddenDeath: this.arena.suddenDeath, lastRareDrop: { ...this.arena.lastRareDrop },
-        spinAngle: this.arena.spinAngle,
+        spinAngle: this.arena.spinAngle, arenaId: this.arena.arenaId,
+        pendingDrop: this.arena.pendingDrop ? { ...this.arena.pendingDrop } : null,
       },
       match: this.match.snapshot(),
       bots: this.bots.map(b => (b ? b.snapshot() : null)).filter(Boolean),
@@ -479,6 +525,7 @@ export class Sim {
     for (let i = 0; i < snap.bots.length; i++) this.bots[i]?.restore(snap.bots[i]);
 
     this.arena.rng = this.rng.stream('drops');
+    this.arena.hazardRng = this.rng.stream('hazards');
     this.combat.rng = this.rng.stream('combat');
 
     this.powerupTimer = snap.powerupTimer;

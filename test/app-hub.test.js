@@ -151,7 +151,9 @@ describe('hub visual system in shell.css', () => {
   });
 
   it('keeps every rule scoped so the shell cannot fight the game CSS', () => {
-    const lines = cssSrc.split('\n').filter(l => l.trim().startsWith('.') && !l.trim().startsWith('.app-') && !l.trim().startsWith('.hub-') && !l.trim().startsWith('.hero-') && !l.trim().startsWith('.arcade-') && !l.trim().startsWith('.diff-') && !l.trim().startsWith('.mall-badge') && !l.trim().startsWith('.btn') && !l.trim().startsWith('@'));
+    // .mall-* is the milestone hub's shell-scoped prefix (mall cards, difficulty
+    // badges, preview animations) — same shell, same scoping guarantee.
+    const lines = cssSrc.split('\n').filter(l => l.trim().startsWith('.') && !l.trim().startsWith('.app-') && !l.trim().startsWith('.hub-') && !l.trim().startsWith('.hero-') && !l.trim().startsWith('.arcade-') && !l.trim().startsWith('.diff-') && !l.trim().startsWith('.mall-') && !l.trim().startsWith('.mall-badge') && !l.trim().startsWith('.btn') && !l.trim().startsWith('@'));
     expect(lines, `unscoped rules: ${lines.slice(0, 5).join(' | ')}`).toEqual([]);
   });
 });

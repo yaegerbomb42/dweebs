@@ -104,6 +104,18 @@ export class SimDweeb {
     this.styleTier = 0;
     this.styleTimer = 0;
     this.superArmed = false;
+    // Super-smash meter: consecutive landed punches build it faster (mirrors the live
+    // CombatSystem's streak; see BALANCE.style.streakWindow).
+    this.punchStreak = 0;
+    this.punchStreakT = -99;
+    // Stage-hazard cooldowns, in seconds.
+    this.hazardCd = 0;
+    this.lavaCd = 0;
+    // pitfall: over a crumbled rim tile — ground collision is off until we're back over floor.
+    this.pitfall = false;
+    // conveyor belt drift, refreshed by stageHazards every tick (0 when off every belt).
+    this.beltVX = 0;
+    this.beltVZ = 0;
 
     // Previous tick's input, for edge detection.
     this.prev = { jump: false, attack: false, grab: false, dodge: false, superYeet: false, drop: false };
@@ -131,7 +143,9 @@ export class SimDweeb {
     this._pos[0] = p.x; this._pos[1] = p.y; this._pos[2] = p.z;
     this._vel[0] = v.x; this._vel[1] = v.y; this._vel[2] = v.z;
     const wasGrounded = this.grounded;
-    const hit = this.physics.raycast(p.x, p.y, p.z, 0, -1, 0, 0.62);
+    // Exclude our own capsule: with solid=true a ray from the body center otherwise hits
+    // itself at distance 0 and every dweeb reads grounded while falling.
+    const hit = this.physics.raycast(p.x, p.y, p.z, 0, -1, 0, 0.62, this.pitfall, this.physics.colliderOf(this.id));
     this.grounded = !!hit && v.y <= 0.01;
     if (this.grounded) {
       this.groundY = p.y - 0.62;
@@ -193,6 +207,8 @@ export class SimDweeb {
     this.megaT = Math.max(0, this.megaT - TICK_DT);
     this.zoomT = Math.max(0, this.zoomT - TICK_DT);
     this.bubbleT = Math.max(0, this.bubbleT - TICK_DT);
+    this.hazardCd = Math.max(0, this.hazardCd - TICK_DT);
+    this.lavaCd = Math.max(0, this.lavaCd - TICK_DT);
     if (this.styleTimer > 0) {
       this.styleTimer -= TICK_DT;
       if (this.styleTimer <= 0) this.style = 0;
@@ -318,7 +334,7 @@ export class SimDweeb {
         speed = MV.speed * 1.5;
       }
 
-      const tx = this.input.moveX * speed, tz = this.input.moveZ * speed;
+      const tx = this.input.moveX * speed + this.beltVX, tz = this.input.moveZ * speed + this.beltVZ;
       const accel = (this.grounded ? MV.groundAccel : MV.airAccel * this.stats.airAccel) * TICK_DT;
       const soft = this.specialFall && !this.grounded ? accel * 0.6 : accel;
       vx = approach(vx, tx, soft);
@@ -396,7 +412,15 @@ export class SimDweeb {
       api?.emit?.('hit', { a: this.id, b: hit.from?.id ?? 0, mag: hit.damage, tier: Math.round(launch) });
     }
     if (this.ragdolling) api?.emit?.('launch', { a: this.id, b: hit.from?.id ?? 0, mag: launch });
-    if (hit.from) addStyle(hit.from, api, 5 + launch * 0.5);
+    if (hit.from) {
+      addStyle(hit.from, api, 5 + launch * 0.5);
+      // Super-smash meter: consecutive landed punches bank bonus style; anything else — a
+      // weapon swing, a throw, a whiffed jab — breaks the attacker's streak.
+      if (hit.punch) streakPunch(hit.from, api);
+      else hit.from.punchStreak = 0;
+    }
+    // Taking a hit breaks your own streak.
+    this.punchStreak = 0;
     return launch;
   }
 
@@ -436,6 +460,14 @@ export class SimDweeb {
     this.superArmed = false;
     this.physics.lockRotations(this.id, true);
     this.physics.setGravityScale(this.id, 1);
+    this.physics.setCollideGround(this.id, true);
+    this.pitfall = false;
+    this.beltVX = 0;
+    this.beltVZ = 0;
+    this.punchStreak = 0;
+    this.punchStreakT = -99;
+    this.hazardCd = 0;
+    this.lavaCd = 0;
     this.physics.setPos(this.id, pos.x, pos.y, pos.z);
     this.physics.setVel(this.id, 0, 0, 0);
     this.sync();
@@ -454,6 +486,14 @@ export class SimDweeb {
     this.swimFlail = 0;
     this.isCharging = false;
     this.charge = 0;
+    this.physics.setCollideGround(this.id, true);
+    this.pitfall = false;
+    this.beltVX = 0;
+    this.beltVZ = 0;
+    this.punchStreak = 0;
+    this.punchStreakT = -99;
+    this.hazardCd = 0;
+    this.lavaCd = 0;
     this.physics.setPos(this.id, pos.x, pos.y, pos.z);
     this.physics.setVel(this.id, 0, 0, 0);
     this.sync();
@@ -495,6 +535,9 @@ export class SimDweeb {
       megaT: this.megaT, zoomT: this.zoomT, bubbleT: this.bubbleT,
       style: this.style, styleTier: this.styleTier, styleTimer: this.styleTimer,
       superArmed: this.superArmed, prev: { ...this.prev },
+      punchStreak: this.punchStreak, punchStreakT: this.punchStreakT,
+      hazardCd: this.hazardCd, lavaCd: this.lavaCd, pitfall: this.pitfall,
+      beltVX: this.beltVX, beltVZ: this.beltVZ,
     };
   }
 
@@ -525,6 +568,21 @@ function addStyle(d, api, amount) {
     d.styleTier = tier;
     api?.emit?.('styleUp', { a: d.id, tier });
   }
+}
+
+/**
+ * Super-smash meter: a punch landed within streakWindow of the previous one continues the
+ * streak, and every level past the first banks streakBonus style. The clock is api.time
+ * (tick / 60), so the streak is a pure function of the event order — deterministic.
+ */
+function streakPunch(d, api) {
+  const S = BALANCE.style;
+  const now = api?.time ?? -99;
+  d.punchStreak = now - d.punchStreakT <= S.streakWindow
+    ? Math.min(S.streakCap, d.punchStreak + 1)
+    : 1;
+  d.punchStreakT = now;
+  if (d.punchStreak > 1) addStyle(d, api, S.streakBonus * (d.punchStreak - 1));
 }
 
 export { addStyle };
