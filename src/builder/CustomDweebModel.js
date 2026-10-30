@@ -7,11 +7,126 @@
 import * as THREE from 'three';
 import { toonMat, noOutline } from '../render/Toon.js';
 
+// Merge resolution: union of the milestone (#4) and wave-2 part registries —
+// every shape/appendage/foot/brow/mouth from BOTH sides is kept.
 export const BODY_SHAPES = ['blob', 'cube', 'spiky', 'star', 'chonk', 'capsule', 'pyramid', 'donut'];
-export const APPENDAGES = ['none', 'horns', 'antennae', 'bunny_ears', 'boxing_gloves', 'plungers', 'spikes', 'tail', 'jetpack', 'wings', 'ram_plates', 'shock_gloves', 'satellite'];
+export const APPENDAGES = ['none', 'horns', 'antennae', 'bunny_ears', 'boxing_gloves', 'plungers', 'spikes', 'tail',
+  'dragon_wings', 'anvil_tail', 'magnet_eyes', 'spring_stompers',
+  'jetpack', 'wings', 'ram_plates', 'shock_gloves', 'satellite'];
 export const FEET_TYPES = ['pegs', 'coils', 'stompers', 'treads', 'jet_skates'];
 export const BROW_STYLES = ['angry', 'derpy', 'confident', 'crazy', 'sleepy', 'none'];
 export const MOUTH_STYLES = ['grin', 'teeth', 'open', 'frown', 'fangs'];
+
+// Elemental color palettes — unlocked through tournament / combat progression.
+// Each entry carries its unlock condition as data (see paletteUnlocked below).
+export const ELEMENTAL_PALETTES = {
+  ember: {
+    name: 'Ember', primaryColor: '#ff4d00', accentColor: '#ffd23f', eyeColor: '#fff3d6',
+    unlock: 'Enter the tournament ladder', unlockKey: 'tournament_entered',
+  },
+  frost: {
+    name: 'Frost', primaryColor: '#7dd3fc', accentColor: '#e0f2fe', eyeColor: '#0c4a6e',
+    unlock: 'Win a quarterfinal bout', unlockKey: 'qf_win',
+  },
+  storm: {
+    name: 'Storm', primaryColor: '#7b2cbf', accentColor: '#00f5d4', eyeColor: '#ffffff',
+    unlock: 'Reach the grand final', unlockKey: 'final_reached',
+  },
+  terra: {
+    name: 'Terra', primaryColor: '#65a30d', accentColor: '#a16207', eyeColor: '#1a2e05',
+    unlock: 'Win a semifinal bout', unlockKey: 'sf_win',
+  },
+  void: {
+    name: 'Void', primaryColor: '#1e1b4b', accentColor: '#c026d3', eyeColor: '#f5d0fe',
+    unlock: 'Win the tournament', unlockKey: 'tournament_win',
+  },
+  solar: {
+    name: 'Solar', primaryColor: '#fbbf24', accentColor: '#fff7ed', eyeColor: '#7c2d12',
+    unlock: 'Deal 500 total damage in the arena', unlockKey: 'damage_500',
+  },
+};
+
+/** Apply an elemental palette's colors onto a build config (pure — returns a new config). */
+export function applyElementalPalette(config = {}, paletteId) {
+  const p = ELEMENTAL_PALETTES[paletteId];
+  if (!p) return { ...config };
+  return {
+    ...config,
+    primaryColor: p.primaryColor,
+    accentColor: p.accentColor,
+    eyeColor: p.eyeColor,
+    palette: paletteId,
+  };
+}
+
+/**
+ * Whether an elemental palette is unlocked given the player's progression.
+ * progress: { tournamentsEntered, roundsWon, finalsReached, tournamentsWon, totalDamageDealt }
+ * Collected from tournament state + combat telemetry — never fabricated.
+ */
+export function paletteUnlocked(paletteId, progress = {}) {
+  const p = ELEMENTAL_PALETTES[paletteId];
+  if (!p) return false;
+  switch (p.unlockKey) {
+    case 'tournament_entered': return !!progress.tournamentsEntered;
+    case 'qf_win': return (progress.roundsWon ?? 0) >= 1;
+    case 'sf_win': return (progress.roundsWon ?? 0) >= 2;
+    case 'final_reached': return !!progress.finalsReached;
+    case 'tournament_win': return !!progress.tournamentsWon;
+    case 'damage_500': return (progress.totalDamageDealt ?? 0) >= 500;
+    default: return true;
+  }
+}
+
+// ─── Appendage gameplay ──────────────────────────────────────────────────────
+// Every appendage carries a gameplay descriptor. The four tournament appendages
+// (dragon_wings, anvil_tail, magnet_eyes, spring_stompers) have real per-frame
+// effects implemented in updateAppendageGameplay(); the legacy set is cosmetic.
+export const APPENDAGE_GAMEPLAY = {
+  none:          { label: 'None', desc: 'No appendage.' },
+  horns:         { label: 'Horns', desc: 'Cosmetic.' },
+  antennae:      { label: 'Antennae', desc: 'Cosmetic.' },
+  bunny_ears:    { label: 'Bunny Ears', desc: 'Cosmetic.' },
+  boxing_gloves: { label: 'Boxing Gloves', desc: 'Cosmetic.' },
+  plungers:      { label: 'Plungers', desc: 'Cosmetic.' },
+  spikes:        { label: 'Spikes', desc: 'Cosmetic.' },
+  tail:          { label: 'Tail', desc: 'Cosmetic.' },
+  dragon_wings: {
+    label: 'Dragon Wings',
+    desc: 'Glide recovery: capped sink rate + one bonus air jump per flight.',
+    glideMaxFall: 6.5,
+    speedMul: 1.05,
+  },
+  anvil_tail: {
+    label: 'Anvil Tail',
+    desc: 'Stun slams: hard landings stun nearby rivals.',
+    stunRadius: 4.5,
+    stunDuration: 1.2,
+    stunPop: 4,
+    slamMinFall: 8,
+  },
+  magnet_eyes: {
+    label: 'Magnet Eyes',
+    desc: 'Pulls nearby loose items toward you.',
+    magnetRadius: 6,
+    magnetPull: 2.2,
+  },
+  spring_stompers: {
+    label: 'Spring Stompers',
+    desc: '+35% jump power; hard landings bounce you back up.',
+    jumpMul: 1.35,
+    bounceMinFall: 4,
+    bounceReturn: 0.45,
+    bounceMax: 9,
+  },
+  // Merge: wave-2 appendages get descriptors (cosmetic in the arena like the
+  // legacy set; their gameplay value flows through APPENDAGE_EFFECTS stats).
+  jetpack:      { label: 'Jetpack', desc: 'Cosmetic (twin thruster tanks + flame cones).' },
+  wings:        { label: 'Wings', desc: 'Cosmetic (cartoon glider wings).' },
+  ram_plates:   { label: 'Ram Plates', desc: 'Cosmetic (heavy siege-turtle pauldrons).' },
+  shock_gloves: { label: 'Shock Gloves', desc: 'Cosmetic (oversized sparking gauntlets).' },
+  satellite:    { label: 'Satellite', desc: 'Cosmetic (recon uplink dish).' },
+};
 
 export const ARCHETYPE_PRESETS = {
   titan_chonk: {
@@ -231,6 +346,13 @@ export const APPENDAGE_EFFECTS = {
   plungers: { armor: 0.1 },
   spikes: { armor: 0.15, speed: -0.05 },
   tail: { speed: 0.1, jump: 0.05 },
+  // Merge: milestone #4's four tournament appendages get stat deltas mirroring
+  // their gameplay descriptors in APPENDAGE_GAMEPLAY (per-frame effects stay
+  // the source of truth for the arena; these feed the stat/profile pipeline).
+  dragon_wings: { jump: 0.2, speed: 0.05 },   // glide recovery + bonus air jump
+  anvil_tail: { mass: 0.35, speed: -0.05 },   // heavy anvil, stun-slam business end
+  magnet_eyes: { speed: 0.05 },               // utility pull — no stat shift beyond agility
+  spring_stompers: { jump: 0.25 },            // spring-loaded bounce return
   jetpack: { jump: 0.3, mass: 0.2, speed: -0.05 },
   wings: { jump: 0.2, speed: 0.05 },
   ram_plates: { armor: 0.25, speed: -0.1 },
@@ -789,6 +911,102 @@ export function buildCustomDweebModel(config = {}) {
       appGroup.add(tail);
       break;
     }
+    // Merge note: milestone (dragon_wings, anvil_tail, magnet_eyes, spring_stompers)
+    // and wave-2 (jetpack, wings, ram_plates, shock_gloves, satellite) geometry
+    // cases are all kept below.
+    case 'dragon_wings': {
+      // Broad leathery wings sprouting from the shoulder blades; flap refs drive the glide read.
+      const wingGeo = new THREE.BoxGeometry(0.62, 0.08, 0.4);
+      const wingL = new THREE.Mesh(wingGeo, accentMat);
+      wingL.position.set(-0.52 * sx, topY - 0.02, -0.12);
+      wingL.rotation.y = 0.5;
+      wingL.rotation.z = 0.28;
+      const wingR = new THREE.Mesh(wingGeo, accentMat);
+      wingR.position.set(0.52 * sx, topY - 0.02, -0.12);
+      wingR.rotation.y = -0.5;
+      wingR.rotation.z = -0.28;
+      // Dark membrane insets
+      const memGeo = new THREE.BoxGeometry(0.5, 0.05, 0.3);
+      const memL = new THREE.Mesh(memGeo, bodyMat);
+      memL.position.set(-0.52 * sx, topY, -0.12);
+      memL.rotation.y = 0.5;
+      memL.rotation.z = 0.28;
+      const memR = new THREE.Mesh(memGeo, bodyMat);
+      memR.position.set(0.52 * sx, topY, -0.12);
+      memR.rotation.y = -0.5;
+      memR.rotation.z = -0.28;
+      appGroup.add(wingL, wingR, memL, memR);
+      appGroup.userData.fx = { ...(appGroup.userData.fx || {}), wings: [wingL, wingR, memL, memR] };
+      break;
+    }
+    case 'anvil_tail': {
+      // Segmented tail ending in a heavy little anvil — the stun-slam business end.
+      const segGeo = new THREE.ConeGeometry(0.08, 0.3, 6);
+      const seg1 = new THREE.Mesh(segGeo, accentMat);
+      seg1.rotation.x = -Math.PI / 2.6;
+      seg1.position.set(0, bodyTopY - 0.18 * sy, -0.4 * sz);
+      const seg2 = new THREE.Mesh(segGeo, accentMat);
+      seg2.rotation.x = -Math.PI / 2.1;
+      seg2.position.set(0, bodyTopY - 0.3 * sy, -0.62 * sz);
+      const anvilTop = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.2), darkMat);
+      anvilTop.position.set(0, bodyTopY - 0.34 * sy, -0.82 * sz);
+      const anvilBase = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), darkMat);
+      anvilBase.position.set(0, bodyTopY - 0.46 * sy, -0.82 * sz);
+      appGroup.add(seg1, seg2, anvilTop, anvilBase);
+      appGroup.userData.fx = { ...(appGroup.userData.fx || {}), tailTip: anvilTop };
+      break;
+    }
+    case 'magnet_eyes': {
+      // Classic red/white horseshoe magnets flanking the noggin — always "on".
+      const mkMagnet = side => {
+        const g = new THREE.Group();
+        const red = toonMat({ color: 0xef2d2d, flatShading: true });
+        const white = toonMat({ color: 0xf8fafc, flatShading: true });
+        const arm = new THREE.CylinderGeometry(0.055, 0.055, 0.3, 8);
+        const aL = new THREE.Mesh(arm, red);
+        aL.position.set(-0.09, 0, 0);
+        const aR = new THREE.Mesh(arm, red);
+        aR.position.set(0.09, 0, 0);
+        const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.1, 0.11), white);
+        bridge.position.set(0, 0.18, 0);
+        const tipL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.11), white);
+        tipL.position.set(-0.09, -0.17, 0);
+        const tipR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.11), white);
+        tipR.position.set(0.09, -0.17, 0);
+        g.add(aL, aR, bridge, tipL, tipR);
+        g.position.set(side * 0.42 * sx, topY + 0.12, 0);
+        g.rotation.z = side * -0.35;
+        return g;
+      };
+      const magL = mkMagnet(-1);
+      const magR = mkMagnet(1);
+      appGroup.add(magL, magR);
+      appGroup.userData.fx = { ...(appGroup.userData.fx || {}), magnets: [magL, magR] };
+      break;
+    }
+    case 'spring_stompers': {
+      // Coil-spring stilts under the body — boing comes standard.
+      const mkSpring = side => {
+        const g = new THREE.Group();
+        const coilGeo = new THREE.TorusGeometry(0.11, 0.035, 6, 12);
+        for (let i = 0; i < 3; i++) {
+          const coil = new THREE.Mesh(coilGeo, darkMat);
+          coil.rotation.x = Math.PI / 2;
+          coil.position.y = 0.1 + i * 0.12;
+          g.add(coil);
+        }
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.28), accentMat);
+        pad.position.y = 0.04;
+        g.add(pad);
+        g.position.set(side * 0.22 * sx, 0, 0.02);
+        return g;
+      };
+      const sprL = mkSpring(-1);
+      const sprR = mkSpring(1);
+      appGroup.add(sprL, sprR);
+      appGroup.userData.fx = { ...(appGroup.userData.fx || {}), springs: [sprL, sprR] };
+      break;
+    }
     case 'jetpack': {
       // Twin thruster tanks strapped to the back, with little flame cones.
       const tankGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.42, 8);
@@ -952,13 +1170,35 @@ export function buildCustomDweebModel(config = {}) {
     }
   });
 
-  return {
+  const gpType = cfg.appendage || 'none';
+  const model = {
     root,
     config: cfg,
     bodyMesh,
     eyeMeshes,
     appGroup,
     feetGroup,
+    // Appendage gameplay state. bindFighter(dweeb, ctxProvider) attaches a live
+    // fighter so animate() also drives per-frame gameplay (glide, stun slams,
+    // magnet pull, spring bounce) — no main-loop changes needed: the game
+    // already calls customModel.animate(time, mood) every frame.
+    gameplay: {
+      type: gpType,
+      params: APPENDAGE_GAMEPLAY[gpType] || APPENDAGE_GAMEPLAY.none,
+      st: freshAppendageState(),
+      dweeb: null,
+      ctxProvider: null,
+    },
+    bindFighter(dweeb, ctxProvider = null) {
+      // Make sure the dweeb carries matching gameplay state (install is a
+      // no-op when it already does — no recursion: install with bindModel=false).
+      if (dweeb && (!dweeb.appendageGameplay || dweeb.appendageGameplay.type !== this.gameplay.type)) {
+        installAppendageGameplay(dweeb, this.config, false);
+      }
+      this.gameplay.dweeb = dweeb || null;
+      this.gameplay.ctxProvider = ctxProvider || null;
+      return this;
+    },
     animate(time, mood = 'happy') {
       // Idle breathing squish & subtle head bob
       const breath = Math.sin(time * 3.5) * 0.04;
@@ -978,6 +1218,271 @@ export function buildCustomDweebModel(config = {}) {
         e.pupil.position.x = e.basePos.x + lookX;
         e.pupil.position.y = e.basePos.y + lookY;
       }
+
+      // Bound-fighter gameplay tick (dt derived from the frame clock)
+      const gp = this.gameplay;
+      if (gp && gp.dweeb) {
+        const prev = this._gpLastT ?? time;
+        const dt = Math.min(0.1, Math.max(0, time - prev));
+        this._gpLastT = time;
+        if (dt > 0) {
+          updateAppendageGameplay(gp.dweeb, dt, gp.ctxProvider ? gp.ctxProvider() : {});
+        }
+        animateAppendageFx(this, gp, time);
+      }
     },
   };
+  return model;
+}
+
+/** Fresh per-fighter appendage effect state. */
+export function freshAppendageState() {
+  return {
+    flapPhase: 0,        // dragon_wings: wing flap oscillator
+    glideUsedThisAir: false, // dragon_wings: bonus air jump consumed this flight
+    prevGrounded: true,
+    prevVy: 0,
+    slamDone: false,     // anvil_tail: slam triggered, re-arms when airborne
+    magnetPulse: 0,      // magnet_eyes: visual pulse oscillator
+    springSquash: 0,     // spring_stompers: landing compression 0..1 (decays)
+  };
+}
+
+/**
+ * Install appendage gameplay onto a live fighter dweeb. Applies stat modifiers
+ * from the fighter's BASE stats (captured on first install — re-installing after
+ * a mutation never compounds multipliers) and stores effect state on
+ * dweeb.appendageGameplay. Also binds the dweeb's custom model (if present) so
+ * the per-frame update runs inside the existing animate() call.
+ * bindModel=false skips the model bind (used by bindFighter itself).
+ */
+export function installAppendageGameplay(dweeb, config = {}, bindModel = true) {
+  if (!dweeb) return null;
+  const type = config.appendage || config.appendages || 'none';
+  const params = APPENDAGE_GAMEPLAY[type] || APPENDAGE_GAMEPLAY.none;
+  const prev = dweeb.appendageGameplay;
+  const base = prev?.base ?? {
+    speed: dweeb.stats?.speed ?? 1,
+    jump: dweeb.stats?.jump ?? 1,
+  };
+  if (dweeb.stats) {
+    const cfgMul = config.stats || {};
+    dweeb.stats.speed = base.speed * (cfgMul.speed ?? 1) * (params.speedMul ?? 1);
+    dweeb.stats.jump = base.jump * (cfgMul.jump ?? 1) * (params.jumpMul ?? 1);
+  }
+  dweeb.appendageGameplay = {
+    type,
+    params,
+    base,
+    st: prev && prev.type === type ? prev.st : freshAppendageState(),
+  };
+  if (dweeb.customModel && typeof dweeb.customModel.bindFighter === 'function' && bindModel) {
+    dweeb.customModel.bindFighter(dweeb);
+  }
+  return dweeb.appendageGameplay;
+}
+
+/**
+ * Per-frame appendage gameplay update. Reads real fighter physics state
+ * (body velocity, grounded, jumpsLeft) and applies real effects:
+ *   dragon_wings:    caps sink rate while airborne (glide) + one bonus air jump per flight
+ *   anvil_tail:      hard landings / ground slams stun nearby rivals
+ *   magnet_eyes:     pulls loose nearby items toward the fighter
+ *   spring_stompers: hard landings bounce the fighter back up (jumpMul applied at install)
+ * ctx: { rivals: [...], objects: [...] } — rivals need getPosition()/hitstun/active;
+ * objects need { body, mesh, isGrabbed }.
+ */
+export function updateAppendageGameplay(dweeb, dt, ctx = {}) {
+  const gp = dweeb.appendageGameplay;
+  if (!gp || gp.type === 'none' || !dweeb.body || typeof dweeb.body.linvel !== 'function') return;
+  const st = gp.st;
+  const P = gp.params;
+  const v = dweeb.body.linvel();
+  const grounded = !!dweeb.grounded;
+  const landed = !st.prevGrounded && grounded;
+  const fallSpeed = -st.prevVy;
+
+  switch (gp.type) {
+    case 'dragon_wings': {
+      if (!grounded && v.y < -P.glideMaxFall && typeof dweeb.body.setLinvel === 'function') {
+        dweeb.body.setLinvel({ x: v.x, y: -P.glideMaxFall, z: v.z }, true);
+      }
+      if (grounded) {
+        st.glideUsedThisAir = false;
+      } else if (!st.glideUsedThisAir && (dweeb.jumpsLeft ?? 0) <= 0) {
+        dweeb.jumpsLeft = 1; // glide recovery: one bonus air jump per flight
+        st.glideUsedThisAir = true;
+      }
+      st.flapPhase += dt * (grounded ? 2 : 14);
+      break;
+    }
+    case 'anvil_tail': {
+      const slamming = !!dweeb.groundSlamming && grounded;
+      if ((landed && fallSpeed > P.slamMinFall) || (slamming && !st.slamDone)) {
+        const pos = typeof dweeb.getPosition === 'function' ? dweeb.getPosition() : { x: 0, y: 0, z: 0 };
+        for (const r of ctx.rivals || []) {
+          if (!r || r === dweeb || r.active === false || r.eliminated) continue;
+          if (typeof r.getPosition !== 'function') continue;
+          const rp = r.getPosition();
+          if (Math.hypot(rp.x - pos.x, rp.z - pos.z) > P.stunRadius) continue;
+          r.hitstun = Math.max(r.hitstun || 0, P.stunDuration);
+          if (r.body && typeof r.body.linvel === 'function' && typeof r.body.setLinvel === 'function') {
+            const rv = r.body.linvel();
+            r.body.setLinvel({ x: rv.x, y: Math.max(rv.y, P.stunPop), z: rv.z }, true);
+          }
+        }
+        st.slamDone = true;
+      }
+      if (!grounded) st.slamDone = false; // re-arm once airborne again
+      break;
+    }
+    case 'magnet_eyes': {
+      const pos = typeof dweeb.getPosition === 'function' ? dweeb.getPosition() : null;
+      if (pos) {
+        for (const o of ctx.objects || []) {
+          if (!o || !o.body || o.isGrabbed || o.held) continue;
+          const mp = o.mesh?.position;
+          if (!mp || typeof o.body.applyImpulse !== 'function') continue;
+          const dx = pos.x - mp.x, dy = (pos.y + 0.5) - mp.y, dz = pos.z - mp.z;
+          const dist = Math.hypot(dx, dy, dz);
+          if (dist > P.magnetRadius || dist < 0.5) continue;
+          const pull = P.magnetPull * (1 - dist / P.magnetRadius);
+          const inv = 1 / (dist || 1);
+          o.body.applyImpulse({ x: dx * inv * pull, y: dy * inv * pull, z: dz * inv * pull }, true);
+        }
+      }
+      st.magnetPulse += dt * 6;
+      break;
+    }
+    case 'spring_stompers': {
+      if (landed && fallSpeed > P.bounceMinFall && typeof dweeb.body.setLinvel === 'function') {
+        const bounce = Math.min(fallSpeed * P.bounceReturn, P.bounceMax);
+        dweeb.body.setLinvel({ x: v.x, y: bounce, z: v.z }, true);
+        st.springSquash = Math.min(1, fallSpeed / 12);
+      }
+      st.springSquash = Math.max(0, st.springSquash - dt * 4);
+      break;
+    }
+    default:
+      break;
+  }
+
+  st.prevGrounded = grounded;
+  st.prevVy = v.y;
+}
+
+/** Drive the new appendages' visual motion from gameplay state (called inside animate()). */
+function animateAppendageFx(model, gp, time) {
+  const fx = model.appGroup?.userData?.fx;
+  if (!fx) return;
+  const st = gp.st;
+  const dweeb = gp.dweeb;
+  const airborne = dweeb ? !dweeb.grounded : false;
+  if (fx.wings) {
+    const amp = airborne ? 0.7 : 0.12;
+    const flap = Math.sin(st.flapPhase) * amp;
+    // wings[0..1] are the accent spars, [2..3] the membranes
+    fx.wings[0].rotation.z = 0.28 + flap;
+    fx.wings[1].rotation.z = -0.28 - flap;
+    fx.wings[2].rotation.z = 0.28 + flap;
+    fx.wings[3].rotation.z = -0.28 - flap;
+  }
+  if (fx.tailTip) {
+    fx.tailTip.position.y += Math.sin(time * 6) * 0.002;
+  }
+  if (fx.magnets) {
+    const s = 1 + Math.sin(st.magnetPulse) * 0.06;
+    fx.magnets[0].scale.set(s, s, s);
+    fx.magnets[1].scale.set(s, s, s);
+  }
+  if (fx.springs) {
+    const squash = 1 - st.springSquash * 0.45;
+    fx.springs[0].scale.set(1, squash, 1);
+    fx.springs[1].scale.set(1, squash, 1);
+  }
+}
+
+// ─── Collider sync (DNA mutation → physics, no reload) ───────────────────────
+
+/**
+ * Compute the world-space bounding box of a build config by constructing the
+ * model off-scene. Geometries/materials of the throwaway model are disposed.
+ */
+export function computeBuildBounds(config = {}) {
+  const model = buildCustomDweebModel(config);
+  model.root.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(model.root);
+  model.root.traverse(child => {
+    if (child.isMesh) {
+      child.geometry?.dispose?.();
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      for (const m of mats) m?.dispose?.();
+    }
+  });
+  return box;
+}
+
+/**
+ * Synchronously refresh a fighter's physics collider to match a mutated build
+ * config's bounding box. Maps the box onto the dweeb's capsule collider
+ * (radius from XZ extents, halfHeight from Y) via rapier's in-place shape
+ * setters — no scene reload, no body recreation. Also syncs mass.
+ * Returns the applied { radius, halfHeight, size } for verification.
+ */
+export function refreshDweebCollider(dweeb, config = {}, bounds = null) {
+  const box = bounds || computeBuildBounds(config);
+  const size = box.getSize(new THREE.Vector3());
+  const radius = Math.max(0.15, Math.min(size.x, size.z) / 2);
+  const halfHeight = Math.max(0.1, size.y / 2 - radius);
+  const c = dweeb?.collider;
+  if (c) {
+    if (typeof c.setRadius === 'function') c.setRadius(radius);
+    if (typeof c.setHalfHeight === 'function') c.setHalfHeight(halfHeight);
+    const mass = config.stats?.mass ?? config.mass;
+    if (mass !== undefined && typeof c.setMass === 'function') c.setMass(mass);
+  }
+  return { radius, halfHeight, size: { x: size.x, y: size.y, z: size.z } };
+}
+
+/**
+ * Apply a full custom build to a live fighter: rebuild the visual model onto
+ * the dweeb's rig, apply stats (from base — never compounding), install
+ * appendage gameplay, and synchronously refresh the physics collider to the
+ * new bounding box. ctxProvider supplies { rivals, objects } for per-frame
+ * appendage effects.
+ */
+export function applyBuildToFighter(dweeb, config = {}, ctxProvider = null) {
+  if (!dweeb) return null;
+  if (dweeb.customModel?.root && dweeb.rig) {
+    dweeb.rig.remove(dweeb.customModel.root);
+  }
+  const custom = buildCustomDweebModel(config);
+  dweeb.customModel = custom;
+  if (dweeb.rig) {
+    for (const c of dweeb.rig.children) {
+      if (c !== dweeb.playerRing && c !== dweeb.bubbleMesh && c !== dweeb.freezeMesh && c !== dweeb.parryMesh) {
+        c.visible = false;
+      }
+    }
+    dweeb.rig.add(custom.root);
+    if (Array.isArray(dweeb.flashMats)) {
+      custom.root.traverse(child => {
+        if (child.isMesh && child.material && !dweeb.flashMats.includes(child.material)) {
+          dweeb.flashMats.push(child.material);
+        }
+      });
+    }
+  }
+  if (config.stats?.mass !== undefined) {
+    if (dweeb.stats) dweeb.stats.mass = config.stats.mass;
+    if (dweeb.collider && typeof dweeb.collider.setMass === 'function') {
+      dweeb.collider.setMass(config.stats.mass);
+    }
+  }
+  if (config.name) dweeb.name = config.name;
+  custom.root.updateWorldMatrix(true, true);
+  refreshDweebCollider(dweeb, config, new THREE.Box3().setFromObject(custom.root));
+  installAppendageGameplay(dweeb, config);
+  custom.bindFighter(dweeb, ctxProvider);
+  return custom;
 }

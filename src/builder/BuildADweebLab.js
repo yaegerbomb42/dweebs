@@ -16,11 +16,16 @@ import {
   FEET_TYPES,
   BROW_STYLES,
   MOUTH_STYLES,
+  // Merge: milestone #4 (collider sync + appendage gameplay) and wave-2
+  // (genetics / battle profile) model imports are all kept.
+  refreshDweebCollider,
+  installAppendageGameplay,
   randomizeConfig,
   breedConfigs,
   evolveBuild,
   computeBattleProfile,
 } from './CustomDweebModel.js';
+import { TournamentBracket } from './Tournament.js';
 import {
   createRng,
   simulateBout,
@@ -31,6 +36,7 @@ import {
 } from './BattleSim.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
+const TOURNAMENT_KEY = 'dweebs-tournament-v1';
 const SLOTS_KEY = 'dweebs-build-slots-v1';
 const DOJO_RECORDS_KEY = 'dweebs-dojo-records-v1';
 const MAX_SLOTS = 3;
@@ -111,6 +117,11 @@ export class BuildADweebLab {
     this.clock = 0;
     this._popT = 1;    // spawn-pop animation progress (1 = settled)
     this._flashT = 0;  // pedestal rim flash on rebuild
+
+    // Live fighter synced to lab mutations (DNA → collider, no reload) and
+    // the active tournament bracket (null when no tournament is running).
+    this.attachedFighter = null;
+    this.tournament = this.loadTournament();
 
     this._buildStage();
     // Note: no seed snapshot — the first change records its own pre-change
@@ -296,12 +307,42 @@ export class BuildADweebLab {
     this.currentModelRoot = this.modelInstance.root;
     this.group.add(this.currentModelRoot);
 
+    // Merge: milestone #4's DNA-to-collider/appendage live-fighter sync and
+    // wave-2's mutation juice (spawn-pop + rim flash + scan sweep) both run
+    // after every rebuild.
+    if (this.attachedFighter) {
+      this.modelInstance.root.updateWorldMatrix(true, true);
+      const bounds = new THREE.Box3().setFromObject(this.modelInstance.root);
+      refreshDweebCollider(this.attachedFighter, this.config, bounds);
+      installAppendageGameplay(this.attachedFighter, this.config);
+    }
+
     if (juice) {
       // Juice: spawn-pop + rim flash + scan-beam sweep so mutations feel impactful.
       this._popT = 0;
       this._flashT = 1;
       this._scanT = 1;
     }
+  }
+
+  /**
+   * Attach a live fighter dweeb: every lab mutation (mutateRandom /
+   * updateConfig / applyPreset) synchronously refreshes its physics collider
+   * bounds and appendage gameplay to match the new DNA. Pass null to detach.
+   */
+  attachFighter(dweeb) {
+    this.attachedFighter = dweeb || null;
+    if (this.attachedFighter && this.modelInstance) {
+      this.modelInstance.root.updateWorldMatrix(true, true);
+      refreshDweebCollider(this.attachedFighter, this.config,
+        new THREE.Box3().setFromObject(this.modelInstance.root));
+      installAppendageGameplay(this.attachedFighter, this.config);
+    }
+    return this.attachedFighter;
+  }
+
+  detachFighter() {
+    this.attachedFighter = null;
   }
 
   updateConfig(patch) {
@@ -575,6 +616,62 @@ export class BuildADweebLab {
     this.saveConfig();
     this._emitConfig();
     return this.config;
+  }
+
+  // ─── Colosseum tournament ladder ──────────────────────────────────────────
+
+  /** Start a new tournament bracket with the lab's current build. */
+  startTournament() {
+    this.tournament = new TournamentBracket(this.config);
+    this.saveTournament();
+    return this.tournament.state();
+  }
+
+  /** Champion config for the player's pending bout (null when none). */
+  tournamentOpponent() {
+    return this.tournament ? this.tournament.opponentForPlayer() : null;
+  }
+
+  /**
+   * Record the player's bout result and advance the bracket. Persists across
+   * the workshop ⇄ arena round-trip; cleared when the run ends.
+   */
+  recordTournamentResult(playerWon) {
+    if (!this.tournament) return null;
+    const state = this.tournament.recordPlayerResult(!!playerWon);
+    if (state.status === 'in') this.saveTournament();
+    else this.clearTournamentStorage();
+    return state;
+  }
+
+  /** Plain bracket summary for the HUD (null when no tournament active). */
+  tournamentState() {
+    return this.tournament ? this.tournament.state() : null;
+  }
+
+  abandonTournament() {
+    this.tournament = null;
+    this.clearTournamentStorage();
+  }
+
+  saveTournament() {
+    try {
+      if (this.tournament) localStorage.setItem(TOURNAMENT_KEY, JSON.stringify(this.tournament.toJSON()));
+    } catch { /* private mode */ }
+  }
+
+  loadTournament() {
+    try {
+      const saved = localStorage.getItem(TOURNAMENT_KEY);
+      if (!saved) return null;
+      const t = TournamentBracket.fromJSON(JSON.parse(saved));
+      return t.status === 'in' ? t : null;
+    } catch { /* corrupted / private mode */ }
+    return null;
+  }
+
+  clearTournamentStorage() {
+    try { localStorage.removeItem(TOURNAMENT_KEY); } catch { /* private mode */ }
   }
 
   update(dt) {

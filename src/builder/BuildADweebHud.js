@@ -12,12 +12,19 @@ import {
   BROW_STYLES,
   MOUTH_STYLES,
   ARCHETYPE_PRESETS,
+  // Merge: milestone #4 (elemental palettes + appendage gameplay) and wave-2
+  // (battle profile + dna labels) imports are all kept.
+  ELEMENTAL_PALETTES,
+  applyElementalPalette,
+  APPENDAGE_GAMEPLAY,
   computeBattleProfile,
   dnaStanceLabel,
   dnaAimLabel,
   dnaAgilityLabel,
   dnaScavengeLabel,
 } from './CustomDweebModel.js';
+
+const TELEMETRY_KEY = 'dweebs-last-telemetry';
 
 const CSS = `
 #build-dweeb-hud {
@@ -407,6 +414,52 @@ const CSS = `
 }
 .bd-launch-btn:hover { transform: scale(1.05); filter: brightness(1.15); }
 @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.03); } }
+
+.bd-card {
+  pointer-events: auto;
+  background: rgba(27, 16, 48, 0.88);
+  border: 3px solid #fff8ee;
+  border-radius: 16px;
+  padding: 10px 14px;
+  width: 340px;
+  box-shadow: 0 6px 0 #14101c;
+  font-size: 13px;
+}
+.bd-card h4 {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 16px;
+  color: #ffd23f;
+  margin: 0 0 8px 0;
+  letter-spacing: 0.5px;
+}
+.bd-tourney-btn {
+  font-family: 'Lilita One', sans-serif;
+  font-size: 15px;
+  padding: 8px 14px;
+  border: 3px solid #14101c;
+  border-radius: 12px;
+  background: #ffd23f;
+  color: #14101c;
+  cursor: pointer;
+}
+.bd-tourney-btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
+.bd-tourney-btn.fight { background: #ff4d5e; color: #fff; }
+.bd-tourney-btn.small { font-size: 12px; padding: 5px 10px; }
+.bd-bracket { margin: 8px 0; max-height: 180px; overflow-y: auto; }
+.bd-bracket-round { margin-bottom: 6px; }
+.bd-bracket-round-title { font-weight: 800; font-size: 11px; opacity: 0.85; letter-spacing: 1px; }
+.bd-bout { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; font-size: 12px; }
+.bd-bout .winner { color: #5ee06a; font-weight: 800; }
+.bd-bout .pending { opacity: 0.75; }
+.bd-bout .you { color: #ffd23f; font-weight: 800; }
+.bd-tele-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.bd-tele-dps { font-family: 'Lilita One', sans-serif; font-size: 20px; color: #5ee06a; }
+.bd-gauge { height: 12px; background: #14101c; border-radius: 6px; overflow: hidden; border: 2px solid #fff8ee; }
+.bd-gauge-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #5ee06a, #ffd23f, #ff4d5e); transition: width 0.2s; }
+#bd-recap-canvas { width: 100%; height: 120px; background: #14101c; border-radius: 8px; border: 2px solid #fff8ee; }
+.bd-recap-table { width: 100%; font-size: 11px; border-collapse: collapse; margin-top: 6px; }
+.bd-recap-table td, .bd-recap-table th { padding: 2px 4px; text-align: right; border-bottom: 1px solid rgba(255,255,255,0.12); }
+.bd-recap-table td:first-child, .bd-recap-table th:first-child { text-align: left; }
 `;
 
 export class BuildADweebHud {
@@ -420,6 +473,13 @@ export class BuildADweebHud {
     }
     this.root = null;
     this._createDom();
+    // Merge: milestone #4 renders any in-progress tournament bracket;
+    // wave-2 wires the lab event bridge (config/history/dojo/slots) + undo-redo shortcuts.
+    // If a tournament is already in progress (restored from storage by the
+    // lab), render its bracket immediately.
+    const existing = this.handlers.onTournamentState?.();
+    if (existing) this.renderTournament(existing);
+
 
     // Lab event bridge: the lab announces config/history changes over document
     // CustomEvents so the HUD stays in sync without the app shell wiring anything.
@@ -796,7 +856,20 @@ export class BuildADweebHud {
           <div class="bd-row">
             <div class="bd-label">APPENDAGES &amp; GEAR</div>
             <div class="bd-seg" id="bd-seg-app">
-              ${APPENDAGES.map(a => `<button class="bd-seg-btn" data-v="${a}">${a.replace('_', ' ').toUpperCase()}</button>`).join('')}
+              ${APPENDAGES.map(a => {
+                const g = APPENDAGE_GAMEPLAY[a];
+                const tip = g ? `${g.label} — ${g.desc}` : a;
+                return `<button class="bd-seg-btn" data-v="${a}" title="${tip}">${a.replace(/_/g, ' ').toUpperCase()}</button>`;
+              }).join('')}
+            </div>
+          </div>
+
+          <div class="bd-row">
+            <div class="bd-label">ELEMENTAL PALETTE <span style="opacity:0.7;">unlock via tournament</span></div>
+            <div class="bd-seg" id="bd-seg-palette">
+              ${Object.entries(ELEMENTAL_PALETTES).map(([id, p]) =>
+                `<button class="bd-seg-btn" data-v="${id}" title="${p.name} — ${p.unlock}">⚡ ${p.name.toUpperCase()}</button>`
+              ).join('')}
             </div>
           </div>
 
@@ -833,6 +906,28 @@ export class BuildADweebHud {
           </div>
           <button class="bd-launch-btn" id="bd-btn-launch">⚔️ SEND TO ARENA</button>
           <span style="font-size:12px; font-weight:800; background:rgba(20,16,28,0.8); border-radius:8px; padding:3px 10px;">100% AUTONOMOUS AI BATTLE · ZERO USER INPUT</span>
+          <!-- Merge: milestone #4 tournament card + combat telemetry card -->
+
+          <div class="bd-card" id="bd-tournament-card" style="margin-top:10px;">
+            <h4>🏆 COLOSSEUM LADDER</h4>
+            <div id="bd-tournament-body">
+              <div style="font-size:12px; opacity:0.85; margin-bottom:8px;">Quarterfinals → Semifinals → Grand Final. Champions get meaner every round.</div>
+              <button class="bd-tourney-btn" id="bd-btn-tournament" data-tact="start">🏆 START TOURNAMENT</button>
+            </div>
+          </div>
+
+          <div class="bd-card" id="bd-telemetry-card" style="margin-top:10px;">
+            <h4>📊 COMBAT TELEMETRY</h4>
+            <div class="bd-tele-row"><span>DPS (live)</span><span class="bd-tele-dps" id="bd-t-dps">—</span></div>
+            <div class="bd-tele-row"><span>Peak impact force</span><span id="bd-t-impact-num" style="font-weight:800;">—</span></div>
+            <div class="bd-gauge"><div class="bd-gauge-fill" id="bd-t-impact"></div></div>
+            <div id="bd-recap-wrap" style="margin-top:8px;">
+              <div style="font-size:11px; font-weight:800; opacity:0.8; margin-bottom:4px;">LAST BOUT RECAP</div>
+              <canvas id="bd-recap-canvas" width="300" height="120"></canvas>
+              <table class="bd-recap-table" id="bd-recap-table"></table>
+            </div>
+          </div>
+          <!-- Merge: wave-2 simulated-dojo controls -->
           <div class="bd-dojo-row" title="Simulated dojo bouts — instant, no arena load">
             <button class="bd-dojo-btn" id="bd-btn-dojo-spar">🥋 DOJO SPAR</button>
             <button class="bd-dojo-btn" id="bd-btn-dojo-ladder">🏆 GAUNTLET</button>
@@ -1088,6 +1183,46 @@ export class BuildADweebHud {
       const oppType = $('#bd-select-opp').value;
       this.handlers.onLaunchArena?.(oppType);
     });
+
+    // Elemental palette
+    const palSeg = $('#bd-seg-palette');
+    if (palSeg) {
+      palSeg.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-v]');
+        if (!btn) return;
+        palSeg.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this._notifyChange(applyElementalPalette({}, btn.dataset.v));
+      });
+    }
+
+    // Tournament card (delegated — the body re-renders as the bracket advances)
+    const tBody = $('#bd-tournament-body');
+    if (tBody) {
+      tBody.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tact]');
+        if (!btn) return;
+        const act = btn.dataset.tact;
+        if (act === 'start') {
+          const state = this.handlers.onTournamentStart?.();
+          if (state) this.renderTournament(state);
+        } else if (act === 'fight') {
+          const opp = this.handlers.onTournamentFight?.();
+          if (opp && this.handlers.onLaunchTournament) {
+            this.handlers.onLaunchTournament(opp, { tournament: true });
+          } else {
+            // Fallback: main.js maps 'tournament' via its own wiring.
+            this.handlers.onLaunchArena?.('tournament');
+          }
+        } else if (act === 'won' || act === 'lost') {
+          const state = this.handlers.onTournamentResult?.(act === 'won');
+          if (state) this.renderTournament(state);
+        } else if (act === 'abandon') {
+          this.handlers.onTournamentAbandon?.();
+          this.renderTournament(null);
+        }
+      });
+    }
   }
 
   syncForm(config) {
@@ -1121,6 +1256,7 @@ export class BuildADweebHud {
     setSeg('#bd-seg-feet', config.feet);
     setSeg('#bd-seg-brows', config.brows || config.brow);
     setSeg('#bd-seg-mouth', config.mouth);
+    setSeg('#bd-seg-palette', config.palette);
 
     const dna = config.dna || config.DNA;
     if (dna) {
@@ -1165,8 +1301,172 @@ export class BuildADweebHud {
     this.syncProfile(config);
   }
 
+  // ─── Tournament ladder UI ────────────────────────────────────────────────
+
+  /** Render the tournament bracket card from a TournamentBracket.state(). */
+  renderTournament(state) {
+    const body = this.root?.querySelector('#bd-tournament-body');
+    if (!body) return;
+    if (!state) {
+      body.innerHTML = `
+        <div style="font-size:12px; opacity:0.85; margin-bottom:8px;">Quarterfinals → Semifinals → Grand Final. Champions get meaner every round.</div>
+        <button class="bd-tourney-btn" data-tact="start">🏆 START TOURNAMENT</button>`;
+      return;
+    }
+    if (state.status === 'eliminated') {
+      body.innerHTML = `
+        <div style="font-size:13px; font-weight:800; color:#ff4d5e; margin-bottom:6px;">💀 ELIMINATED — ${state.roundName}</div>
+        ${this._bracketHtml(state)}
+        <button class="bd-tourney-btn small" data-tact="start">🔄 RUN IT BACK</button>
+        <button class="bd-tourney-btn small" data-tact="abandon" style="background:#332357;color:#fff8ee;">DISMISS</button>`;
+      return;
+    }
+    if (state.status === 'champion') {
+      body.innerHTML = `
+        <div style="font-size:15px; font-weight:800; color:#ffd23f; margin-bottom:6px;">🏆 COLOSSEUM CHAMPION!</div>
+        ${this._bracketHtml(state)}
+        <button class="bd-tourney-btn small" data-tact="start">🔄 DEFEND THE CROWN</button>
+        <button class="bd-tourney-btn small" data-tact="abandon" style="background:#332357;color:#fff8ee;">DISMISS</button>`;
+      return;
+    }
+    const pm = state.playerMatch;
+    const opp = state.opponent;
+    body.innerHTML = `
+      <div style="font-size:14px; font-weight:800; color:#ffd23f; margin-bottom:4px;">${state.roundName}</div>
+      ${pm && opp ? `
+        <div class="bd-bout" style="font-size:13px; margin-bottom:6px;">
+          <span class="you">YOU</span><span style="opacity:0.7;">vs</span>
+          <span><b>${opp.name || 'Champion'}</b> <span style="opacity:0.7;">${opp.badge || ''}</span></span>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;">
+          <button class="bd-tourney-btn fight" data-tact="fight">⚔️ FIGHT ${state.roundName}</button>
+        </div>
+        <div style="font-size:11px; opacity:0.75; margin-bottom:4px;">After the bout, record the result:</div>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button class="bd-tourney-btn small" data-tact="won" style="background:#5ee06a;">✓ I WON</button>
+          <button class="bd-tourney-btn small" data-tact="lost" style="background:#ff4d5e;color:#fff;">✗ I LOST</button>
+        </div>` : `
+        <div style="font-size:12px; opacity:0.8; margin-bottom:8px;">No pending bout.</div>`}
+      ${this._bracketHtml(state)}
+      <button class="bd-tourney-btn small" data-tact="abandon" style="background:#332357;color:#fff8ee;">ABANDON</button>`;
+  }
+
+  _bracketHtml(state) {
+    const esc = s => String(s ?? '').replace(/</g, '&lt;');
+    return `<div class="bd-bracket">${state.rounds.map(r => `
+      <div class="bd-bracket-round">
+        <div class="bd-bracket-round-title">${esc(r.name)}</div>
+        ${r.matches.map(m => {
+          const aWin = m.winnerId === m.aId, bWin = m.winnerId === m.bId;
+          const nm = (id, name) => id === 'player' ? '<span class="you">YOU</span>' : esc(name);
+          return `<div class="bd-bout">
+            <span class="${aWin ? 'winner' : m.winnerId ? '' : 'pending'}">${aWin ? '👑 ' : ''}${nm(m.aId, m.aName)}</span>
+            <span style="opacity:0.5;">vs</span>
+            <span class="${bWin ? 'winner' : m.winnerId ? '' : 'pending'}">${nm(m.bId, m.bName)}${bWin ? ' 👑' : ''}</span>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}</div>`;
+  }
+
+  // ─── Combat telemetry UI ───────────────────────────────────────────────────
+
+  /** Attach a live CombatTelemetry feed; call updateTelemetry() per frame to refresh. */
+  attachTelemetry(t) {
+    this.telemetry = t || null;
+    this.updateTelemetry();
+  }
+
+  /** Refresh the live DPS readout + kinetic impact force gauge from the feed. */
+  updateTelemetry() {
+    const root = this.root;
+    if (!root) return;
+    const dpsEl = root.querySelector('#bd-t-dps');
+    const impEl = root.querySelector('#bd-t-impact');
+    const impNum = root.querySelector('#bd-t-impact-num');
+    const t = this.telemetry;
+    if (!t) {
+      if (dpsEl) dpsEl.textContent = '—';
+      if (impNum) impNum.textContent = '—';
+      if (impEl) impEl.style.width = '0%';
+      return;
+    }
+    let bestDps = 0, bestName = '';
+    let peakImpact = 0;
+    for (const id of t.fighterIds()) {
+      const d = t.dps(id);
+      if (d > bestDps) { bestDps = d; bestName = t.fighters.get(id)?.name || id; }
+      peakImpact = Math.max(peakImpact, t.peakImpact(id));
+    }
+    if (dpsEl) dpsEl.textContent = bestDps > 0 ? `${bestDps.toFixed(1)}${bestName ? ` · ${bestName}` : ''}` : '—';
+    if (impNum) impNum.textContent = peakImpact > 0 ? peakImpact.toFixed(1) : '—';
+    // 40 force ≈ a massive smash — gauge is relative, computed from real impacts.
+    if (impEl) impEl.style.width = `${Math.min(100, (peakImpact / 40) * 100).toFixed(1)}%`;
+  }
+
+  /**
+   * Render the end-of-match combat recap: damage-over-time graph (canvas) +
+   * per-fighter stat table (damage, DPS, evasion rate, recovery jumps, peak
+   * impact, KOs). Persists to localStorage so the workshop shows the last bout.
+   */
+  renderMatchRecap(recap) {
+    if (!recap || !this.root) return;
+    const canvas = this.root.querySelector('#bd-recap-canvas');
+    const ctx2d = canvas?.getContext?.('2d');
+    const COLORS = ['#5ee06a', '#ff4d5e', '#3a86ff', '#ffd23f', '#c026d3', '#00f5d4'];
+    if (ctx2d && canvas) {
+      const W = canvas.width, H = canvas.height;
+      ctx2d.clearRect(0, 0, W, H);
+      const tl = recap.timeline || [];
+      const maxV = Math.max(1, ...tl.map(b => b.total));
+      const n = Math.max(1, tl.length);
+      const bw = W / n;
+      const ids = recap.fighters.map(f => f.id);
+      // stacked bars per bucket, one color per fighter
+      tl.forEach((b, i) => {
+        let y = H;
+        ids.forEach((id, k) => {
+          const v = (b.per[id] || 0) / maxV * (H - 14);
+          y -= v;
+          ctx2d.fillStyle = COLORS[k % COLORS.length];
+          ctx2d.fillRect(i * bw + 1, y, bw - 2, v);
+        });
+      });
+      // legend
+      ctx2d.font = '9px sans-serif';
+      ids.forEach((id, k) => {
+        ctx2d.fillStyle = COLORS[k % COLORS.length];
+        ctx2d.fillRect(4 + k * 72, 4, 8, 8);
+        ctx2d.fillStyle = '#fff8ee';
+        ctx2d.fillText(String(recap.fighters[k]?.name || id).slice(0, 9), 15 + k * 72, 12);
+      });
+    }
+    const table = this.root.querySelector('#bd-recap-table');
+    if (table) {
+      const pct = v => `${(v * 100).toFixed(0)}%`;
+      table.innerHTML = `
+        <tr><th>Fighter</th><th>DMG</th><th>DPS</th><th>EVA</th><th>REC</th><th>IMP</th><th>KO</th></tr>
+        ${recap.fighters.map(f => `
+          <tr><td>${String(f.name).replace(/</g, '&lt;')}</td><td>${f.damageDealt.toFixed(0)}</td>
+          <td>${f.dps.toFixed(1)}</td><td>${pct(f.evasionRate)}</td><td>${f.recoveryJumps}</td>
+          <td>${f.peakImpact.toFixed(0)}</td><td>${f.kos}</td></tr>`).join('')}`;
+    }
+    this.saveLastRecap(recap);
+  }
+
+  saveLastRecap(recap) {
+    try { localStorage.setItem(TELEMETRY_KEY, JSON.stringify(recap)); } catch { /* private mode */ }
+  }
+
+  loadLastRecap() {
+    try {
+      const saved = localStorage.getItem(TELEMETRY_KEY);
+      if (saved) this.renderMatchRecap(JSON.parse(saved));
+    } catch { /* corrupted / private mode */ }
+  }
+
   show() {
     this.root?.classList.remove('hidden');
+    this.loadLastRecap();
   }
 
   hide() {

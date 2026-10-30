@@ -39,6 +39,17 @@ export class CameraController {
     this.sensitivity = 0.003;
     this.zoomSpeed = 1.5;
 
+    // High-action framing (spectator safety): the colosseum spectator follows
+    // the midpoint between two fighters, so an explosive smash can send the
+    // follow target rocketing toward the blast lines. Chasing it all the way
+    // up loses the launched fighter out of the top of the frame and whips the
+    // camera through empty sky. Above highActionCeiling the follow height is
+    // softly compressed and the camera pulls back, keeping the action framed.
+    // Ground-level play (target.y well under the ceiling) is bit-identical.
+    this.highActionCeiling = 14;
+    this.highActionPullback = 8;   // max extra camera distance while engaged
+    this.highActionAmount = 0;     // smoothed 0..1 engagement
+
     // Kill-cam lite: lean the view toward a KO for a beat, then snap back
     this.multiFraming = false;          // local multiplayer framing would own the camera: skip kill-cams
     this.kc = new THREE.Vector3();
@@ -235,7 +246,25 @@ export class CameraController {
     const kx = 1 - Math.exp(-14 * dt), ky = 1 - Math.exp(-7 * dt);
     this.currentTarget.x += (this.target.x + this._ahead.x - this.currentTarget.x) * kx;
     this.currentTarget.z += (this.target.z + this._ahead.z - this.currentTarget.z) * kx;
-    this.currentTarget.y += (this.target.y + this._ahead.y - this.currentTarget.y) * ky;
+    // High-action framing: compress extreme target heights (explosive smash
+    // launches) instead of chasing fighters into the sky. Skipped for
+    // first_person — that camera must stay glued to the player's head.
+    let followY = this.target.y + this._ahead.y;
+    if (this.mode !== 'first_person') {
+      const over = Math.max(0, this.target.y - this.highActionCeiling);
+      const engageTarget = over > 0.05 ? 1 : 0;
+      this.highActionAmount += (engageTarget - this.highActionAmount) * Math.min(1, dt * 3);
+      const ha = this.highActionAmount;
+      if (ha > 0.001) {
+        // Follow the ceiling plus a quarter of the excess — the camera holds a
+        // sane altitude while still rising with the action. Smoothed by ha so
+        // engaging/disengaging never pops.
+        followY = this.target.y - over * ha * 0.75 + this._ahead.y;
+      }
+    } else {
+      this.highActionAmount = 0;
+    }
+    this.currentTarget.y += (followY - this.currentTarget.y) * ky;
 
     // Kill-cam: ease in fast, hold, then drop the weight to 0 so the follow snaps back
     if (this.kcT > 0) {
@@ -252,11 +281,17 @@ export class CameraController {
       return;
     }
 
-    // Calculate camera position from spherical coordinates
+    // Calculate camera position from spherical coordinates.
+    // While high-action framing is engaged, pull back proportionally to the
+    // target's excess height so the launched fighter stays in frame instead
+    // of clipping out the top of the view.
+    const haPull = this.highActionAmount * Math.min(this.highActionPullback,
+      Math.max(0, this.target.y - this.highActionCeiling) * 0.5);
+    const effDistance = this.distance + haPull;
     const idealPos = this._idealPos;
-    idealPos.x = this.currentTarget.x + Math.sin(this.yaw) * Math.cos(this.pitch) * this.distance;
-    idealPos.y = this.currentTarget.y - Math.sin(this.pitch) * this.distance;
-    idealPos.z = this.currentTarget.z + Math.cos(this.yaw) * Math.cos(this.pitch) * this.distance;
+    idealPos.x = this.currentTarget.x + Math.sin(this.yaw) * Math.cos(this.pitch) * effDistance;
+    idealPos.y = this.currentTarget.y - Math.sin(this.pitch) * effDistance;
+    idealPos.z = this.currentTarget.z + Math.cos(this.yaw) * Math.cos(this.pitch) * effDistance;
 
     idealPos.y = Math.max(idealPos.y, this.minCameraY);
 

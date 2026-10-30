@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { BALANCE } from '../game/Balance.js';
+import { RARE } from '../sim/tables.js';
 import { BUMPER_RADIUS, TRAMPOLINE_RADIUS, TRAMPOLINE_TOP, TRAMPOLINE_VEL, TRAMPOLINE_ITEM_VEL, bumperBounce } from '../world/Arena.js';
 
 const CHARGE_TIME = 0.75;
@@ -143,7 +144,14 @@ export class CombatSystem {
         hitAny = true;
         this.fx.hit(t, d, launch, atk.kind);
         if (yeet) this.fx.superYeet(t, d);
-        this.addStyle(d, 4 + launch * 0.5 + (charge > 0.8 ? 4 : 0));
+        // Super-smash meter: consecutive landed punches bank bonus style; a weapon swing is
+        // not a punch and breaks the streak.
+        let bonus = 0, label = null;
+        if (!weapon) {
+          bonus = this._punchStreak(d);
+          if (d.punchStreak >= 3) label = `x${d.punchStreak} COMBO`;
+        } else d.punchStreak = 0;
+        this.addStyle(d, 4 + launch * 0.5 + (charge > 0.8 ? 4 : 0) + bonus, label);
       }
     }
 
@@ -176,7 +184,11 @@ export class CombatSystem {
       else if (obj.applyDamage(1000 + charge * 3000)) this.breakObject(obj, d);
       else this.fx.bonk(obj.getPosition(), obj);
     }
-    if (!hitAny) this.fx.whiff(d, weapon);
+    if (!hitAny) {
+      this.fx.whiff(d, weapon);
+      // A whiffed jab breaks the streak: the super-smash meter wants consecutive LANDED punches.
+      if (!weapon) d.punchStreak = 0;
+    }
   }
 
   // ═══ New moves: parry, slam, drop-kick, gadgets ═══
@@ -608,6 +620,21 @@ export class CombatSystem {
     const ready = d.styleScore >= STYLE.max;
     if (ready && !d.superReady) this.fx.superReady?.(d);
     d.superReady = ready;
+  }
+
+  /**
+   * Super-smash meter: a punch landed within streakWindow of the last one continues the
+   * streak, and every level past the first banks streakBonus style. At full meter the
+   * dweeb's next charged smash / throw is the Super Yeet (see armSuper) — the ultimate.
+   * @returns {number} bonus style banked for this punch
+   */
+  _punchStreak(d) {
+    const S = STYLE;
+    if (this.time - (d.punchStreakT ?? -99) <= S.streakWindow) {
+      d.punchStreak = Math.min(S.streakCap, (d.punchStreak || 0) + 1);
+    } else d.punchStreak = 1;
+    d.punchStreakT = this.time;
+    return S.streakBonus * (d.punchStreak - 1);
   }
 
   /** F / middle mouse: cash the full meter in — the next charged smash or throw is a Super Yeet. */
@@ -1136,6 +1163,9 @@ export class CombatSystem {
         const launch = t.receiveHit({ dir: _dir, ...scaled(A.thrown(w, sk), yeet, yeet), attacker: by, time: this.time });
         if (launch > 0) {
           this.fx.hit(t, by, launch, 'throw');
+          // Rare drops land their own hit-effects: a thrown anvil should not read like a cake.
+          // (Explosive rares go through explode() instead — the blast is their effect.)
+          if (!obj.def.explosive && RARE[obj.key]) this.fx.rareHit?.(op, obj.key, launch);
           if (obj.superYeet) this.fx.superYeet(t, by);
           if (by !== t) this.addStyle(by, 5 + launch * 0.4);
         }

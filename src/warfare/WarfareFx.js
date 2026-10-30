@@ -2,6 +2,7 @@
 // confetti shards, floating damage numbers and screen shake. View-only (may use Math.random).
 import * as THREE from 'three';
 import { noOutline } from '../render/Toon.js';
+import { Particles } from '../render/Particles.js';
 import { TEAM_COLORS } from './WarfareModels.js';
 
 const GRAV = -20;
@@ -36,6 +37,11 @@ export class WarfareFx {
     }
     this.numIdx = 0;
     this._v = new THREE.Vector3();
+    // Pooled dust for artillery barrages (read-only use of render/Particles).
+    this.particles = new Particles(group);
+    // Crater decals left by artillery: capped, oldest recycled.
+    this.craters = [];
+    this.craterGeo = new THREE.CircleGeometry(1, 14);
   }
 
   addShake(a) { this.shake = Math.min(1.4, this.shake + a); if (a >= 0.5) this.kick = Math.min(1, this.kick + a * 0.6); }
@@ -94,6 +100,30 @@ export class WarfareFx {
     });
   }
 
+  /** Tan dust cloud kicked up by artillery and collapsing barricades (pooled particles). */
+  dustCloud(x, z, r = 6) {
+    this.particles.dust({ x, y: 0.5, z }, Math.max(4, Math.round(6 + r * 1.6)));
+  }
+
+  /** Scorched crater decal stamped where a shell lands. Oldest decals are recycled. */
+  crater(x, z, r = 4) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0x3d2f23, transparent: true, opacity: 0.55, depthWrite: false });
+    const m = new THREE.Mesh(this.craterGeo, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.rotation.z = Math.random() * Math.PI * 2;
+    m.position.set(x, 0.02 + Math.random() * 0.008, z);
+    const s = r * (0.28 + Math.random() * 0.12);
+    m.scale.set(s, s * (0.75 + Math.random() * 0.3), 1);
+    noOutline(m);
+    this.group.add(m);
+    this.craters.push(m);
+    if (this.craters.length > 40) {
+      const old = this.craters.shift();
+      this.group.remove(old);
+      old.material.dispose();
+    }
+  }
+
   _shard(x, y, z, mat, speed) {
     const s = new THREE.Mesh(shardGeo, mat);
     s.position.set(x, y, z);
@@ -144,6 +174,7 @@ export class WarfareFx {
   }
 
   update(dt) {
+    this.particles.update(dt);
     for (let i = this.items.length - 1; i >= 0; i--) {
       const it = this.items[i];
       it.life -= dt;
@@ -174,6 +205,8 @@ export class WarfareFx {
   clear() {
     for (const it of this.items) this.group.remove(it.obj);
     this.items.length = 0;
+    for (const c of this.craters) { this.group.remove(c); c.material.dispose(); }
+    this.craters.length = 0;
     for (const n of this.nums) { n.life = 0; n.el.className = 'wf-dmg'; n.el.style.opacity = '0'; }
     this.shake = 0;
   }

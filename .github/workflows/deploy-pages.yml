@@ -1,0 +1,68 @@
+# Auto-deploy dweebs to GitHub Pages.
+#
+# On every push to main: install, run the full test suite, build with the
+# /dweebs/ base path, and publish dist/ into the dweebs/ directory of
+# yaegerbomb42.github.io (user Pages site).
+#
+# One-time setup (repo owner): create a personal access token with
+# contents:write on yaegerbomb42/yaegerbomb42.github.io and add it as a
+# repository secret named PAGES_DEPLOY_TOKEN in yaegerbomb42/dweebs
+# (Settings → Secrets and variables → Actions).
+#
+# This replaces the Mac-side `./deploy.sh dweebs --pages` flow for dweebs.
+# Do not run both: they write to the same dweebs/ directory and the last
+# writer wins.
+
+name: Deploy dweebs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite (do not deploy broken builds)
+        run: npx vitest run
+
+      - name: Production build
+        run: npx vite build --base=/dweebs/
+
+      - name: Check deploy secret is configured
+        run: |
+          if [ -z "${{ secrets.PAGES_DEPLOY_TOKEN }}" ]; then
+            echo "::error::PAGES_DEPLOY_TOKEN secret is not set. See the header comment in .github/workflows/deploy-pages.yml for the one-time setup."
+            exit 1
+          fi
+
+      - name: Publish dist/ to yaegerbomb42.github.io/dweebs
+        env:
+          DEPLOY_TOKEN: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+        run: |
+          set -e
+          git clone --depth 1 "https://x-access-token:${DEPLOY_TOKEN}@github.com/yaegerbomb42/yaegerbomb42.github.io.git" pages
+          rm -rf pages/dweebs
+          mkdir -p pages/dweebs
+          cp -r dist/. pages/dweebs/
+          cd pages
+          git config user.name "dweebs-deploy[bot]"
+          git config user.email "dweebs-deploy[bot]@users.noreply.github.com"
+          git add dweebs
+          if git diff --cached --quiet; then
+            echo "No changes to deploy."
+          else
+            git commit -m "dweebs: deploy ${{ github.sha }}"
+            git push origin HEAD:main
+          fi
