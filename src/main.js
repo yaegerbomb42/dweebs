@@ -23,6 +23,7 @@ import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
+import { StatusSystem } from './game/StatusEffects.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
 import { Sky, Water } from './render/Sky.js';
@@ -182,6 +183,8 @@ async function init() {
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
+  combat.status = new StatusSystem({ particles, decals, hud, audio });
+  combat.status.combat = combat;
   match = new Match();
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
@@ -795,6 +798,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   controller.enabled = false;
 
   combat.setDweebs(dweebs);
+  combat.status?.setDweebs(dweebs);
   arena.dweebs = dweebs;
   hud.setup(dweebs);
 
@@ -862,6 +866,7 @@ function startMatch() {
 
   controller = new Controller(player, cam, combat);
   combat.setDweebs(dweebs);
+  combat.status?.setDweebs(dweebs);
   // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
@@ -977,6 +982,7 @@ function startRound() {
 
   arena.hazardsActive = false;
   arena.reset();
+  combat.status?.clear();
   resetSuddenDeathFx();
   hud.clearTransient();
   trails.clear();
@@ -1384,6 +1390,7 @@ function loop() {
     }
     handleImpacts();
     combat.update(dt, match.time);
+    combat.status?.update(dt);
     updateDrops(dt);
     match.update(dt);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {

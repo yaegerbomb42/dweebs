@@ -646,6 +646,54 @@ const BUILDERS = {
     k.add(Cyl(0.008, 0.008, 0.3, 4), CHROME, { p: [0.27, 0.19, -0.05], r: [0, 0, -0.5] });
   },
 
+  // ─── Element props ───
+  oilDrum(k) {
+    k.add(Cyl(0.3, 0.3, 0.8, 14), 0x2d2a3a);
+    for (const y of [-0.26, 0, 0.26]) k.add(Tor(0.302, 0.02, 4, 16), 0x4a4660, { p: [0, y, 0], r: [PI / 2, 0, 0] });
+    k.add(Cyl(0.06, 0.06, 0.04, 8), CHROME, { p: [0.14, 0.41, 0.05] });
+    k.sticker(S.textSticker('OIL', { bg: '#ffd23f', w: 160, h: 96 }), 0.3, 0.18, { p: [0, 0.08, 0.305] });
+    k.add(Ico(0.07, 1), 0x1b140c, { p: [-0.12, 0.4, -0.08], s: [1.6, 0.25, 1.2] }); // drip on the lid
+  },
+
+  waterBalloon(k) {
+    k.add(Ico(0.24, 2), 0x3fa9ff, { s: [1, 1.08, 1] }, { transparent: true, opacity: 0.85 });
+    k.add(Cone(0.05, 0.07, 6), 0x2f8ae0, { p: [0, 0.27, 0], r: [PI, 0, 0] });
+    k.add(Tor(0.03, 0.012, 4, 8), 0x2f8ae0, { p: [0, 0.3, 0], r: [PI / 2, 0, 0] });
+    k.add(Ico(0.05, 1), 0xffffff, { p: [-0.09, 0.1, 0.17], s: [1, 1.4, 0.4] }, { transparent: true, opacity: 0.6 }); // shine
+  },
+
+  honeyJar(k) {
+    k.add(Lathe([[0, -0.22], [0.16, -0.22], [0.2, -0.1], [0.2, 0.08], [0.14, 0.17], [0.15, 0.2], [0, 0.2]], 12), 0xffb02e);
+    k.add(Cyl(0.16, 0.16, 0.05, 12), 0xd4a86a, { p: [0, 0.22, 0] });
+    for (let i = 0; i < 3; i++) k.add(Ico(0.035, 1), 0xffb02e, { p: [Math.cos(i * 2.1) * 0.15, 0.17 - i * 0.05, Math.sin(i * 2.1) * 0.15], s: [0.8, 1.6, 0.8] }); // drips
+    k.sticker(S.textSticker('HUNNY', { bg: '#f3e6cf', w: 192, h: 96 }), 0.24, 0.12, { p: [0, -0.04, 0.2] });
+  },
+
+  snowGlobe(k) {
+    k.add(Cyl(0.2, 0.24, 0.12, 12), 0xb56cff, { p: [0, -0.22, 0] });
+    k.add(Ico(0.24, 2), 0xcff6ff, { p: [0, 0.05, 0] }, { transparent: true, opacity: 0.35 });
+    k.add(Cone(0.09, 0.2, 6), 0x2f8f3a, { p: [0, 0.0, 0] }); // tiny tree
+    k.add(Ico(0.05, 1), 0xffffff, { p: [0.08, -0.08, 0.05] }); // snowman
+    k.add(Ico(0.035, 1), 0xffffff, { p: [0.08, -0.01, 0.05] });
+    for (let i = 0; i < 9; i++) k.add(Ico(0.012, 0), 0xffffff, { p: [Math.cos(i * 1.9) * 0.15, 0.05 + Math.sin(i * 3.1) * 0.12, Math.sin(i * 1.9) * 0.15] });
+  },
+
+  pepperBomb(k) {
+    k.add(Ico(0.13, 2), 0xff3b2f, { p: [0, -0.02, 0], s: [1, 1.9, 1] });
+    k.add(Cyl(0.03, 0.04, 0.1, 6), 0x2f8f3a, { p: [0, 0.27, 0], r: [0, 0, 0.4] });
+    k.add(Cone(0.08, 0.05, 6), 0x2f8f3a, { p: [0, 0.22, 0], r: [PI, 0, 0] });
+    k.eye([0.05, 0.05, 0.1], [0.4, 0.1, 1], 0.025);
+    k.eye([-0.05, 0.05, 0.1], [-0.4, 0.1, 1], 0.025);
+  },
+
+  staticCoil(k) {
+    k.add(Cyl(0.18, 0.2, 0.1, 12), 0x2d2a3a, { p: [0, -0.25, 0] });
+    k.add(Cyl(0.05, 0.05, 0.4, 8), CHROME, { p: [0, 0, 0] });
+    for (let i = 0; i < 5; i++) k.add(Tor(0.09, 0.015, 4, 12), 0xd98b3a, { p: [0, -0.14 + i * 0.07, 0], r: [PI / 2, 0, 0] }); // copper coil
+    k.add(Ico(0.1, 1), CHROME, { p: [0, 0.25, 0] });
+    k.add(Ico(0.05, 1), 0xfff35a, { p: [0, 0.25, 0] }, { transparent: true, opacity: 0.9 });
+  },
+
   fishBowl(k) {
     k.add(Lathe([[0, -0.2], [0.12, -0.2], [0.2, -0.13], [0.24, -0.01], [0.21, 0.13], [0.14, 0.2], [0.155, 0.215], [0, 0.215]], 12),
       0xcff6ff, {}, { transparent: true, opacity: 0.4 });

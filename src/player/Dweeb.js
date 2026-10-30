@@ -465,7 +465,7 @@ export class Dweeb {
         }
       }
 
-      let speed = MV.speed * this.stats.move * (this.grounded ? this.slide : 1);
+      let speed = MV.speed * this.stats.move * (this.grounded ? this.slide : 1) * (this.statusMove ?? 1);
       if (this.zoomTimer > 0) speed *= 1.5;
       if (this.sugarTimer > 0) speed *= BALANCE.powerups.sugar.speed;
       if (this.megaTimer > 0) speed *= 0.9;
@@ -482,7 +482,7 @@ export class Dweeb {
       // Accel and brake are separate: quick to get going, even quicker to stop. On ice the
       // arena's low traction scales both, so you commit to a slide.
       const rate = this.grounded
-        ? (braking ? MV.groundBrake : MV.groundAccel) * this.traction
+        ? (braking ? MV.groundBrake : MV.groundAccel) * this.traction * (this.statusTraction ?? 1)
         : (braking ? MV.airBrake : MV.airAccel) * this.stats.airAccel;
       let accel = rate * dt;
       if (this.grounded && hSpeed > MV.skidSpeed && facing < -0.3 && this.skidTimer <= 0) {
@@ -510,7 +510,7 @@ export class Dweeb {
       }
 
       if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
-        vy = MV.jumpVel * this.stats.jump * this.jumpScale;
+        vy = MV.jumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
         this.jumpsLeft = 1;
         this.coyote = 0;
         this.jumpBuffer = 0;
@@ -518,7 +518,7 @@ export class Dweeb {
         this.landSquash = -0.35;
         this.onJump?.(this, false);
       } else if (this.jumpRequested && this.jumpsLeft > 0 && !this.grounded && !this.specialFall) {
-        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale;
+        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
         this.jumpsLeft = 0;
         this.jumpBuffer = 0;
         this.jumpRising = true;
@@ -790,7 +790,11 @@ export class Dweeb {
     const flash = frozen ? 0 : this.flashTimer > 0 ? 0.9 : (this.megaTimer > 0 ? 0.15 + Math.sin(time * 10) * 0.1 : 0);
     for (const m of this.flashMats) {
       if (frozen) m.emissive.setRGB(0.22, 0.5, 0.78);
-      else m.emissive.setRGB(flash, flash, flash * (this.megaTimer > 0 && this.flashTimer <= 0 ? 0.4 : 1));
+      else if (this.statusTint != null && flash === 0) {
+        // Elemental status glow (StatusEffects): a soft pulse in the status colour
+        const k = 0.22 + Math.sin(time * 9) * 0.08, c = this.statusTint;
+        m.emissive.setRGB(((c >> 16) & 255) / 255 * k, ((c >> 8) & 255) / 255 * k, (c & 255) / 255 * k);
+      } else m.emissive.setRGB(flash, flash, flash * (this.megaTimer > 0 && this.flashTimer <= 0 ? 0.4 : 1));
     }
     this.mesh.visible = this.invulnTimer > 0 && !frozen ? Math.sin(time * 30) > -0.3 : true;
 

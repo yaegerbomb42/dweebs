@@ -57,6 +57,9 @@ export const DROP_ITEMS = [
   { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 },
   // fast hands: low launch, huge cadence
   { key: 'boxingGlove', w: 3 },
+  // element props: combine them (water + tesla = shock, oil + pepper = inferno, snow twice = frozen)
+  { key: 'waterBalloon', w: 4 }, { key: 'oilDrum', w: 3 }, { key: 'honeyJar', w: 3 }, { key: 'snowGlobe', w: 3 },
+  { key: 'pepperBomb', w: 3 }, { key: 'staticCoil', w: 2.5 },
 ];
 // Rare items: at most `max` live at once, and at least `cd` seconds between drops of the same key
 const RARE = {
