@@ -1,5 +1,6 @@
 // Fx.js — "game feel" hub: particles, sound, camera shake, hit-stop and comic popups for every event.
 
+import { DweebVoices } from '../audio/Voices.js';
 import * as THREE from 'three';
 import { BALANCE } from './Balance.js';
 
@@ -24,6 +25,14 @@ export class Fx {
     this.arena = arena;
     this.hitStop = 0;
     this.player = null;
+    this.voices = new DweebVoices(audio);
+  }
+
+  /** Voice line for a dweeb, panned and distance-scaled. */
+  voice(d, kind, delay = 0) {
+    if (!d?.getPosition) return;
+    const p = d.getPosition();
+    this.voices.say(d, kind, this._pan(p), d.isPlayer ? 1 : 0.35 + this._near(p, 30) * 0.65, delay);
   }
 
   /** Stereo pan (-1..1) and a distance-based volume factor for a world position. */
@@ -48,6 +57,7 @@ export class Fx {
     const power = Math.min(1, launch / 20);
     const tier = hitTier(launch);
     const involvesPlayer = victim.isPlayer || attacker?.isPlayer;
+    if (launch > 0.5) this.voice(victim, tier >= 2 ? 'yeet' : 'ow');
     const color = attacker ? attacker.color : 0xffffff;
 
     if (tier >= 2) this.particles.bigHit(pos, color);
@@ -235,6 +245,7 @@ export class Fx {
     const pos = d.getPosition();
     this.audio.playGrab(this._pan(pos));
     if (target) this.hud.popup('GOTCHA!', target.getPosition(), 'small', d.color);
+    if (target?.receiveHit) this.voice(target, 'eep');
   }
 
   escape(t) {
@@ -596,6 +607,7 @@ export class Fx {
 
   jump(d, double) {
     const pos = d.getPosition();
+    if (double && Math.random() < 0.5) this.voice(d, 'hup');
     if (double) this.particles.ring({ x: pos.x, y: pos.y - 0.5, z: pos.z }, { color: 0xffffff, size: 1.6, life: 0.25 });
     else this.particles.dust({ x: pos.x, y: pos.y - 0.5, z: pos.z }, 5);
     if (d.isPlayer || this._near(pos, 10) > 0) this.audio.playJump(this._pan(pos), double);
@@ -695,6 +707,8 @@ export class Fx {
   }
 
   ko(victim, credited, kind, pos, suddenDeath = false) {
+    this.voice(victim, 'ko');
+    if (credited && credited !== victim) this.voice(credited, 'cheer', 0.35);
     if (kind === 'splash') this.splash(pos);
     else {
       this.particles.confetti(pos, 50);
