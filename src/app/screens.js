@@ -121,6 +121,8 @@ export function buildScreens() {
             </div>
           </div>
           <button class="btn big purple hero-cta" id="app-btn-builder" data-launch>ENTER THE 3D LAB</button>
+          <button class="btn blue hero-cta" id="app-btn-traitbrawl" title="Trait-driven auto-battler in the Toy Playroom" style="font-size:18px;margin-top:8px"
+            data-launch>🤖 DWEEB BRAWL SIM</button>
           <aside class="hero-spotlight" aria-label="Featured dweeb">
             <span class="hero-spot-label">🌟 FEATURED DWEEB</span>
             <div class="hero-spot-body" id="hero-spotlight"></div>

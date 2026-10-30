@@ -1100,6 +1100,10 @@ export class BuildADweebHud {
           </div>
           <button class="bd-launch-btn" id="bd-btn-launch">⚔️ SEND TO ARENA</button>
           <button class="bd-launch-btn green" id="bd-btn-mutation" style="animation:none; background:#5ee06a; box-shadow:0 8px 0 #14101c, 0 0 24px rgba(94,224,106,0.4);">🎲 MUTATION ROULETTE</button>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <button class="bd-launch-btn" id="bd-btn-traits" style="background:#b25ee0; font-size:15px; flex:1;">🧬 TRAITS</button>
+            <button class="bd-launch-btn" id="bd-btn-brawlsim" style="background:#7dd3fc; font-size:15px; flex:1;">🤖 BRAWL SIM</button>
+          </div>
           <span style="font-size:12px; font-weight:800; background:rgba(20,16,28,0.8); border-radius:8px; padding:3px 10px;">100% AUTONOMOUS AI BATTLE · ZERO USER INPUT</span>
           <!-- Merge: milestone #4 tournament card + combat telemetry card -->
 
@@ -1488,6 +1492,10 @@ export class BuildADweebHud {
     $('#bd-btn-exit').addEventListener('click', () => {
       this.handlers.onExit?.();
     });
+
+    // Trait Lab + autonomous Brawl Sim (src/builder/traits)
+    $('#bd-btn-traits')?.addEventListener('click', () => this.handlers.onOpenTraits?.());
+    $('#bd-btn-brawlsim')?.addEventListener('click', () => this.handlers.onOpenBrawlSim?.());
 
     // Launch Arena
     $('#bd-btn-launch').addEventListener('click', () => {

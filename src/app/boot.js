@@ -195,6 +195,11 @@ function wireTitle({ nodes, router, toast }) {
     launchGameMode('build', 'stadium');
   });
 
+  // Dweeb Brawl Sim: trait-driven auto-battler (src/builder/traits/TraitBrawlMode.js)
+  nodes.title.querySelector('#app-btn-traitbrawl')?.addEventListener('click', () => {
+    launchGameMode('build', 'stadium', 'traitbrawl');
+  });
+
   // Game 5 (Dweeb Warfare) and submodes
   nodes.title.querySelector('#app-btn-warfare')?.addEventListener('click', () => {
     launchGameMode('warfare', 'stadium', 'defense');

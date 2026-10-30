@@ -58,6 +58,8 @@ let hillZone = null;
 import { MimicLab } from './mimic/MimicLab.js';
 import { assignTeams, teamById, TeamRings } from './game/Teams.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
+import { TraitPicker } from './builder/traits/TraitPicker.js';
+import { TraitBrawlMode } from './builder/traits/TraitBrawlMode.js';
 import { BuildADweebLab, recordGauntletBout, loadGauntletState, TOURNAMENT_KEY, mutateRandomPart, MUTATION_INTERVAL } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
 import { TournamentBracket } from './builder/Tournament.js';
@@ -995,6 +997,36 @@ function pushTournamentState(state) {
   currentBuildHud?.renderTournament?.(state);
 }
 
+// ─── Trait Lab + Dweeb Brawl Sim (autonomous trait-driven auto-battler) ───
+let traitBrawl = null;
+function openTraitPicker() {
+  if (!currentBuildLab) return;
+  new TraitPicker({
+    traits: currentBuildLab.config?.traits || [],
+    core: currentBuildLab.config?.traitCore || {},
+    onChange: (traits, traitCore) => currentBuildLab?.updateConfig({ traits, traitCore }),
+    onBrawl: () => openBrawlSim(),
+  });
+}
+function openBrawlSim({ fromHub = false } = {}) {
+  if (traitBrawl) return;
+  currentBuildLab?.saveConfig?.();
+  traitBrawl = new TraitBrawlMode({
+    onExit: () => {
+      traitBrawl = null;
+      if (!fromHub) return;
+      toMenu();
+      $('main-menu')?.classList.add('hidden');
+      if (window.__dweebsApp?.router) {
+        window.__dweebsApp.router.setMatchLock(false);
+        window.__dweebsApp.router.go('/');
+      } else {
+        $('main-menu')?.classList.remove('hidden');
+      }
+    },
+  });
+}
+
 function startBuildLab() {
   pendingTournamentFight = null;
   hideSpectatorOverlay();
@@ -1037,6 +1069,8 @@ function startBuildLab() {
       currentBuildHud.syncForm(cfg);
     },
     onExit: exitBuildLab,
+    onOpenTraits: () => openTraitPicker(),
+    onOpenBrawlSim: () => openBrawlSim(),
     onLaunchArena: oppType => {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
@@ -1440,6 +1474,10 @@ function startMatch() {
   if (launch?.mode && GAME_MODES[launch.mode]) settings.mode = launch.mode;
   if (launch?.arena && ARENAS.some(a => a.id === launch.arena)) settings.arena = launch.arena;
   for (const id of ['game-switcher-modal', 'pause-screen']) $(id)?.classList.add('hidden');
+  if ((settings.mode || 'derby') === 'build' && launch?.submode === 'traitbrawl') {
+    $('main-menu')?.classList.add('hidden');
+    return openBrawlSim({ fromHub: true });
+  }
   if ((settings.mode || 'derby') === 'build') return startBuildLab();
   if ((settings.mode || 'derby') === 'warfare') return startWarfare(launch?.submode || 'defense');
   if (currentWarfare) {
