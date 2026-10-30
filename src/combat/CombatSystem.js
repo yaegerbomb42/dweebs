@@ -973,6 +973,7 @@ export class CombatSystem {
   // ═══ World effects ═══
 
   explode(pos, attacker, source = null) {
+    this.onExplode?.(pos, attacker, source);
     if (source) {
       source.broken = true;
       this.arena.removeObject(source);

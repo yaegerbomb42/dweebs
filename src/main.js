@@ -39,6 +39,7 @@ import { Colony } from './adventure/colony.js';
 import { BuildingManager } from './adventure/building.js';
 import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
+let escapeResetTimer = 0;
 import { MimicLab } from './mimic/MimicLab.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
 import { BuildADweebLab } from './builder/BuildADweebLab.js';
@@ -182,6 +183,7 @@ async function init() {
   fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
+  combat.onExplode = pos => currentEscapeSandbox?.onExplosion(pos);
   match = new Match();
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
@@ -474,6 +476,8 @@ function toMenu() {
     buildingManager = null;
   }
   colony = null;
+  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; arena.setStadiumVisible?.(true); }
+  escapeResetTimer = 0;
   audio.stopAmbience?.();
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
@@ -870,12 +874,14 @@ function startMatch() {
   hud.setup(dweebs);
 
   currentMode = settings.mode || 'derby';
+  // Dweebscape is co-op and combatless: the other dweebs just stand around being useful weights.
+  if (GAME_MODES[currentMode]?.hasEscapePuzzles) bots = [];
   match.settings.stocks = (GAME_MODES[currentMode]?.stocks ?? +settings.stocks);
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
 
   // ── Mode Initialization (Knockout Arena vs Expedition & Dynasty) ──
-  const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
+  const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands' && currentMode !== 'escape');
 
   if (isAdventure) {
     if (arena.setStadiumVisible) arena.setStadiumVisible(false);
@@ -997,21 +1003,28 @@ function startRound() {
     arena.spawnItem('spikyBall', { x: 8, y: 2, z: 0 });
   }
 
+  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+  escapeResetTimer = 0;
   if (modeDef.hasEscapePuzzles) {
-    arena.spawnItem('powerBattery', { x: 8, y: 3, z: -4 });
-    arena.spawnItem('powerBattery', { x: 8, y: 3, z: 4 });
+    // The vault sits on its own island out on the lake: hide the stadium scenery so the
+    // horizon is just water and sky, and drop the brawl clock (there are no rounds here).
+    arena.setStadiumVisible?.(false);
+    $('hud-top')?.classList.add('hidden');
+    currentEscapeSandbox = new EscapeSandbox(physics, scene, { arena, fx, hud, audio });
+    // A few seconds to soak in the win, then a fresh vault (try another way out)
+    currentEscapeSandbox.onEscaped = () => { escapeResetTimer = 6; };
   }
 
   const total = dweebs.length;
   dweebs.forEach((d, i) => {
-    const p = arena.getSpawnPoint(i, total, currentMode);
+    const p = currentEscapeSandbox ? currentEscapeSandbox.spawnPoint(i, total) : arena.getSpawnPoint(i, total, currentMode);
     d.eliminated = false;
     // Stage physics belongs to the arena: the Moonbase is lighter, the Iceberg slicker.
     d.gravityScale = arena.gravity;
     d.jumpScale = arena.gravity < 1 ? 0.72 + arena.gravity * 0.28 : 1;
     d.respawn(p, 0);
     d.held = null;
-    d.yaw = Math.atan2(-p.x, -p.z);
+    d.yaw = currentEscapeSandbox ? Math.PI : Math.atan2(-p.x, -p.z);
     // Arena floor feel: the Iceberg's traction lives on the stage, not the Dweeb.
     d.traction = arena.traction;
     d.slide = arena.slide;
@@ -1027,7 +1040,7 @@ function startRound() {
   cam.targetDistance = 9;
   cam.pitch = -0.42;
   const pp = player.getPosition();
-  cam.yaw = Math.atan2(-pp.x, -pp.z) + Math.PI;
+  cam.yaw = currentEscapeSandbox ? 0 : Math.atan2(-pp.x, -pp.z) + Math.PI;
   cam.snapTo(pp.x, pp.y, pp.z);
   audio.startMusic(false);
 }
@@ -1416,6 +1429,10 @@ function loop() {
     cam.setTarget(0, -1, 0);
   }
   arena.update(dt);
+  if (currentEscapeSandbox && inGame) {
+    currentEscapeSandbox.update(dt, dweebs, camera);
+    if (escapeResetTimer > 0 && (escapeResetTimer -= rawDt) <= 0) startRound();
+  }
   if (currentMeadowlands) {
     if (buildingManager && player) {
       buildingManager.update(rawDt, player, currentMeadowlands.terrainMesh, { dweebs, colony, world: currentMeadowlands });
@@ -1617,7 +1634,7 @@ function handleImpacts() {
 }
 
 function updateDrops(dt) {
-  if (!match.running) return;
+  if (!match.running || currentEscapeSandbox) return;
   const finale = match.suddenDeath && match.timer <= 10;
   if (match.suddenDeath) updateSuddenDeath(dt);
   arena.itemTimer -= dt;
