@@ -184,8 +184,7 @@ export class CombatSystem {
       obj.hitList.add(d);
       hitAny = true;
       if (obj.def.explosive) this.lightFuse(obj, d, charge > 0.5 ? 0.45 : 0.9);
-      else if (obj.applyDamage(1000 + charge * 3000)) this.breakObject(obj, d);
-      else this.fx.bonk(obj.getPosition(), obj);
+      else if (!this.damageObject(obj, 1000 + charge * 3000, d, { dir: { x: d.forward.x, y: 0, z: d.forward.z }, speed: 6 + charge * 10 })) this.fx.bonk(obj.getPosition(), obj);
     }
     if (!hitAny) {
       this.fx.whiff(d, weapon);
@@ -1018,14 +1017,51 @@ export class CombatSystem {
     this.fx.explosion(pos);
   }
 
-  breakObject(obj, by = null) {
+  /**
+   * Shatter a prop. `hit` (optional): { dir, speed } of the blow. Chunk count and size come from
+   * the prop's mass and bulk, chunks carry the prop's momentum and blow out along the hit, and a
+   * big enough smash shoves nearby loose props, so breaking things is a physical event.
+   */
+  breakObject(obj, by = null, hit = null) {
     const pos = obj.getPosition();
     if (by) this.addStyle(by, 5);
     const color = obj.def.color ?? 0xc4a06a;
+    const mass = obj.def.mass ?? 1;
+    const dims = obj.def.dims || {};
+    const bulk = Math.max(dims.hx ?? 0, dims.hy ?? 0, dims.hz ?? 0, dims.radius ?? 0, dims.halfHeight ?? 0, 0.3);
+    const vel = obj.body?.linvel?.() ?? { x: 0, y: 0, z: 0 };
+    const speed = hit?.speed ?? Math.hypot(vel.x, vel.y, vel.z);
+    let dir = hit?.dir;
+    if (!dir) { const l = Math.hypot(vel.x, vel.z) || 1; dir = { x: vel.x / l, y: 0, z: vel.z / l }; }
+    const count = Math.round(Math.min(16, Math.max(6, 5 + mass * 2.5 + bulk * 4)));
     obj.broken = true;
     this.arena.removeObject(obj);
-    this.arena.spawnDebris(pos, color, 8, obj.def.material, obj.def.breakColors);
+    this.arena.spawnDebris(pos, color, count, obj.def.material, obj.def.breakColors,
+      { vel, dir, power: Math.min(18, speed), size: Math.min(1.8, Math.max(0.8, bulk / 0.35)) });
+    // Shockwave: heavy smashes kick nearby loose props.
+    const shove = Math.min(6, mass * 0.8 + speed * 0.15);
+    if (shove > 1.2) {
+      for (const o of this.arena.objects) {
+        if (o === obj || o.isDebris || o.broken || o.isGrabbed || !o.body) continue;
+        const op = o.getPosition(), dx = op.x - pos.x, dz = op.z - pos.z, dd = Math.hypot(dx, dz);
+        if (dd > 2.8 || dd < 1e-3) continue;
+        const k = shove * (1 - dd / 2.8) * Math.min(1, (o.def?.mass ?? 1));
+        this.physics.applyImpulse(o.body, { x: dx / dd * k, y: k * 0.5, z: dz / dd * k });
+      }
+    }
     this.fx.break(pos, obj);
+  }
+
+  /** Damage a breakable: shatter it, or chip a few flakes off so you can see it's going. */
+  damageObject(obj, force, by = null, hit = null) {
+    if (obj.applyDamage(force)) { this.breakObject(obj, by, hit); return true; }
+    if (obj.def.breakable && !obj.broken && force > 300) {
+      const pos = obj.getPosition();
+      const chips = obj.wear > 0.6 ? 2 : 1;
+      this.arena.spawnDebris(pos, obj.def.color ?? 0xc4a06a, chips, obj.def.material, obj.def.breakColors,
+        { vel: { x: 0, y: 0, z: 0 }, dir: hit?.dir, power: 3, size: 0.45 });
+    }
+    return false;
   }
 
   // ═══ Per-frame ═══
@@ -1232,7 +1268,7 @@ export class CombatSystem {
         // Bowling balls plough on through; everything else rebounds off the victim
         const keep = obj.def.multiHit ? 0.7 : -0.25;
         obj.body.setLinvel({ x: v.x * keep, y: Math.abs(v.y) * 0.3 + (obj.def.roll ? 0.5 : 3), z: v.z * keep }, true);
-        if (obj.applyDamage(2500)) { this.breakObject(obj, by); break; }
+        if (this.damageObject(obj, 2500, by, { dir: { x: v.x, y: 0, z: v.z }, speed: Math.hypot(v.x, v.z) })) break;
       }
     }
   }
