@@ -865,7 +865,7 @@ function startMatch() {
   // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
-  if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) window.__dweebs = { hud, physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
   fx.player = player;
   hud.setup(dweebs);
 

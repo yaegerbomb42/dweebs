@@ -36,6 +36,7 @@ export const DEFAULTS = {
   sensitivity: 1,
   bindings: null,         // null = factory defaults; otherwise { action: KeyboardEvent.code }
   serverUrl: '',
+  colorblind: 'off',      // off | deuteranopia | protanopia | tritanopia
 };
 
 /** Default key map. Mirrors the on-screen controls list in index.html. */
