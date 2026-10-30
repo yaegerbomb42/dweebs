@@ -21,6 +21,7 @@ import { AudioManager } from './audio/AudioManager.js';
 import { Match, Phase } from './game/Match.js';
 import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
+import { ModeDirector } from './game/ModeDirector.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
 import { StatusSystem } from './game/StatusEffects.js';
@@ -70,6 +71,8 @@ let activeCitizenIdx = 0;
 let isBuildToolbarOpen = false;
 let villageSaveTimer = 0;
 let currentGatherTarget = null;
+let modeDirector = new ModeDirector();
+const _modeCtx = {};
 
 function updateCitizenRoleBadges(cit) {
   const curRole = cit?.role || '';
@@ -499,6 +502,7 @@ function toMenu() {
   audio.setCharge(0);
   hud.setSpectator('');
   hideSpectatorOverlay();
+  try { modeDirector.reset(); } catch (e) { console.warn('[ModeDirector] reset error:', e); }
   for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud', 'spectator-duel-overlay']) $(id)?.classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
@@ -1062,6 +1066,7 @@ function startRound() {
   cam.yaw = Math.atan2(-pp.x, -pp.z) + Math.PI;
   cam.snapTo(pp.x, pp.y, pp.z);
   audio.startMusic(false);
+  try { modeDirector.start(currentMode); } catch (e) { console.warn('[ModeDirector] start error:', e); }
 }
 
 function winsHtml() {
@@ -1402,6 +1407,7 @@ function loop() {
       colony.update(dt, currentMeadowlands);
     }
     if (match.running) {
+      try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
       for (const b of bots) b.update(dt, dweebs);
       for (const b of builderBots) b.update(dt, dweebs);
       try { mutatorDirector.update(dt, mutatorCtx()); } catch (e) { console.error('[Mutator] update error:', e); }
