@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { counterMult } from '../sim/warfareUnits.js';
 import { buildBoard, buildBarricades } from './WarfareBoard.js';
 import { getBattleground } from './Battlegrounds.js';
-import { buildUnit, buildShell, buildRing, buildTrap, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
+import { buildUnit, buildShell, buildRing, buildBarrel, buildCrate, buildTrap, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
 import { WarfareFx } from './WarfareFx.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -25,6 +25,7 @@ export class WarfareView {
     this.fx = new WarfareFx(this.group, camera);
     this.entries = new Map();   // unit id → entry
     this.shells = new Map();    // shell obj → mesh
+    this.props = new Map();     // prop id → { m, x, z, type }
     this.tethers = new Map();   // `${carrierId}>${victimId}` → tether
     this._tetherPool = [];
     this._tetherMats = {
@@ -76,6 +77,8 @@ export class WarfareView {
     this.entries.clear();
     for (const m of this.shells.values()) this.dyn.remove(m);
     this.shells.clear();
+    for (const e of this.props.values()) this.dyn.remove(e.m);
+    this.props.clear();
     for (const m of this.traps.values()) this.dyn.remove(m);
     this.traps.clear();
     this.fx.clear();
@@ -217,6 +220,7 @@ export class WarfareView {
       }
     }
     for (const [sh, m] of this.shells) if (!live.has(sh)) { this.dyn.remove(m); this.shells.delete(sh); }
+    this._syncProps(st);
     // spike pits
     const liveTraps = new Set(st.traps);
     for (const t of st.traps) {
@@ -233,6 +237,24 @@ export class WarfareView {
       const show = team === this.localTeam || st.mode === 'versus';
       this.rally[team].g.visible = show && !!r && !(st.mode === 'defense' && team === 'red');
       if (r) this.rally[team].g.position.set(r.x, 0.05, r.z);
+    }
+  }
+
+  /** Keep battlefield props in sync with the sim. Props are static, so no interpolation. */
+  _syncProps(st) {
+    const list = Array.isArray(st?.props) ? st.props : [];
+    const seen = new Set();
+    for (const p of list) {
+      if (!p) continue;
+      seen.add(p.id);
+      if (this.props.has(p.id)) continue;
+      const m = p.type === 'crate' ? buildCrate() : buildBarrel();
+      m.position.set(p.x, 0, p.z);
+      this.dyn.add(m);
+      this.props.set(p.id, { m, x: p.x, z: p.z, type: p.type });
+    }
+    for (const [id, e] of this.props) {
+      if (!seen.has(id)) { this.dyn.remove(e.m); this.props.delete(id); }
     }
   }
 
@@ -275,6 +297,13 @@ export class WarfareView {
           if (bm) bm.g.visible = false;
           fx.dustCloud(ev.x, ev.z, ev.r || 3);
           fx.addShake(0.25);
+          break;
+        }
+        case 'propBoom': {
+          const pm = this.props.get(ev.id);
+          if (pm) { this.dyn.remove(pm.m); this.props.delete(ev.id); }
+          if (ev.prop === 'barrel') fx.explosion(ev.x, ev.z, ev.r || 4, true);
+          else { fx.dustCloud(ev.x, ev.z, ev.r || 2.5); fx.puff(ev.x, ev.z); }
           break;
         }
         case 'slam': fx.shockwave(ev.x, ev.z, ev.r * 1.3, 0xd4a73a); fx.addShake(ev.unit === 'boss' ? 0.7 : 0.25); fx.puff(ev.x, ev.z); break;

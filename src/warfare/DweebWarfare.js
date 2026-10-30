@@ -184,7 +184,7 @@ export class DweebWarfare {
       seed, mode, difficulty,
       map: o.map ?? 'random', waves: o.waves, personality: o.personality ?? 'random',
       aiLevel: o.aiLevel ?? 1, veterans: o.veterans,
-      barricades: bg?.barricades, highGround: bg?.highGround,
+      barricades: bg?.barricades, highGround: bg?.highGround, mapId: bg?.id,
     });
     if (bg) this.st.mapName = bg.name.toUpperCase();
     this.powerCooldowns = Object.fromEntries(Object.keys(POWER_COOLDOWNS).map(k => [k, 0]));
