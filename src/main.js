@@ -53,6 +53,7 @@ import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebM
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
 import { defaultUrl } from './net/NetClient.js';
+import { recordMatch } from './app/daily.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
@@ -1255,6 +1256,23 @@ const matchEvents = {
     hud.confetti();
     audio.playBanner(you);
     if (you) audio.playVictory(); else audio.playDefeat();
+
+    // Daily contract progress
+    try {
+      const payload = {
+        mode: currentMode,
+        win: you,
+        kos: player.totalKos ?? player.kos ?? 0,
+        trickshots: player.trickshots ?? 0,
+        stylePeak: player.stylePeak ?? 0,
+      };
+      const result = recordMatch(payload);
+      if (result.justCompleted) {
+        hud.announce('DAILY CONTRACT COMPLETE!', result.contract.title, 2);
+      }
+    } catch (e) {
+      console.warn('Daily contract recordMatch failed:', e);
+    }
   },
 };
 
