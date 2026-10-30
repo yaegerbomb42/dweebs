@@ -482,7 +482,7 @@ export class Dweeb {
       // Accel and brake are separate: quick to get going, even quicker to stop. On ice the
       // arena's low traction scales both, so you commit to a slide.
       const rate = this.grounded
-        ? (braking ? MV.groundBrake : MV.groundAccel) * this.traction
+        ? (braking ? MV.groundBrake : MV.groundAccel) * (this.iceTraction ?? this.traction)
         : (braking ? MV.airBrake : MV.airAccel) * this.stats.airAccel;
       let accel = rate * dt;
       if (this.grounded && hSpeed > MV.skidSpeed && facing < -0.3 && this.skidTimer <= 0) {

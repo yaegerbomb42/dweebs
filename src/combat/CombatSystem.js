@@ -54,6 +54,8 @@ export class CombatSystem {
     this.fx = fx;
     this.time = 0;
     this.dweebs = [];
+    this.icePatches = [];
+    arena.combat = this;
   }
 
   setDweebs(dweebs) {
@@ -1010,6 +1012,30 @@ export class CombatSystem {
     this.arena.removeObject(obj);
     this.arena.spawnDebris(pos, color, 8, obj.def.material, obj.def.breakColors);
     this.fx.break(pos, obj);
+
+    const ice = obj.def.icePatch;
+    if (ice) {
+      const patches = this.icePatches || (this.icePatches = []);
+      const radius = obj.def.dims?.radius ?? 0.26;
+      const arena = this.arena;
+      let y = pos.y - 0.2;
+      if (arena.isOverGround?.(pos.x, pos.z)) {
+        let floorY = 0;
+        const plat = arena.platforms?.find(p =>
+          Math.abs(pos.x - p.x) < p.hw && Math.abs(pos.z - p.z) < p.hd);
+        if (plat) floorY = plat.top;
+        y = Math.max(floorY, pos.y - radius + 0.03);
+      }
+      const mesh = new THREE.Mesh(
+        new THREE.CircleGeometry(ice.radius, 32),
+        new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.55, depthWrite: false }),
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(pos.x, y, pos.z);
+      arena.scene.add(mesh);
+      patches.push({ x: pos.x, z: pos.z, y, r: ice.radius, life: ice.life, maxLife: ice.life, traction: ice.traction, mesh });
+      this.fx.hud?.popup('ICE!', pos, 'big', 0x8fd3ff);
+    }
   }
 
   // ═══ Per-frame ═══
@@ -1051,6 +1077,7 @@ export class CombatSystem {
     this._updateProjectiles(dt);
     this._updateHazards();
     this._updatePickups();
+    this._updateIcePatches(dt);
   }
 
   _updateHeld(d, dt) {
@@ -1272,6 +1299,48 @@ export class CombatSystem {
         arena.hitBumper(b);
         this.fx.bumper({ x: b.x, y: 1, z: b.z }, b.color, true);
         break;
+      }
+    }
+  }
+
+  /** Remove every active ice patch (called on round reset). */
+  clearIcePatches() {
+    if (!this.icePatches?.length) return;
+    for (const patch of this.icePatches) {
+      this.arena.scene.remove(patch.mesh);
+      patch.mesh.geometry.dispose();
+      patch.mesh.material.dispose();
+    }
+    this.icePatches.length = 0;
+  }
+
+  _updateIcePatches(dt) {
+    const patches = this.icePatches;
+    if (patches?.length) {
+      for (let i = patches.length - 1; i >= 0; i--) {
+        const patch = patches[i];
+        patch.life -= dt;
+        if (patch.life <= 0) {
+          this.arena.scene.remove(patch.mesh);
+          patch.mesh.geometry.dispose();
+          patch.mesh.material.dispose();
+          patches.splice(i, 1);
+        } else if (patch.life < 1.5) {
+          patch.mesh.material.opacity = 0.55 * Math.max(0, patch.life / 1.5);
+        }
+      }
+    }
+
+    for (const d of this.dweebs) {
+      if (!d.active) { d.iceTraction = null; continue; }
+      d.iceTraction = null;
+      if (!d.grounded || !patches?.length) continue;
+      const p = d.getPosition();
+      for (const patch of patches) {
+        if (Math.hypot(p.x - patch.x, p.z - patch.z) <= patch.r && Math.abs(p.y - patch.y) < 1.5) {
+          d.iceTraction = patch.traction;
+          break;
+        }
       }
     }
   }

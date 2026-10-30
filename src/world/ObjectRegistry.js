@@ -328,6 +328,15 @@ export const OBJECT_DEFS = {
     breakable: true, breakForce: 500, damage: 0.9, color: 0x8fe3ff,
     breakWord: 'SPLOOSH!', splat: 0x3fa9ff, breakColors: [0xbff4ff, 0xffffff, 0xff9a3c],
   },
+  snowGlobe: {
+    name: 'Snow Globe',
+    shape: 'sphere', dims: { radius: 0.26 },
+    visualScale: [0.52, 0.58, 0.52],
+    material: 'glass', mass: 1.0, grabbable: true, throwable: true,
+    breakable: true, breakForce: 500, damage: 0.8, color: 0xbfe9ff,
+    breakWord: 'SHATTER!', breakColors: [0xbfe9ff, 0xffffff, 0x8fd3ff],
+    icePatch: { radius: 3.2, life: 7, traction: 0.12 },
+  },
   teddyBear: {
     name: 'Teddy Bear',
     shape: 'capsule', dims: { halfHeight: 0.14, radius: 0.22 },
