@@ -26,6 +26,16 @@ export const DEFAULT_LOFT = 0.2;  // throw elevation (rad) when nobody's aiming
 const CATCH = { radius: 2.2, nearRadius: 3.2, approach: 0.25, minSpeed: 0.01 };
 const PREDICT_STEP = 1 / 45;
 const A = BALANCE.attacks;
+/** Giant Swing: hold attack while carrying a Dweeb. Rates in rad/s. */
+const GIANT_SWING = {
+  startCharge: 0.3,   // charge level at which the wind-up becomes a swing
+  minRate: 5, maxRate: 15,
+  radius: 1.35,       // arm's length (world units, scaled by MEGA)
+  hitRadius: 1.0,     // how close a bystander must be to the swung Dweeb to get clobbered
+  escapeSlow: 0.55,   // fraction of the victim's wriggle clock that the blur takes back
+  dizzyAfter: 3.2,    // seconds before you lose it
+  flingBonus: 0.45,   // up to +45% throw damage/launch at full spin
+};
 
 /** Materials that catch fire from blasts. `time` = seconds of burn, `ash` = crumbles when done. */
 const FLAMMABLE = {
@@ -890,8 +900,15 @@ export class CombatSystem {
     if (held.kind === 'dweeb') {
       const t = held.ref;
       t.setGrabbed(null);
+      // Letting go mid Giant Swing: the spin pays out as extra fling
+      const gs = d.giantSwing;
+      d.giantSwing = null;
+      const swingK = gs ? Math.min(1, gs.spin / GIANT_SWING.maxRate) : 0;
       t.body.setTranslation({ x: pos.x + f.x * 0.9, y: pos.y + 0.9, z: pos.z + f.z * 0.9 }, true);
-      _tmp.set(f.x, 0.55, f.z);
+      _tmp.set(f.x, 0.55 - swingK * 0.15, f.z);
+      const sm = 1 + swingK * GIANT_SWING.flingBonus;
+      if (swingK > 0.3) this.fx._toyWord?.(swingK > 0.8 ? 'HAMMER THROW!' : 'SPIN FLING!', pos, 0xffd23f, swingK > 0.8 ? 'big' : 'small');
+      const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1) * sm, p * (yeet ? SUPER : 1) * sm);
       if (t.team != null && t.team === d.team) {
         // Team Battle: chucking a teammate is a free, damage-less TEAM LAUNCH across the stage.
         const s = 11 + charge * 6;
@@ -901,7 +918,6 @@ export class CombatSystem {
         this.fx.throw(d);
         return true;
       }
-      const atk = scaled(A.dweebThrow(charge), p * (yeet ? SUPER : 1), p * (yeet ? SUPER : 1));
       const launch = t.receiveHit({ dir: _tmp, ...atk, attacker: d, time: this.time });
       t.invulnTimer = 0;
       if (launch > 0) {
@@ -958,6 +974,7 @@ export class CombatSystem {
     if (!d.held) return;
     const held = d.held;
     d.held = null;
+    d.giantSwing = null;
     if (held.kind === 'dweeb') {
       held.ref.setGrabbed(null);
       held.ref.invulnTimer = 0.3;
@@ -1842,7 +1859,9 @@ export class CombatSystem {
 
     if (held.kind === 'dweeb') {
       const t = held.ref;
-      if (!t.active) { d.held = null; t.setGrabbed(null); return; }
+      if (!t.active) { d.held = null; t.setGrabbed(null); d.giantSwing = null; return; }
+      if (this._giantSwing(d, t, dt, pos, s)) return;
+      t.body.setTranslation({ x: pos.x, y: pos.y + 1.15 * s, z: pos.z }, true);
       const sw = this._swayStep(d, held, dt, 3);
       // Struggling victims kick the spring: the less time left to escape, the harder they thrash.
       const thrash = Math.max(0, 1 - t.escapeTimer / 1.5);
@@ -1954,6 +1973,85 @@ export class CombatSystem {
     }
     obj.body.setNextKinematicTranslation({ x, y, z });
     obj.body.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+  }
+
+  // ═══ Giant Swing ═══
+
+  /**
+   * Hold attack while carrying a Dweeb and you start whirling them around by the ankles: the spin
+   * ramps up with charge, the swung Dweeb bonks anyone in the circle, and letting go flings them
+   * with bonus power. Spin too long and you get dizzy and lose your grip.
+   * Returns true while it owns the held Dweeb's transform this frame.
+   */
+  _giantSwing(d, t, dt, pos, s) {
+    const G = GIANT_SWING;
+    const winding = d.isCharging || d.throwCharging;
+    if (!winding || d.charging < G.startCharge || d.ledge) {
+      if (!winding) d.giantSwing = null;
+      return false;
+    }
+    let g = d.giantSwing;
+    if (!g) {
+      g = d.giantSwing = { angle: d.yaw, start: d.yaw, spin: 0, time: 0, wind: 1, laps: 0, lastLap: 0, called: false };
+      this.fx._toyWord?.('GIANT SWING!', { x: pos.x, y: pos.y + 2.2, z: pos.z }, 0xffd23f);
+    }
+    g.time += dt;
+    // Spin rate ramps with charge: a lazy twirl into a blur
+    const rate = G.minRate + (G.maxRate - G.minRate) * Math.min(1, (d.charging - G.startCharge) / (1 - G.startCharge));
+    g.spin = rate;
+    g.angle += rate * dt;
+    g.laps = Math.floor((g.angle - g.start) / (Math.PI * 2));
+    d.yaw = g.angle;
+    const r = G.radius * s;
+    const ca = Math.sin(g.angle), sa = Math.cos(g.angle);
+    // The swung Dweeb is out at arm's length and lifts as the spin speeds up (centrifugal)
+    const lift = 0.55 + Math.min(0.6, rate * 0.05);
+    const hx = pos.x + ca * r, hz = pos.z + sa * r;
+    t.body.setTranslation({ x: hx, y: pos.y + lift * s, z: hz }, true);
+    t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    t.yaw = g.angle + Math.PI;
+    // Hard to wriggle out of a blur, but not impossible
+    t.escapeTimer += dt * G.escapeSlow;
+    if (g.laps > g.lastLap) {
+      g.lastLap = g.laps;
+      this.fx.cam?.shake?.(0.08 + rate * 0.01);
+      if (g.laps === 3 && !g.called) { g.called = true; this.fx._toyWord?.('WHEEEE!', { x: hx, y: pos.y + 1.8, z: hz }, 0x7dd3fc); }
+    }
+    // Bonk anyone the swung Dweeb sweeps through
+    const tvx = Math.cos(g.angle), tvz = -Math.sin(g.angle);   // tangent of the swing
+    for (const o of this.dweebs) {
+      if (o === d || o === t || !o.active || o.grabbedBy) continue;
+      if ((o.swingHitCd || 0) > this.time) continue;
+      const op = o.getPosition();
+      if (Math.hypot(op.x - hx, op.z - hz) > G.hitRadius || Math.abs(op.y - pos.y) > 1.6) continue;
+      o.swingHitCd = this.time + 0.6;
+      _tmp.set(tvx * 0.7 + ca * 0.7, 0.5, tvz * 0.7 + sa * 0.7).normalize();
+      const k = Math.min(1, rate / G.maxRate);
+      const atk = scaled(A.dweebThrow(0.25 + k * 0.5), d.powerScale * 0.75, d.powerScale * 0.75);
+      const launch = o.receiveHit({ dir: _tmp, ...atk, attacker: d, time: this.time });
+      if (launch > 0) {
+        this.fx.hit(o, d, launch, 'throw');
+        this.fx._toyWord?.('CLOBBERED!', op, 0xff6fb5);
+        this.addStyle(d, 6 + launch * 0.4, 'GIANT SWING');
+      }
+      // The swung Dweeb feels it too
+      t.percent = (t.percent || 0) + 2;
+    }
+    // Too long in the spin cycle: you get dizzy and let go in whatever direction you're facing
+    if (g.time > G.dizzyAfter) {
+      d.isCharging = false;
+      d.throwCharging = false;
+      d.charging = 0;
+      const launchYaw = g.angle + Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1) * 0.3;
+      d.yaw = launchYaw;
+      d.giantSwing = { ...g, release: true };
+      this.throwHeld(d, 1);
+      d.giantSwing = null;
+      d.hitstun = Math.max(d.hitstun || 0, 0.7);
+      this.fx._toyWord?.('TOO DIZZY!', pos, 0xb794f4);
+      return true;
+    }
+    return true;
   }
 
   _checkDive(d) {
