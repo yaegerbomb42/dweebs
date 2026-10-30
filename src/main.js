@@ -56,7 +56,7 @@ import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebM
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
 import { defaultUrl } from './net/NetClient.js';
-import { recordMatch } from './app/daily.js';
+import { recordMatch as recordDailyMatch } from './app/daily.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
@@ -1445,7 +1445,7 @@ const matchEvents = {
         trickshots: player.trickshots ?? 0,
         stylePeak: player.stylePeak ?? 0,
       };
-      const result = recordMatch(payload);
+      const result = recordDailyMatch(payload);
       if (result.justCompleted) {
         hud.announce('DAILY CONTRACT COMPLETE!', result.contract.title, 2);
       }
