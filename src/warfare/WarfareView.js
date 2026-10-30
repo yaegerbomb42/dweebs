@@ -79,6 +79,7 @@ export class WarfareView {
       e.carried = !!u.carriedBy;
       e.carrying = !!u.carrying;
       e.retreat = u.state === 'retreat';
+      e.rout = u.state === 'rout';
       e.hpFrac = u.hp / u.maxHp;
       if (e.team !== u.team) {
         e.team = u.team;
@@ -163,7 +164,21 @@ export class WarfareView {
         case 'charge': fx.number(ev.x, 3, ev.z, 'CHARGE!', 'weak'); fx.puff(ev.x, ev.z); if (e) e.leanX -= 1.5; break;
         case 'backstab': fx.number(ev.x, 2.9, ev.z, 'BACKSTAB!', 'crit'); break;
         case 'enrage': fx.shockwave(ev.x, ev.z, 7, 0xff4d5e); fx.addShake(0.8); fx.number(ev.x, 4.5, ev.z, 'ENRAGED!', 'crit'); if (e) e.enraged = true; break;
-        case 'rally': this.rally[ev.team].pulse = 0.5; break;
+        case 'rally': {
+          const r = this.rally[ev.team];
+          if (r) r.pulse = 0.5;
+          if (ev.recovered) {
+            const color = TEAM_COLORS[ev.team] ?? 0xffffff;
+            fx.shockwave(ev.x, ev.z, 7, color);
+            fx.number(ev.x, 4.2, ev.z, 'RALLY!', 'word');
+          }
+          break;
+        }
+        case 'rout': {
+          fx.shockwave(ev.x, ev.z, 6, 0xffffff);
+          fx.number(ev.x, 4.2, ev.z, 'ROUT!', 'weak');
+          break;
+        }
         default: break;
       }
     }
@@ -216,8 +231,8 @@ export class WarfareView {
         if (e.enraged) tilt.scale.multiplyScalar(1 + Math.abs(Math.sin(t * 10)) * 0.06);
         if (e.m.gear) e.m.gear.rotation.y += dt * 1.5;
       }
-      // retreat flag: a little white plastic flag on a dowel
-      if (e.retreat && !e.flag) {
+      // retreat/rout flag: a little white plastic flag on a dowel
+      if ((e.retreat || e.rout) && !e.flag) {
         const f = new THREE.Group();
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.9, 4), sharedMats().wood);
         pole.position.y = 0.45;
@@ -227,7 +242,7 @@ export class WarfareView {
         f.position.set(-0.3, e.m.height + 0.1, 0);
         tilt.add(f);
         e.flag = f;
-      } else if (!e.retreat && e.flag) { tilt.remove(e.flag); e.flag = null; }
+      } else if (!e.retreat && !e.rout && e.flag) { tilt.remove(e.flag); e.flag = null; }
       if (e.flag) e.flag.rotation.y = Math.sin(t * 9) * 0.4;
     }
     for (const [sh, m] of this.shells) {

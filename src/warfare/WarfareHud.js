@@ -43,6 +43,9 @@ const CSS = `
 .wf-chip{background:rgba(27,16,48,.78);border:3px solid #fff8ee;border-radius:14px;padding:6px 12px;font-family:'Lilita One',sans-serif;font-size:18px;white-space:nowrap}
 .wf-chip.boss{background:#a82534}
 .wf-fort{width:180px}
+.wf-morale{width:130px}
+.wf-morale .wf-bar i{background:#7cc4ff}
+.wf-morale .wf-bar.low i{background:#ff4d5e}
 .wf-bar{height:12px;border-radius:7px;background:rgba(255,255,255,.2);overflow:hidden;margin-top:3px}
 .wf-bar i{display:block;height:100%;background:#5ee06a;transition:width .2s}
 .wf-bar.low i{background:#ff4d5e}
@@ -149,6 +152,7 @@ export class WarfareHud {
           <div class="wf-chip" data-f="wave">WAVE 1/${FINAL_WAVE}</div>
           <div class="wf-chip wf-fort"><span data-f="fortLabel">YOUR FORT</span><div class="wf-bar" data-f="fortBar"><i></i></div></div>
           <div class="wf-chip wf-fort wf-hidden" data-f="efort"><span>ENEMY FORT</span><div class="wf-bar"><i></i></div></div>
+          <div class="wf-chip wf-morale" title="Army morale"><span>MORALE</span><div class="wf-bar" data-f="moraleBar"><i></i></div></div>
           <div class="wf-chip" style="width:130px; text-align:center;">
             <div style="font-size:10px; opacity:0.85; margin-bottom:2px;">FRONTLINE TUG</div>
             <div class="wf-bar wf-frontline-bar" style="background:#ff4d5e; border-radius:6px; overflow:visible;"><i style="background:#3fa9ff; width:50%;" data-f="frontlineBar"></i></div>
@@ -336,6 +340,13 @@ export class WarfareHud {
     set('fl', roundedFl, v => {
       const el = this.f('frontlineBar');
       if (el) el.style.width = v + '%';
+    });
+    const morale = st.morale?.[team] ?? 1;
+    set('morale', Math.round(morale * 100), v => {
+      const bar = this.f('moraleBar');
+      if (!bar || !bar.firstElementChild) return;
+      bar.firstElementChild.style.width = Math.max(0, Math.min(100, v)) + '%';
+      bar.classList.toggle('low', v < 30);
     });
     set('coinsCards', coins, () => {
       for (const c of this.root.querySelectorAll('.wf-card')) c.classList.toggle('off', coins < UNIT_TYPES[c.dataset.u].cost);

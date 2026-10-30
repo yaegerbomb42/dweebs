@@ -526,6 +526,16 @@ export class DweebWarfare {
       } else if (ev.type === 'backstab' && ev.team !== this.team && !this.seen.has('backstab')) {
         this.seen.add('backstab');
         hud.toast('<b>Backstab!</b> Sneaks hit units that are busy fighting. Guard your flanks.', 6);
+      } else if (ev.type === 'rout') {
+        const mine = ev.team === this.team;
+        hud.banner(mine ? 'ROUT!' : 'ENEMY ROUT!', mine ? 'Your line breaks — rally to steady them' : 'The enemy line breaks', mine ? 'boss' : 'good', 2.2);
+        hud.toast(mine
+          ? '<b>Morale broken!</b> Your army is routing — click the board to <b>rally</b>.'
+          : 'The enemy is <b>routing</b>! Press the attack.', 6);
+      } else if (ev.type === 'rally' && ev.recovered) {
+        const mine = ev.team === this.team;
+        hud.banner(mine ? 'RALLY!' : 'ENEMY RALLY', mine ? 'The line steadies' : 'The enemy regroups', mine ? 'good' : '', 1.8);
+        hud.toast(mine ? '💪 Your army <b>rallies</b>!' : 'The enemy <b>rallies</b>.', 3);
       } else if (ev.type === 'win' || ev.type === 'lose') {
         this.endTimer = 1.6;
       }
