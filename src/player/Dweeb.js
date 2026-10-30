@@ -60,6 +60,8 @@ export class Dweeb {
     this.isCharging = false;
     this.held = null;           // { kind: 'object'|'dweeb', ref }
     this.grabbedBy = null;
+    this.catchWindow = 0;       // brief window after a timed catch (HUD callout)
+    this.catchFlash = 0;        // flash timer for catch juice
     this.escapeTimer = 0;
     this.flashTimer = 0;
     this.diBudget = 0;          // Δv left to steer this launch with (directional influence)
@@ -608,6 +610,8 @@ export class Dweeb {
     this.diveCooldown = Math.max(0, this.diveCooldown - dt);
     this.proneTimer = Math.max(0, this.proneTimer - dt);
     this.flashTimer = Math.max(0, this.flashTimer - dt);
+    this.catchWindow = Math.max(0, this.catchWindow - dt);
+    this.catchFlash = Math.max(0, this.catchFlash - dt);
     this.megaTimer = Math.max(0, this.megaTimer - dt);
     this.zoomTimer = Math.max(0, this.zoomTimer - dt);
     this.coyote = Math.max(0, this.coyote - dt);
@@ -870,7 +874,7 @@ export class Dweeb {
 
     // Hit flash (white) and invulnerability blink
     const frozen = this.freezeTimer > 0;
-    const flash = frozen ? 0 : this.flashTimer > 0 ? 0.9 : (this.megaTimer > 0 ? 0.15 + Math.sin(time * 10) * 0.1 : 0);
+    const flash = frozen ? 0 : this.flashTimer > 0 ? 0.9 : this.catchFlash > 0 ? 0.35 : (this.megaTimer > 0 ? 0.15 + Math.sin(time * 10) * 0.1 : 0);
     for (const m of this.flashMats) {
       if (frozen) m.emissive.setRGB(0.22, 0.5, 0.78);
       else if (this.statusTint != null && flash === 0) {
