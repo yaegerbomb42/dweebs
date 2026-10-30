@@ -17,6 +17,45 @@ import {
 
 const TELEMETRY_KEY = 'dweebs-last-telemetry';
 
+// ─── Share/Import toast helper (juicy feedback) ───────────────────────────────
+function showShareToast(root, text, color = '#5ee06a') {
+  if (!root) return;
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) scale(0.8);
+    background: ${color}; color: #14101c; font-family: 'Lilita One', sans-serif;
+    font-size: 18px; padding: 10px 24px; border: 3px solid #fff8ee; border-radius: 14px;
+    box-shadow: 0 8px 0 #14101c, 0 0 20px ${color}88; z-index: 1000; opacity: 0;
+    pointer-events: none; white-space: nowrap; transition: transform 0.2s, opacity 0.2s;
+  `;
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateX(-50%) scale(1)'; });
+  setTimeout(() => {
+    toast.style.opacity = '0'; toast.style.transform = 'translateX(-50%) scale(0.9)';
+    setTimeout(() => toast.remove(), 200);
+  }, 1800);
+}
+
+function showShareError(root, text) {
+  if (!root) return;
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) scale(0.8);
+    background: #ff4d5e; color: #fff; font-family: 'Lilita One', sans-serif;
+    font-size: 16px; padding: 10px 24px; border: 3px solid #fff8ee; border-radius: 14px;
+    box-shadow: 0 8px 0 #14101c, 0 0 20px #ff4d5e88; z-index: 1000; opacity: 0;
+    pointer-events: none; white-space: nowrap; transition: transform 0.2s, opacity 0.2s;
+  `;
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateX(-50%) scale(1)'; });
+  setTimeout(() => {
+    toast.style.opacity = '0'; toast.style.transform = 'translateX(-50%) scale(0.9)';
+    setTimeout(() => toast.remove(), 200);
+  }, 2500);
+}
+
 const CSS = `
 #build-dweeb-hud {
   position: fixed;
@@ -284,6 +323,8 @@ export class BuildADweebHud {
         </div>
         <div class="bd-top-actions">
           <button class="bd-btn yellow" id="bd-btn-random">🎲 RANDOM MUTANT</button>
+          <button class="bd-btn green" id="bd-btn-share">📤 SHARE CODE</button>
+          <button class="bd-btn green" id="bd-btn-import">📥 IMPORT CODE</button>
           <button class="bd-btn alt" id="bd-btn-exit">◀ DWEEB MALL</button>
         </div>
       </div>
@@ -564,6 +605,53 @@ export class BuildADweebHud {
     // Random button
     $('#bd-btn-random').addEventListener('click', () => {
       this.handlers.onRandomMutant?.();
+    });
+
+    // SHARE CODE — copy to clipboard with fallback text box
+    $('#bd-btn-share').addEventListener('click', async () => {
+      const code = this.handlers.onExportCode?.();
+      if (!code) {
+        showShareError(this.root, '❌ NO CODE — Build a dweeb first!');
+        return;
+      }
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(code);
+        copied = true;
+      } catch {
+        // Clipboard API may fail in non-secure contexts
+      }
+      if (!copied) {
+        // Fallback: show a selectable text box
+        const box = document.createElement('textarea');
+        box.value = code;
+        box.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0;';
+        document.body.appendChild(box);
+        box.select();
+        try { document.execCommand('copy'); copied = true; } catch { /* ignore */ }
+        box.remove();
+      }
+      if (copied) {
+        showShareToast(this.root, '📤 SHARE CODE COPIED!', '#ffd23f');
+        // Juice: camera shake + toy word via handler if available
+        this.handlers.onShareJuice?.();
+      } else {
+        showShareError(this.root, '❌ COPY FAILED — Select the code manually');
+      }
+    });
+
+    // IMPORT CODE — prompt + textarea modal
+    $('#bd-btn-import').addEventListener('click', () => {
+      const paste = prompt('Paste a DWEEB share code (starts with DWEEB1-):', '');
+      if (!paste) return;
+      const result = this.handlers.onImportCode?.(paste.trim());
+      if (result?.ok) {
+        this.syncForm(result.config);
+        showShareToast(this.root, '📥 BUILD IMPORTED!', '#5ee06a');
+        this.handlers.onImportJuice?.();
+      } else {
+        showShareError(this.root, '❌ ' + (result?.error || 'Invalid share code'));
+      }
     });
 
     // Exit back to mall

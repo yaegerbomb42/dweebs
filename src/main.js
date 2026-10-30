@@ -714,6 +714,18 @@ function startBuildLab() {
       if (!currentBuildLab) return;
       launchBuilderArena(currentBuildLab.config, oppType);
     },
+    onExportCode: () => currentBuildLab?.exportBuildCode(),
+    onImportCode: (code) => currentBuildLab?.importBuildCode(code),
+    onShareJuice: () => {
+      // Juice: camera shake + toy word
+      fx?.cam?.shake?.(0.25);
+      fx?._toyWord?.('SHARED!', { x: 0, y: 1.2, z: 0 }, 0xffd23f, 'big');
+    },
+    onImportJuice: () => {
+      // Juice: camera shake + toy word
+      fx?.cam?.shake?.(0.3);
+      fx?._toyWord?.('IMPORTED!', { x: 0, y: 1.2, z: 0 }, 0x5ee06a, 'big');
+    },
   });
 
   currentBuildHud.syncForm(currentBuildLab.config);

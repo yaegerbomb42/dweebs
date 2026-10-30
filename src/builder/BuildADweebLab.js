@@ -14,6 +14,7 @@ import {
   FEET_TYPES,
   BROW_STYLES,
   MOUTH_STYLES,
+  ELEMENTAL_PALETTES,
   refreshDweebCollider,
   installAppendageGameplay,
 } from './CustomDweebModel.js';
@@ -21,6 +22,64 @@ import { TournamentBracket } from './Tournament.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
 const TOURNAMENT_KEY = 'dweebs-tournament-v1';
+
+// ─── Build Share Code (DNA) ──────────────────────────────────────────────────
+// Versioned, key-ordered, URL-safe base64. Prefix: DWEEB1-
+const SHARE_VERSION = 1;
+const SHARE_PREFIX = 'DWEEB1-';
+
+// Only these fields travel in the share code (build-only, no runtime state)
+const SHARE_FIELDS = [
+  'name',
+  'shape',
+  'width',
+  'height',
+  'depth',
+  'primaryColor',
+  'accentColor',
+  'eyeColor',
+  'eyeCount',
+  'eyeSize',
+  'eyeSpacing',
+  'brows',
+  'mouth',
+  'appendage',
+  'feet',
+  'palette',
+  'stats',
+  'dna',
+];
+
+// Whitelists for validation
+const VALID_SHAPES = new Set(BODY_SHAPES);
+const VALID_APPENDAGES = new Set(APPENDAGES);
+const VALID_FEET = new Set(FEET_TYPES);
+const VALID_BROWS = new Set(BROW_STYLES);
+const VALID_MOUTHS = new Set(MOUTH_STYLES);
+const VALID_PALETTES = new Set(Object.keys(ELEMENTAL_PALETTES));
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function isValidColor(c) {
+  return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
+}
+
+// UTF-8 safe (names can contain emoji / accents, which raw btoa rejects).
+function encodeBase64Url(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function decodeBase64Url(str) {
+  const pad = str.length % 4;
+  const padded = str + (pad === 0 ? '' : '='.repeat(4 - pad));
+  const bin = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
 
 export class BuildADweebLab {
   constructor(scene, camera, renderer) {
@@ -197,6 +256,114 @@ export class BuildADweebLab {
     this.rebuildModel();
     this.saveConfig();
     return this.config;
+  }
+
+  /** Export the current build as a compact share code: DWEEB1-<base64url>. */
+  exportBuildCode() {
+    try {
+      const payload = { v: SHARE_VERSION };
+      for (const key of SHARE_FIELDS) {
+        const val = this.config?.[key];
+        if (val !== undefined) {
+          // Deep clone stats/dna to avoid reference issues
+          if (key === 'stats' || key === 'dna') {
+            payload[key] = { ...val };
+          } else {
+            payload[key] = val;
+          }
+        }
+      }
+      const json = JSON.stringify(payload);
+      const code = SHARE_PREFIX + encodeBase64Url(json);
+      return code;
+    } catch (e) {
+      console.warn('[BuildADweebLab] exportBuildCode failed', e);
+      return null;
+    }
+  }
+
+  /**
+   * Import a build from a share code. Validates version, merges over DEFAULT_BUILD_CONFIG,
+   * clamps numeric ranges, whitelists enums, then calls updateConfig.
+   * Returns { ok: true, config } on success, or { ok: false, error: '...' } on failure.
+   */
+  importBuildCode(code) {
+    try {
+      if (!code || typeof code !== 'string') {
+        return { ok: false, error: 'Empty or invalid share code.' };
+      }
+      const trimmed = code.trim();
+      if (!trimmed.startsWith(SHARE_PREFIX)) {
+        return { ok: false, error: 'Not a valid DWEEB share code (missing prefix).' };
+      }
+      const b64 = trimmed.slice(SHARE_PREFIX.length);
+      let json;
+      try {
+        json = decodeBase64Url(b64);
+      } catch {
+        return { ok: false, error: 'Corrupted share code (bad base64).' };
+      }
+      let payload;
+      try {
+        payload = JSON.parse(json);
+      } catch {
+        return { ok: false, error: 'Corrupted share code (bad JSON).' };
+      }
+      if (!payload || typeof payload !== 'object') {
+        return { ok: false, error: 'Corrupted share code (not an object).' };
+      }
+      if (payload.v !== SHARE_VERSION) {
+        return { ok: false, error: `Unsupported share code version ${payload.v} (expected ${SHARE_VERSION}).` };
+      }
+
+      // Start from defaults, then merge validated payload
+      const merged = { ...DEFAULT_BUILD_CONFIG };
+
+      // Scalar fields with clamping/validation
+      if (typeof payload.name === 'string') merged.name = payload.name.slice(0, 18);
+      if (VALID_SHAPES.has(payload.shape)) merged.shape = payload.shape;
+      if (typeof payload.width === 'number') merged.width = clamp(payload.width, 0.5, 1.8);
+      if (typeof payload.height === 'number') merged.height = clamp(payload.height, 0.5, 1.8);
+      if (typeof payload.depth === 'number') merged.depth = clamp(payload.depth, 0.5, 1.8);
+      if (isValidColor(payload.primaryColor)) merged.primaryColor = payload.primaryColor;
+      if (isValidColor(payload.accentColor)) merged.accentColor = payload.accentColor;
+      if (isValidColor(payload.eyeColor)) merged.eyeColor = payload.eyeColor;
+      if (Number.isInteger(payload.eyeCount)) merged.eyeCount = clamp(payload.eyeCount, 1, 4);
+      if (typeof payload.eyeSize === 'number') merged.eyeSize = clamp(payload.eyeSize, 0.5, 1.8);
+      if (typeof payload.eyeSpacing === 'number') merged.eyeSpacing = clamp(payload.eyeSpacing, 0.5, 2.0);
+      if (VALID_BROWS.has(payload.brows)) merged.brows = payload.brows;
+      if (VALID_MOUTHS.has(payload.mouth)) merged.mouth = payload.mouth;
+      if (VALID_APPENDAGES.has(payload.appendage)) merged.appendage = payload.appendage;
+      if (VALID_FEET.has(payload.feet)) merged.feet = payload.feet;
+      if (VALID_PALETTES.has(payload.palette)) merged.palette = payload.palette;
+
+      // Stats object
+      if (payload.stats && typeof payload.stats === 'object') {
+        merged.stats = { ...DEFAULT_BUILD_CONFIG.stats };
+        const s = payload.stats;
+        if (typeof s.speed === 'number') merged.stats.speed = clamp(s.speed, 0.5, 1.5);
+        if (typeof s.mass === 'number') merged.stats.mass = clamp(s.mass, 1.8, 4.5);
+        if (typeof s.jump === 'number') merged.stats.jump = clamp(s.jump, 0.5, 1.5);
+        if (typeof s.armor === 'number') merged.stats.armor = clamp(s.armor, 0.5, 1.5);
+      }
+
+      // DNA object
+      if (payload.dna && typeof payload.dna === 'object') {
+        merged.dna = { ...DEFAULT_BUILD_CONFIG.dna };
+        const d = payload.dna;
+        if (typeof d.confidence === 'number') merged.dna.confidence = clamp(d.confidence, 0.1, 1.0);
+        if (typeof d.aimAccuracy === 'number') merged.dna.aimAccuracy = clamp(d.aimAccuracy, 0.1, 1.0);
+        if (typeof d.scavenge === 'number') merged.dna.scavenge = clamp(d.scavenge, 0.1, 1.0);
+        if (typeof d.agility === 'number') merged.dna.agility = clamp(d.agility, 0.3, 1.0);
+      }
+
+      // Apply to lab (rebuilds model, saves to storage)
+      this.updateConfig(merged);
+      return { ok: true, config: merged };
+    } catch (e) {
+      console.warn('[BuildADweebLab] importBuildCode failed', e);
+      return { ok: false, error: 'Import failed: ' + (e?.message || 'unknown error') };
+    }
   }
 
   // ─── Colosseum tournament ladder ──────────────────────────────────────────
