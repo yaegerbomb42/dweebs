@@ -415,6 +415,15 @@
     #impact-flash.on { animation: impactFlash .34s ease-out; }
     @keyframes impactFlash { 0% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0; transform: scale(1); } }
   </style>
+<style>
+.result-career{margin:8px auto 0;text-align:center;font-size:14px;opacity:.95}
+.career-form{display:flex;gap:4px;justify-content:center;margin:4px 0}
+.career-pip{width:18px;height:18px;border-radius:5px;font:700 11px/18px system-ui;color:#fff}
+.career-pip.w{background:#2fbf71}.career-pip.l{background:#c0455a}
+.career-note{color:#ffd23f;font-weight:700;animation:careerPop .5s ease-out both}
+@keyframes careerPop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.career-note{animation:none}}
+</style>
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
@@ -796,6 +805,7 @@
     <div class="podium" id="results-podium"></div>
     <div class="reel" id="result-reel"></div>
     <div class="arena-tag" id="result-arena"></div>
+    <div class="result-career" id="result-career"></div>
     <div class="vote" id="rematch-vote"></div>
     <div class="menu-row">
       <button class="btn" id="btn-play-again">REMATCH!</button>

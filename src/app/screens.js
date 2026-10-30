@@ -218,6 +218,11 @@ export function buildScreens() {
               <span class="hub-trophy-value">6</span>
               <span class="hub-trophy-label">ways to play</span>
             </div>
+            <div class="hub-trophy" style="--i:4">
+              <span class="hub-trophy-icon" aria-hidden="true">🏅</span>
+              <span class="hub-trophy-value" data-trophy="career">—</span>
+              <span class="hub-trophy-label">brawl career</span>
+            </div>
           </div>
         </section>
 

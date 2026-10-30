@@ -1,4 +1,5 @@
 // main.js — boots the renderer, builds the stadium and wires every system together.
+import { recordMatch, careerSummaryHtml } from './app/career.js';
 //
 // Frame order: input/AI → Dweeb.preStep → physics (sub-stepped) → Dweeb.postStep →
 //              impacts (sound/breakage) → combat → arena → match rules → fx/hud → render.
@@ -1168,6 +1169,15 @@ const matchEvents = {
     $('result-reel').innerHTML = highlightReel();
     const a = arenaById(arena.arenaId);
     $('result-arena').textContent = `${a.icon} ${a.name}`;
+    try {
+      const me = standings.find(d => d.isPlayer);
+      if (me && currentMode !== 'build_arena') {
+        const { career, notes } = recordMatch({ mode: currentMode || 'brawl', won: you, kos: me.totalKos || 0,
+          falls: me.totalFalls || me.falls || 0, stylePeak: me.stylePeak || 0, dweeb: me.type, arena: a.name });
+        const el = $('result-career');
+        if (el) el.innerHTML = careerSummaryHtml(career, notes);
+      }
+    } catch (e) { console.warn('career record failed', e); }
 
     if (currentMode === 'build_arena') {
       $('rematch-vote')?.classList.add('hidden');
