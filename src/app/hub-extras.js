@@ -251,6 +251,128 @@ export function startSpotlight(root, { intervalMs = 4500 } = {}) {
   return () => clearInterval(timer);
 }
 
+// ─── DWEEB NEWS: live ticker built from real save data ────────────────────────
+
+/**
+ * Build an array of news headlines from the hub stats and storage.
+ * Pure function — no DOM, no side effects. Every headline is a trusted string.
+ */
+export function buildDweebNews(stats, storage = safeStorage()) {
+  const lines = [];
+  const read = key => {
+    try { return storage?.getItem?.(key); } catch { return null; }
+  };
+
+  // 1. Custom build name (if saved)
+  if (stats.hasBuild) {
+    const raw = read('dweebs-custom-build');
+    if (raw) {
+      try {
+        const b = JSON.parse(raw);
+        if (b && typeof b.name === 'string' && b.name.trim()) {
+          lines.push(`BUILD-A-DWEEB: ${b.name.trim().slice(0, 24)} enters the lab`);
+        }
+      } catch { /* ignore corrupt */ }
+    }
+  }
+
+  // 2. Village structures count
+  if (stats.hasVillage && stats.villageStructures > 0) {
+    lines.push(`MEADOWLANDS: ${stats.villageStructures} structure${stats.villageStructures === 1 ? '' : 's'} standing`);
+  }
+
+  // 3. Warfare best wave
+  if (stats.warfareBest != null && stats.warfareBest > 0) {
+    lines.push(`WARFARE: fort held to wave ${stats.warfareBest}`);
+  }
+
+  // 4. Daily challenge target (deterministic from today)
+  try {
+    const challenge = pickDaily();
+    lines.push(`DAILY: ${challenge.title} — ${challenge.desc}`);
+  } catch { /* ignore */ }
+
+  // 5. Mall gossip: three gags picked by today's date so the ticker changes daily.
+  const GOSSIP = [
+    'FOOD COURT: local Chonk banned from the buffet for the third time',
+    'WEATHER: 90% chance of flying Dweebs near the arena ropes',
+    'SCIENCE: Mimic Lab pupils still copying the wrong guy',
+    'SPORTS: Boing wins pogo championship, refuses to come down',
+    'SECURITY: mall cop reports "a lot of yeeting" in aisle 4',
+    'MARKETS: piñata futures up 300% after candy shortage',
+    'TRAFFIC: Derby carts backed up on the ramp, honking reported',
+    'ESCAPE ROOM: someone found the vent again',
+    'REAL ESTATE: Meadowlands villagers demand a bigger berry patch',
+    'OPINION: Ghosty "probably not real," says Ghosty',
+  ];
+  const day = Math.floor(Date.now() / 86400000);
+  for (let i = 0; i < 3; i++) lines.push(GOSSIP[(day * 3 + i) % GOSSIP.length]);
+
+  // 6. Deterministic no-data fallback line (always present)
+  if (lines.length === 0) {
+    lines.push('DWEEB NEWS: the mall opens at dawn — fresh chaos daily');
+  }
+
+  // Ensure at least 2 lines for the static fallback (reduced motion)
+  while (lines.length < 2) {
+    lines.push('DWEEB NEWS: the mall opens at dawn — fresh chaos daily');
+  }
+
+  return lines;
+}
+
+/**
+ * Apply the news ticker to the hub DOM.
+ * - Renders a label + clipped track with CSS animation (marquee).
+ * - When motionOK() is false, shows the first two headlines statically.
+ * - Never injects player text as HTML; builds nodes with textContent.
+ */
+export function applyDweebNews(root) {
+  if (!root?.querySelector) return;
+  const track = root.querySelector('#hub-news-track');
+  const label = root.querySelector('#hub-news-label');
+  if (!track || !label) return;
+
+  const stats = readHubStats(safeStorage(), loadSettings());
+  const lines = buildDweebNews(stats, safeStorage());
+
+  const doc = track.ownerDocument || (typeof document !== 'undefined' ? document : null);
+  if (!doc) return;
+
+  // Clear existing content
+  track.innerHTML = '';
+
+  const useMotion = motionOK();
+
+  if (useMotion) {
+    // Marquee: duplicate the line set so the loop is seamless
+    const allLines = [...lines, ...lines];
+    allLines.forEach(text => {
+      const span = doc.createElement('span');
+      span.className = 'hub-news-item';
+      span.textContent = text;
+      track.appendChild(span);
+    });
+    // Ensure the animation runs (it's defined in CSS)
+    track.style.animationPlayState = 'running';
+  } else {
+    // Reduced motion: show first two headlines statically, separated by a divider
+    lines.slice(0, 2).forEach((text, i) => {
+      const span = doc.createElement('span');
+      span.className = 'hub-news-item hub-news-static';
+      span.textContent = text;
+      track.appendChild(span);
+      if (i === 0) {
+        const sep = doc.createElement('span');
+        sep.className = 'hub-news-sep';
+        sep.textContent = ' · ';
+        track.appendChild(sep);
+      }
+    });
+    track.style.animationPlayState = 'paused';
+  }
+}
+
 // ─── one entry point ─────────────────────────────────────────────────────────
 
 /**
@@ -263,6 +385,7 @@ export function refreshHub(root, opts = {}) {
   const stats = applyHubStats(root, readHubStats(safeStorage(), settings));
   applyProfile(root, settings);
   applyDaily(root, opts.daily || pickDaily(opts.date));
+  applyDweebNews(root);
   const stop = startSpotlight(root, opts.spotlight);
   return { stats, stop };
 }

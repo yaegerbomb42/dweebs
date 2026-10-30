@@ -819,6 +819,71 @@
 }
 .hub-news-list strong { color: #fff; }
 
+/* ─── DWEEB NEWS: live ticker / marquee ────────────────────────────────────── */
+.hub-news-ticker {
+  width: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, transparent, rgba(27, 16, 48, .15) 10%, rgba(27, 16, 48, .15) 90%, transparent),
+    rgba(255, 210, 63, .12);
+  border: 3px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: 0 5px 0 var(--ink), inset 0 0 30px rgba(255, 210, 63, .08);
+  padding: 10px 16px;
+  margin-bottom: 8px;
+  animation: hubFade .45s .12s ease both;
+}
+.hub-news-label {
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--yellow);
+  text-transform: uppercase;
+  display: inline-block;
+  margin-right: 16px;
+  flex-shrink: 0;
+  text-shadow: 0 2px 0 var(--ink);
+}
+.hub-news-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 48px;
+  white-space: nowrap;
+  will-change: transform;
+  /* Marquee: scroll the duplicated content once across the viewport */
+  animation: hubNewsMarquee 30s linear infinite;
+  animation-play-state: paused; /* JS enables when motionOK() */
+}
+.hub-news-item {
+  font-weight: 900;
+  font-size: 13.5px;
+  color: var(--cream);
+  text-shadow: 0 2px 0 var(--ink);
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.hub-news-item.hub-news-static {
+  display: inline-block;
+}
+.hub-news-sep {
+  font-weight: 900;
+  font-size: 13.5px;
+  color: var(--yellow);
+  opacity: .7;
+  flex-shrink: 0;
+}
+
+@keyframes hubNewsMarquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* Reduced motion: pause the marquee, show static items */
+@media (prefers-reduced-motion: reduce) {
+  .hub-news-track { animation: none; }
+}
+:root[data-reduced-motion="on"] .hub-news-track { animation: none; }
+
 /* ─── Arcade stat snippets: one honest line per cabinet ───────────────────── */
 .arcade-stat {
   font-weight: 900;
