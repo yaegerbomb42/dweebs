@@ -92,6 +92,29 @@ export function buildBoard(map = getBattleground('meadow')) {
     group.add(m);
   }
 
+  // Mud: dark glossy discs with a subtle ripple. Rendered before high ground so plateaus sit on top.
+  const mudMeshes = [];
+  for (const m of map.mud || []) {
+    const mudGeo = new THREE.CircleGeometry(m.r, 32);
+    const mudMat = new THREE.MeshStandardMaterial({
+      color: 0x2d2520,
+      roughness: 0.15,
+      metalness: 0.35,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const mud = new THREE.Mesh(mudGeo, mudMat);
+    mud.rotation.x = -Math.PI / 2;
+    mud.position.set(m.x, 0.02, m.z);
+    mud.receiveShadow = true;
+    noOutline(mud);
+    // Store time offset for ripple animation in the view
+    mud.userData = { mudTimeOffset: m.x * 0.7 + m.z * 0.3, radius: m.r };
+    group.add(mud);
+    mudMeshes.push(mud);
+  }
+
   // High ground: raised plastic plateaus (the sim grants +damage from up here).
   for (const hg of map.highGround || []) {
     const ridge = new THREE.Mesh(new THREE.BoxGeometry(hg.w, 0.7, hg.h), toonMat({ color: 0x7cc45e }));
@@ -166,7 +189,7 @@ export function buildBoard(map = getBattleground('meadow')) {
   pick.rotation.x = -Math.PI / 2;
   group.add(pick);
 
-  return { group, pick, forts, barricades: barricadeMeshes, barr: barr.group, mapId: map.id };
+  return { group, pick, forts, barricades: barricadeMeshes, barr: barr.group, mud: mudMeshes, mapId: map.id };
 }
 
 function buildFort(team, x) {
