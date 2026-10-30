@@ -154,12 +154,29 @@ export const OBJECT_DEFS = {
     material: 'fruit', mass: 1.4, grabbable: true, throwable: true,
     breakable: true, breakForce: 600, damage: 0.6, color: 0x337733,
   },
+  bananaPeel: {
+    name: 'Banana Peel',
+    shape: 'box', dims: { hx: 0.18, hy: 0.045, hz: 0.14 },
+    visualScale: [0.5, 0.14, 0.4],
+    material: 'fruit', mass: 0.18, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.05, color: 0xffd93b,
+    slip: true,
+  },
   beachBall: {
     name: 'Beach Ball',
     shape: 'sphere', dims: { radius: 0.3 },
     visualScale: [0.6, 0.6, 0.6],
     material: 'rubber', mass: 0.15, grabbable: true, throwable: true,
     breakable: false, breakForce: 50000, damage: 0.05, color: 0xff4488,
+  },
+  partyBalloon: {
+    name: 'Party Balloon',
+    shape: 'sphere', dims: { radius: 0.3 },
+    visualScale: [0.6, 0.6, 0.6],
+    material: 'rubber', mass: 0.15, grabbable: true, throwable: true,
+    breakable: true, breakForce: 120, damage: 0.05, color: 0xff4d8d,
+    breakWord: 'POP!', breakColors: [0xff4d8d, 0xff9ac4, 0xffffff, 0xc21b38],
+    floaty: { gravityCancel: 0.75, maxFall: 2.2, liftHop: 1.15 },
   },
   bowlingBall: {
     name: 'Bowling Ball',
@@ -182,6 +199,14 @@ export const OBJECT_DEFS = {
     visualScale: [0.5, 1.8, 0.16],
     material: 'metal', mass: 2, grabbable: true, throwable: true,
     breakable: false, breakForce: 6000, damage: 1.3, color: 0x999999,
+  },
+  pogoStick: {
+    name: 'Pogo Stick',
+    shape: 'box', dims: { hx: 0.1, hy: 0.5, hz: 0.1 },
+    visualScale: [0.2, 1.0, 0.2],
+    material: 'metal', mass: 1.0, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.9, color: 0xff8a1f,
+    pogo: { bounceVel: 1.35, minInterval: 0.18, airSteer: 6 },
   },
   couch: {
     name: 'Couch',
@@ -279,6 +304,14 @@ export const OBJECT_DEFS = {
     breakable: false, breakForce: 50000, damage: 1.6, color: 0x3fa9ff,
     boomerang: { delay: 0.55, returnSpeed: 17, catchRadius: 2.2, maxTime: 2.6 },
   },
+  grappleGlove: {
+    name: 'Grapple Glove',
+    shape: 'box', dims: { hx: 0.22, hy: 0.18, hz: 0.22 },
+    visualScale: [0.44, 0.36, 0.44],
+    material: 'metal', mass: 1.6, grabbable: true, throwable: true,
+    breakable: false, breakForce: 50000, damage: 0.7, color: 0xff4d5e,
+    gadget: 'grappleGlove',
+  },
   spikyBall: {
     name: 'Spiky Bouncy Blob',
     shape: 'sphere', dims: { radius: 0.35 },
@@ -312,6 +345,55 @@ export const OBJECT_DEFS = {
     material: 'plastic', mass: 1.2, grabbable: true, throwable: true,
     breakable: false, breakForce: 50000, damage: 1.0, color: 0xff4d5e,
   },
+  // ─── Element props (game/StatusEffects.js): break them to spill a zone, or hit people with them ───
+  oilDrum: {
+    name: 'Oil Drum',
+    shape: 'cylinder', dims: { halfHeight: 0.4, radius: 0.3 },
+    visualScale: [0.6, 0.8, 0.6],
+    material: 'metal', mass: 2.6, grabbable: true, throwable: true,
+    breakable: true, breakForce: 2600, damage: 1.6, color: 0x2d2a3a,
+    breakWord: 'GLUG!', breakColors: [0x2a2018, 0x2d2a3a, 0xffd23f], status: 'oil', statusOnHit: 'oily',
+  },
+  waterBalloon: {
+    name: 'Water Balloon',
+    shape: 'sphere', dims: { radius: 0.24 },
+    visualScale: [0.48, 0.52, 0.48],
+    material: 'rubber', mass: 0.7, grabbable: true, throwable: true,
+    breakable: true, breakForce: 250, damage: 0.4, color: 0x3fa9ff,
+    breakWord: 'SPLOOSH!', splat: 0x3fa9ff, breakColors: [0x3fa9ff, 0x8fe9ff, 0xffffff], status: 'water', statusOnHit: 'wet',
+  },
+  honeyJar: {
+    name: 'Honey Pot',
+    shape: 'cylinder', dims: { halfHeight: 0.22, radius: 0.2 },
+    visualScale: [0.4, 0.44, 0.4],
+    material: 'ceramic', mass: 1.2, grabbable: true, throwable: true,
+    breakable: true, breakForce: 600, damage: 0.8, color: 0xffb02e,
+    breakWord: 'SPLORCH!', breakColors: [0xffb02e, 0xffd23f, 0xf3e6cf], status: 'honey', statusOnHit: 'sticky',
+  },
+  snowGlobe: {
+    name: 'Snow Globe',
+    shape: 'sphere', dims: { radius: 0.26 },
+    visualScale: [0.52, 0.6, 0.52],
+    material: 'glass', mass: 1.3, grabbable: true, throwable: true,
+    breakable: true, breakForce: 500, damage: 0.9, color: 0xbff4ff,
+    breakWord: 'BRRR!', breakColors: [0xffffff, 0xbff4ff, 0x8fe9ff], status: 'frost', statusOnHit: 'chill',
+  },
+  pepperBomb: {
+    name: 'Ghost Pepper',
+    shape: 'capsule', dims: { halfHeight: 0.14, radius: 0.13 },
+    visualScale: [0.3, 0.5, 0.3],
+    material: 'fruit', mass: 0.6, grabbable: true, throwable: true,
+    breakable: true, breakForce: 350, damage: 0.6, color: 0xff3b2f,
+    breakWord: 'SPICY!', breakColors: [0xff3b2f, 0xff9a3c, 0x2f8f3a], status: 'pepper', statusOnHit: 'burn',
+  },
+  staticCoil: {
+    name: 'Tesla Toy',
+    shape: 'cylinder', dims: { halfHeight: 0.3, radius: 0.18 },
+    visualScale: [0.36, 0.6, 0.36],
+    material: 'metal', mass: 1.5, grabbable: true, throwable: true,
+    breakable: true, breakForce: 3000, damage: 1.0, color: 0x6f7cff,
+    breakWord: 'KZZZT!', breakColors: [0xfff35a, 0x6f7cff, 0xc9d3e6], status: 'spark', statusOnHit: 'static',
+  },
   pinata: {
     name: 'Piñata',
     shape: 'box', dims: { hx: 0.34, hy: 0.3, hz: 0.14 },
@@ -319,6 +401,7 @@ export const OBJECT_DEFS = {
     material: 'cardboard', mass: 0.8, grabbable: true, throwable: true,
     breakable: true, breakForce: 700, damage: 0.7, color: 0xff6fb5,
     breakWord: 'CANDY!', breakColors: [0xff4d5e, 0xffd23f, 0x3fa9ff, 0x5ee06a, 0xb56cff, 0xff9a3c],
+    spill: { key: 'candy', count: 6 },
   },
   boombox: {
     name: 'Boombox',
@@ -389,6 +472,16 @@ export const OBJECT_DEFS = {
     material: 'ceramic', mass: 1.4, grabbable: true, throwable: true,
     breakable: true, breakForce: 900, damage: 1.0, color: 0xff8fc0,
     breakWord: 'CHA-CHING!', breakColors: [0xffd23f, 0xffc21f, 0xff8fc0],
+  },
+
+  // ─── Piñata Loot Burst ───
+  candy: {
+    name: 'Candy',
+    shape: 'sphere', dims: { radius: 0.1 },
+    visualScale: [0.2, 0.2, 0.2],
+    material: 'fruit', mass: 0.25, grabbable: true, throwable: true,
+    breakable: false, breakForce: 99999, damage: 0.3, color: 0xff4d5e,
+    isPickup: true,
   },
 };
 
