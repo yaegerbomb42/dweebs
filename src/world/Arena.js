@@ -40,6 +40,8 @@ const START_ITEMS = [
   ['freezeRay', 3.5, 1, 4.5],
   ['magnet', -3.5, 1, -4.5],
   ['boxingGlove', 2.1, 1, -2.2],
+  ['chatteringTeeth', -2.5, 1, 7.5],
+  ['chatteringTeeth', 3.5, 1, -7.5],
 ];
 // Sky drops, weighted: comedy props are common, KO-power items are rare (and capped, see RARE)
 export const DROP_ITEMS = [
@@ -836,6 +838,79 @@ export class Arena {
         const v = obj.body.linvel();
         obj.body.setLinvel({ x: v.x + c.dx * push * 0.55 * dt, y: v.y, z: v.z + c.dz * push * 0.55 * dt }, true);
       }
+    }
+  }
+
+  /** Wind-Up Chattering Teeth: skitter toward the nearest live Dweeb and chomp on a short cooldown. */
+  _updateChatterTeeth(dt) {
+    const dweebs = this.dweebs;
+    if (!dweebs?.length) return;
+    const R = BALANCE.arena.chatter;
+
+    for (const obj of this.objects) {
+      if (obj.key !== 'chatteringTeeth' || obj.isDebris || obj.broken || !obj.body) continue;
+      const roam = obj.def.roamer;
+      if (!roam) continue;
+      const st = obj.chatter ?? (obj.chatter = { cd: 0, land: 0, chomp: 0 });
+      st.cd = Math.max(0, st.cd - dt);
+      st.chomp = Math.max(0, st.chomp - dt);
+      const p = obj.getPosition();
+      const v = obj.body.linvel();
+
+      // Chatter constantly; snap wide open on a bite.
+      if (obj.jaw) {
+        const chatter = Math.abs(Math.sin(this.time * 19)) * 0.22;
+        const bite = st.chomp > 0 ? Math.sin((1 - st.chomp / R.chompAnim) * Math.PI) * 0.65 : 0;
+        obj.jaw.rotation.x = chatter + bite;
+      }
+
+      if (obj.isGrabbed) { st.land = R.landResume; continue; }
+      if (obj.thrownBy) {
+        const landed = p.y < 1.6 && Math.abs(v.y) < 1.2;
+        if (!landed) { st.land = R.landResume; continue; }
+        if (st.land > 0) { st.land -= dt; continue; }
+      }
+
+      let target = null, best = roam.aggro * roam.aggro;
+      for (const d of dweebs) {
+        if (!d.active || d.grabbedBy) continue;
+        const dp = d.getPosition();
+        if (Math.abs(dp.y - p.y) > R.aggroY) continue;
+        const dx = dp.x - p.x, dz = dp.z - p.z;
+        const q = dx * dx + dz * dz;
+        if (q < best) { best = q; target = d; }
+      }
+
+      if (!target) {
+        const brake = Math.max(0, 1 - 4 * dt);
+        obj.body.setLinvel({ x: v.x * brake, y: v.y, z: v.z * brake }, true);
+        continue;
+      }
+
+      const tp = target.getPosition();
+      const dx = tp.x - p.x, dz = tp.z - p.z;
+      const dist = Math.hypot(dx, dz) || 1;
+      const nx = dx / dist, nz = dz / dist;
+      const k = Math.min(1, R.turn * dt);
+      obj.body.setLinvel({
+        x: v.x + (nx * roam.speed - v.x) * k,
+        y: v.y,
+        z: v.z + (nz * roam.speed - v.z) * k,
+      }, true);
+
+      const radius = obj.def.dims.radius ?? Math.max(obj.def.dims.hx ?? 0.2, obj.def.dims.hz ?? 0.2);
+      if (st.cd > 0 || dist > radius + R.contactPad || Math.abs(tp.y - p.y) > R.verticalReach) continue;
+
+      st.cd = roam.cooldown;
+      st.chomp = R.chompAnim;
+      const attacker = obj.thrownBy && obj.thrownBy !== target ? obj.thrownBy : null;
+      const launch = target.receiveHit({
+        dir: { x: nx * 0.8, y: 0.45, z: nz * 0.8 },
+        damage: roam.chomp, base: R.base, growth: R.growth,
+        attacker, time: this.time,
+      });
+      obj.body.setLinvel({ x: -nx * R.knock, y: Math.max(v.y, 2.2), z: -nz * R.knock }, true);
+      if (launch > 0) this.onChatterChomp?.(target, obj, p, launch);
     }
   }
 
@@ -1897,6 +1972,7 @@ export class Arena {
       if (this.arenaId === 'pinball') this._updateConveyors(dt);
       if (this.wind) this._updateWind(dt);
       if (this.arenaId === 'megastadium') this._updateMegaStadium(dt);
+      this._updateChatterTeeth(dt);
     }
     this._updatePlatforms();
 

@@ -227,6 +227,14 @@ export class Fx {
     this.audio.playComicBonk(this._pan(pos));
   }
 
+  /** Wind-up chattering teeth bite: a sharp toy snap, tiny shake and a comic word. */
+  chatterChomp(pos, launch = 0) {
+    this.particles.hit(pos, 0xffffff);
+    this.audio.playComicBonk(this._pan(pos));
+    this.cam?.shake?.(0.07 + Math.min(0.12, launch * 0.008));
+    this._toyWord('CHOMP!', pos, 0xffd23f, 'small');
+  }
+
   whiff(d, weapon) {
     if (d.isPlayer || this._near(d.getPosition(), 8) > 0) this.audio.playWhoosh(this._pan(d.getPosition()));
   }

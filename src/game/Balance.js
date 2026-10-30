@@ -193,6 +193,17 @@ export const BALANCE = {
     // Sinking Sands sticky centre
     quicksandRadius: 5,
     quicksandDrag: 0.88,    // horizontal velocity kept per tick, grounded in the zone
+    // Wind-Up Chattering Teeth (core roamer values live in OBJECT_DEFS.chatteringTeeth.roamer)
+    chatter: {
+      turn: 8,              // steering responsiveness toward the nearest Dweeb
+      contactPad: 0.6,      // extra reach beyond the body radius before a chomp lands
+      base: 5, growth: 6,   // small knockback bite, scales gently with damage
+      knock: 5.5,           // directional shove after the bite
+      landResume: 0.5,      // pause after a throw lands before it steers again
+      chompAnim: 0.25,      // jaw-snap duration
+      aggroY: 2.5,          // ignore Dweebs on a different level
+      verticalReach: 1.4,   // bite reach above / below the teeth
+    },
   },
 
   // King of the Hill.

@@ -382,6 +382,15 @@ export const OBJECT_DEFS = {
     breakable: true, breakForce: 900, damage: 1.0, color: 0xff8fc0,
     breakWord: 'CHA-CHING!', breakColors: [0xffd23f, 0xffc21f, 0xff8fc0],
   },
+  chatteringTeeth: {
+    name: 'Wind-Up Chattering Teeth',
+    shape: 'box', dims: { hx: 0.22, hy: 0.14, hz: 0.18 },
+    visualScale: [0.44, 0.28, 0.36],
+    material: 'plastic', mass: 1.0, grabbable: true, throwable: true,
+    breakable: true, breakForce: 900, damage: 1.0, color: 0xfff8ee,
+    breakWord: 'CLATTER!', breakColors: [0xfff8ee, 0xd94a5a, 0xc9d3e6, 0xffd23f],
+    roamer: { speed: 3.2, aggro: 14, chomp: 4, cooldown: 0.9 },
+  },
 };
 
 /** Get a random set of objects for arena spawning */
