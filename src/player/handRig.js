@@ -156,6 +156,7 @@ export const GRIP_OVERRIDES = {
   },
   melonCannon: { oneHand: [{ x: 0, y: -0.1, z: -0.35 }], twoHand: [] },
   magnet: { oneHand: [{ x: 0, y: -0.24, z: 0 }], twoHand: [] },
+  extinguisher: { oneHand: [{ x: 0, y: -0.16, z: 0.02 }], twoHand: [] },
 };
 
 /**

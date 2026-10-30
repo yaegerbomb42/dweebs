@@ -1,4 +1,6 @@
 // main.js — boots the renderer, builds the stadium and wires every system together.
+import { TrainingLab } from './game/TrainingLab.js';
+import { recordMatch, careerSummaryHtml } from './app/career.js';
 //
 // Frame order: input/AI → Dweeb.preStep → physics (sub-stepped) → Dweeb.postStep →
 //              impacts (sound/breakage) → combat → arena → match rules → fx/hud → render.
@@ -19,12 +21,18 @@ import { CombatSystem, DEFAULT_LOFT } from './combat/CombatSystem.js';
 import { Bot } from './ai/Bot.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { Match, Phase } from './game/Match.js';
+import { EmoteSystem } from './game/Emotes.js';
 import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
+import { ModeDirector } from './game/ModeDirector.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
+import { Dweebball } from './game/Dweebball.js';
+import { StatusSystem } from './game/StatusEffects.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
+import { TutorialDirector } from './game/Tutorial.js';
+import { ComboDirector } from './game/ComboDirector.js';
 import { Sky, Water } from './render/Sky.js';
 import { Particles } from './render/Particles.js';
 import { Trails, Bursts, Decals } from './render/Juice.js';
@@ -33,40 +41,65 @@ import { warmModels } from './world/ObjectModels.js';
 import { OBJECT_DEFS } from './world/ObjectRegistry.js';
 import { PALETTE } from './render/Toon.js';
 import { statsFor, BALANCE } from './game/Balance.js';
+import { mountRosterSelect } from './app/roster-select.js';
 import { koLine, playerKOWord, winBanners } from './game/Announcer.js';
+import { MutatorDirector } from './game/Mutators.js';
 import { Meadowlands } from './world/Meadowlands.js';
 import { Colony } from './adventure/colony.js';
+import { PetPen } from './adventure/pets.js';
+import { loadWardrobe, applyWardrobe, syncOwned, cycle as cycleWardrobe, buildWardrobeRack, refreshRack } from './world/Cosmetics.js';
+import { QuestBoard } from './adventure/quests.js';
 import { BuildingManager } from './adventure/building.js';
 import { saveVillage, loadVillage, applySave } from './adventure/persistence.js';
 import { EscapeSandbox } from './escape/EscapeSandbox.js';
+let escapeResetTimer = 0;
+import { HillZone } from './world/HillZone.js';
+let hillZone = null;
 import { MimicLab } from './mimic/MimicLab.js';
+import { assignTeams, teamById, TeamRings } from './game/Teams.js';
 import { DweebWarfare } from './warfare/DweebWarfare.js';
-import { BuildADweebLab } from './builder/BuildADweebLab.js';
+import { BuildADweebLab, recordGauntletBout, loadGauntletState, TOURNAMENT_KEY } from './builder/BuildADweebLab.js';
 import { BuildADweebHud } from './builder/BuildADweebHud.js';
+import { TournamentBracket } from './builder/Tournament.js';
+import { CombatTelemetry } from './builder/CombatTelemetry.js';
 import { buildCustomDweebModel, ARCHETYPE_PRESETS } from './builder/CustomDweebModel.js';
 import { BuilderBot } from './ai/BuilderBot.js';
 import { serverUrl } from './app/settings.js';
 import { defaultUrl } from './net/NetClient.js';
+import { createQualityGovernor } from './app/performance.js';
+import { recordMatch as recordDailyMatch } from './app/daily.js';
 
 const $ = id => document.getElementById(id);
 const hex = c => '#' + c.toString(16).padStart(6, '0');
 
 let lastBuilderPlayerConfig = null;
 let lastBuilderOppType = 'random';
+let lastBuilderOppConfig = null;
+let tournamentBracket = null;
+let pendingTournamentFight = null;
 
 let currentMeadowlands = null;
 let colony = null;
+let petPen = null; // tamed critter pets
+let wardrobe = null, wardrobeRack = null, wardrobeSyncT = 0; // vault cosmetics (hats/tools)
+const WARDROBE_POS = { x: -3.2, z: -4.2 };
+let questBoard = null; // Meadowlands NPC quests + Moss Tablet secrets
 let buildingManager = null;
 let currentEscapeSandbox = null;
 let currentMimicLab = null;
 let currentWarfare = null;
 let currentBuildLab = null;
 let currentBuildHud = null;
+let currentBuildTelemetry = null;
 let builderBots = [];
 let activeCitizenIdx = 0;
 let isBuildToolbarOpen = false;
 let villageSaveTimer = 0;
 let currentGatherTarget = null;
+let sceneMoodTimer = 0; // throttle setSceneMood to 4Hz
+let lastWeather = 'clear'; // track weather changes for thunder
+let modeDirector = new ModeDirector();
+const _modeCtx = {};
 
 function updateCitizenRoleBadges(cit) {
   const curRole = cit?.role || '';
@@ -98,13 +131,25 @@ let haptics;
 let physics, arena, sky, water, particles, audio, cam, combat, match, fx, hud, deathCinema = null;
 let trails, bursts, decals, aimGuide;
 let dweebs = [], bots = [], player = null, controller = null;
+let emotes = null; // 1–6 quick emotes (game/Emotes.js)
 let paused = false;
+let onlineMatch = false; // set per match: an online lobby must never be paused locally
 let impactBudget = 0;
 let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
+let comboDirector = null; // hit chains / juggles / assists (game/ComboDirector.js)
 let rematch = null;
+let sun = null;
+let outlineEnabled = true;
+let qualityGovernor = null;
+let currentDweebball = null;
+let tutorial = null;
+let mutatorDirector = new MutatorDirector();
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
 const nearMiss = { flying: false, min: Infinity, last: -99 };
+
+// Photo Finish: slow-mo when a KO leaves exactly one dweeb standing in stock modes
+let photoFinish = 0;
 
 // Sudden-death item bias for the final 10 s: the sky rains explosives
 const FINALE_BIAS = { toyRocket: 5, explosiveBarrel: 5, giantHammer: 0.5, anvil: 0.5 };
@@ -145,7 +190,7 @@ async function init() {
 
   // Lighting: warm sun + sky bounce
   scene.add(new THREE.HemisphereLight(0xdff3ff, 0x8a6a9a, 1.3));
-  const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
+  sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
   sun.position.set(18, 30, 12);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -157,6 +202,23 @@ async function init() {
   sky = new Sky(scene);
   water = new Water(scene, WATER_LEVEL);
   particles = new Particles(scene);
+
+  // Quality governor (adaptive performance)
+  const { loadSettings } = await import('./app/settings.js');
+  const s = loadSettings();
+  qualityGovernor = createQualityGovernor({
+    renderer,
+    getOutline: () => outlineEnabled,
+    setOutline: (on) => { outlineEnabled = on; },
+    particles,
+    sunLight: sun,
+    onChange: (level, label) => {
+      hud?.feed(`⚙️ Performance mode: ${label}`);
+    },
+  });
+  // Only enable auto mode if quality is set to 'auto'
+  qualityGovernor.setAuto(s.quality === 'auto', 0);
+  window.__dweebsGovernor = qualityGovernor;
 
   await loadStep(25, 'Teaching cubes to feel…');
   physics = new PhysicsWorld();
@@ -179,16 +241,41 @@ async function init() {
   haptics = new Haptics();
   cam = new CameraController(camera, canvas);
   hud = new Hud($('hud'));
-  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics });
+  match = new Match();
+  fx = new Fx({ particles, audio, camera, cameraController: cam, hud, arena, bursts, decals, haptics, match });
+  tutorial = new TutorialDirector({ hud });
+  arena.fx = fx;
+  fx.tutorial = tutorial;
+  comboDirector = new ComboDirector({ hud, audio, particles });
+  fx.combo = comboDirector;
   aimGuide.onLock = () => fx.aimLock();
   combat = new CombatSystem(physics, arena, fx);
-  match = new Match();
+  combat.onExplode = pos => currentEscapeSandbox?.onExplosion(pos);
+  combat.status = new StatusSystem({ particles, decals, hud, audio });
+  combat.status.combat = combat;
+  emotes = new EmoteSystem({ hud, combat, arena, audio });
   deathCinema = new DeathCinema(camera, scene);
   match.events = matchEvents;
 
   arena.isOccupied = tileOccupied;
   arena.dweebs = dweebs;
   arena.onSegmentWarn = () => { if (match.running) audio.playWarning(); };
+  // Crowd Claw: arcade claw that scoops dweebs (or a prize) from the stadium rafters
+  arena.onClaw = (kind, data) => {
+    if (!match.running) return;
+    const pos = data?.pos;
+    if (kind === 'warn') { audio.playWarning(); hud.feed('🕹️ THE CROWD CLAW DESCENDS!'); }
+    else if (kind === 'grab' && data.d) {
+      const d = data.d;
+      if (d.held) combat.drop?.(d);
+      audio.playGrab(fx._pan(pos));
+      hud.popup(d.isPlayer ? 'CLAWED!' : 'SNATCHED!', d.getPosition(), 'big', 0xff384b);
+      fx.voice?.(d, 'eep');
+      if (d.isPlayer) cam.shake(0.12);
+    } else if (kind === 'miss') { audio.playGrab(fx._pan(pos)); }
+    else if (kind === 'drop' && data.d) { hud.popup('BOMBS AWAY!', pos, 'small', 0xffd23f); fx.voice?.(data.d, 'yeet'); }
+    else if (kind === 'prize') { hud.popup('🎁 PRIZE!', pos, 'big', 0x5ee06a); fx.particles?.confetti?.(pos, 30); }
+  };
   arena.onSegmentFall = seg => audio.playCrumble(fx._pan(seg.mesh.position));
   arena.onContraptionHit = (c, victim, cause) => {
     audio.playHammer?.();
@@ -207,6 +294,8 @@ async function init() {
   arena.onBump = (b, obj) => fx.bumper(obj.getPosition(), b.color, false);
   arena.onBounce = (t) => fx.bounce({ x: t.x, y: 0.25, z: t.z }, t.color);
   arena.onLavaHit = (d, launch) => fx.lavaHit(d, launch);
+  arena.onChatterChomp = (d, obj, pos, launch) => fx.chatterChomp(pos ?? obj.getPosition(), launch);
+  arena.onBubblePop = (pos, pitch, count) => fx.bubblePop(pos, pitch, count);
   arena.onCrustWarn = () => hud.feed('<b>VOLCANO</b> · the rim is cracking!', 'sd');
   arena.onGustWarn = dir => {
     hud.feed(`<b>SKY TURBINE</b> · gust inbound ${dir > 0 ? '→' : '←'}`, 'sd');
@@ -217,20 +306,99 @@ async function init() {
     audio.playWhoosh(0, 1);
     cam.shake(0.16);
   };
+  // Wave-2 stage hazards (world/StageHazards.js): FX + feed lines for the offline stages.
+  arena.onLightningWarn = (x, z) => {
+    audio.playWarning();
+    if (player?.active) {
+      const p = player.getPosition();
+      if (Math.hypot(p.x - x, p.z - z) < BALANCE.arena.lightningRadius + 0.6) hud.popup('MOVE!', p, 'small', 0xbfe9ff);
+    }
+  };
+  arena.onLightning = (x, z, hits) => {
+    fx.lightningStrike(x, z);
+    arena.excite(0.9);
+    for (const d of hits) hud.popup('ZAP!', d.getPosition(), 'big', 0xbfe9ff);
+    if (hits.length) hud.feed(`<b>⚡ STORM SPIRE</b> · zapped ${hits.map(d => Hud.nameTag(d)).join(', ')}`, 'sd');
+  };
+  arena.onMagnetWarn = () => {
+    hud.feed('<b>🧲 MAGNET CORE</b> · powering up — grab something!', 'sd');
+    audio.playWarning();
+  };
+  arena.onMagnet = active => {
+    fx.magnetPulseFx(active);
+    if (active) hud.announce('MAGNET!', 'danger', 1.0);
+  };
+  arena.onQuicksand = d => {
+    if (d.isPlayer) hud.popup('STUCK!', d.getPosition(), 'small', 0xd9a441);
+  };
   arena.onObjectSplash = (obj, pos) => {
     if (obj.def) fx.splash(pos, false);
     else fx.splash(pos, true); // falling stage tile
   };
 
   cam.snapTo(0, 1, 0);
+
+  // Occlusion-aware camera: raycast from look target to ideal camera position
+  cam.setCollisionProbe((from, to) => {
+    const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-3) return null;
+    const hit = physics.raycast(
+      { x: from.x, y: from.y, z: from.z },
+      { x: dx / len, y: dy / len, z: dz / len },
+      len,
+      player?.collider ?? null
+    );
+    // Only static world geometry (terrain, buildings, stage) pulls the camera in — not dweebs or props flying past
+    const body = hit?.collider?.parent?.();
+    if (!hit || (body && !body.isFixed())) return null;
+    return hit.distance;
+  });
+
   setupMenu();
   window.addEventListener('resize', onResize);
+  window.addEventListener('keydown', e => { if (e.code === 'KeyG' && !e.repeat && petPen && currentMeadowlands && player) petPen.tryTame(player); });
+  window.addEventListener('keydown', onWardrobeKey);
   document.addEventListener('pointerlockchange', onPointerLockChange);
   canvas.addEventListener('click', (e) => {
     if (match.phase !== Phase.MENU && match.phase !== Phase.RESULTS && !paused) {
       if (!currentWarfare && currentMode !== 'build_arena' && !currentBuildLab) cam.lock();
     }
   });
+
+  // ─── Visibility / focus / gamepad pause (offline matches only) ───
+  function isOfflineMatchRunning() {
+    // Online/warfare matches use currentWarfare; build lab and adventure are offline but
+    // adventure doesn't use the brawler pause screen. Only pause the standard brawler match.
+    return !onlineMatch && !currentWarfare &&
+           !currentBuildLab &&
+           !currentMeadowlands &&
+           (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN);
+  }
+
+  function handlePauseTrigger() {
+    if (!paused && isOfflineMatchRunning()) {
+      setPaused(true);
+      cam.unlock();
+      if (audio?.ctx?.state === 'running') audio.ctx.suspend();
+    }
+  }
+
+  function handleResumeAudio() {
+    if (audio?.ctx?.state === 'suspended') audio.ctx.resume();
+    // Never auto-resume gameplay — player must click Resume.
+  }
+
+  // Tab hidden / visible (emitted by runtime.js as dweebs:hidden / dweebs:visible)
+  document.addEventListener('dweebs:hidden', handlePauseTrigger);
+  document.addEventListener('dweebs:visible', handleResumeAudio);
+
+  // Window blur / focus
+  window.addEventListener('blur', handlePauseTrigger);
+  window.addEventListener('focus', handleResumeAudio);
+
+  // Gamepad disconnect
+  window.addEventListener('gamepaddisconnected', handlePauseTrigger);
 
   await hideLoading();
   if (import.meta.env.DEV && location.hash === '#lineup') return showLineup();
@@ -318,9 +486,79 @@ const MOODS_DEV = ['grumpy', 'calm', 'smug', 'worried'];
 
 // ─── Menu ───
 
+let rosterCleanup = null;
+// ─── Quick Chaos + More drawer ───
+// The lobby shows 5 modes / 7 arenas; GAME_MODES and ARENAS hold far more. Quick Chaos
+// rolls a brawler mode and a compatible arena; MORE reveals everything else in-place.
+const CHAOS_POOL = ['brawl', 'derby', 'hill', 'teams', 'sudden', 'walldrop'];
+
+function quickChaos(syncArena) {
+  audio.playUIClick();
+  const mode = CHAOS_POOL[Math.floor(Math.random() * CHAOS_POOL.length)];
+  const def = GAME_MODES[mode];
+  const pool = (def?.arenas || [def?.arena || 'stadium']).filter(id => ARENAS.some(a => a.id === id));
+  const arenaId = pool[Math.floor(Math.random() * pool.length)] || 'stadium';
+  settings.mode = mode;
+  settings.arena = arenaId;
+  saveSettings();
+  for (const seg of document.querySelectorAll('.seg[data-setting="mode"], .seg[data-setting="arena"]')) {
+    const key = seg.dataset.setting;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === settings[key]));
+  }
+  syncArena?.();
+  const a = arenaById(arenaId);
+  const btn = $('btn-chaos');
+  if (btn) btn.textContent = `🎲 ${def?.name || mode} @ ${a.icon} ${a.name}`;
+  // A beat to read the roll, then go
+  setTimeout(() => { startMatch(); if (btn) btn.textContent = '🎲 QUICK CHAOS'; }, 650);
+}
+
+function buildMoreDrawer() {
+  const add = (seg, items) => {
+    if (!seg || !items.length) return;
+    const have = new Set([...seg.querySelectorAll('button')].map(b => b.dataset.v));
+    const fresh = items.filter(i => !have.has(i.v));
+    if (!fresh.length) return;
+    for (const i of fresh) {
+      const b = document.createElement('button');
+      b.dataset.v = i.v; b.title = i.title || ''; b.textContent = i.label;
+      b.classList.add('more-item'); b.style.display = 'none';
+      b.classList.toggle('on', settings[seg.dataset.setting] === i.v);
+      seg.appendChild(b);
+    }
+    const more = document.createElement('a');
+    more.href = '#'; more.className = 'more-toggle';
+    more.textContent = `+${fresh.length} MORE`;
+    more.style.cssText = 'font-weight:900;font-size:13px;margin-left:6px;align-self:center;color:inherit;text-decoration:underline;cursor:pointer';
+    more.addEventListener('click', e => {
+      e.preventDefault(); e.stopPropagation();
+      const open = more.dataset.open !== '1';
+      more.dataset.open = open ? '1' : '0';
+      seg.querySelectorAll('.more-item').forEach(b => { b.style.display = open ? '' : 'none'; });
+      more.textContent = open ? 'LESS' : `+${fresh.length} MORE`;
+      audio.playUIClick();
+    });
+    seg.appendChild(more);
+  };
+  const modeLabels = { hill: '👑 King of the Hill', teams: '🤝 Teams', sudden: '💀 Sudden Death', escape: '🏝️ Escape', mimic: '🎭 Mimic' };
+  add(document.querySelector('.seg[data-setting="mode"]'),
+    ['hill', 'teams', 'sudden'].filter(id => GAME_MODES[id]).map(id => ({ v: id, label: modeLabels[id] || GAME_MODES[id].name, title: GAME_MODES[id].tagline })));
+  add(document.querySelector('.seg[data-setting="arena"]'),
+    ARENAS.map(a => ({ v: a.id, label: `${a.icon || ''} ${a.name}`.trim(), title: a.blurb })));
+}
+
 function setupMenu() {
   const unlockAudio = () => { audio.init(); audio.resume(); applyAudioSettings(); };
   document.addEventListener('pointerdown', unlockAudio, { once: false });
+
+  // Mount Roster Select 2.0 into the empty .dweeb-roster-grid container
+  const rosterGrid = document.querySelector('.seg.dweeb-roster-grid');
+  if (rosterGrid) {
+    rosterCleanup = mountRosterSelect(rosterGrid, {
+      getType: () => settings.type,
+      setType: (v) => { settings.type = v; saveSettings(); }
+    });
+  }
 
   for (const seg of document.querySelectorAll('.seg')) {
     const key = seg.dataset.setting;
@@ -351,6 +589,8 @@ function setupMenu() {
   for (const b of document.querySelectorAll('.btn')) b.addEventListener('mouseenter', () => audio.playUIHover());
 
   $('btn-play').onclick = () => { audio.playUIClick(); startMatch(); };
+  $('btn-chaos')?.addEventListener('click', () => quickChaos(syncArena));
+  buildMoreDrawer();
   $('btn-how').onclick = () => { audio.playUIClick(); $('how-to-play').classList.remove('hidden'); };
   $('btn-close-help').onclick = () => { audio.playUIClick(); $('how-to-play').classList.add('hidden'); };
   $('btn-resume').onclick = () => { audio.playUIClick(); setPaused(false); cam.lock(); };
@@ -398,8 +638,15 @@ function setupMenu() {
   $('btn-build-rematch')?.addEventListener('click', () => {
     audio.playUIClick();
     $('results-screen')?.classList.add('hidden');
-    if (lastBuilderPlayerConfig) {
-      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType);
+    if (lastBuilderPlayerConfig && lastBuilderOppType === 'gauntlet') {
+      let g = loadGauntletState();
+      if (!g?.alive) {   // lost: start a fresh run straight away
+        startBuildLab();
+        g = currentBuildLab?.startGauntlet();
+      }
+      if (g?.alive && g.opponent) launchGauntletArena(lastBuilderPlayerConfig, g);
+    } else if (lastBuilderPlayerConfig) {
+      launchBuilderArena(lastBuilderPlayerConfig, lastBuilderOppType, lastBuilderOppConfig);
     } else {
       startBuildLab();
     }
@@ -474,14 +721,23 @@ function setupMenu() {
 function applyAudioSettings() {
   audio.setEnabled(settings.sound === 'on');
   audio.setMusicEnabled(settings.music === 'on');
+  if (typeof audio.setSfxVolume === 'function') {
+    audio.setSfxVolume(Math.max(0, Math.min(1, settings.sfx ?? 1)));
+  }
+  if (typeof audio.setMusicVolume === 'function') {
+    audio.setMusicVolume(Math.max(0, Math.min(1, settings.musicVol ?? 0.6)));
+  }
   haptics?.setEnabled(settings.rumble !== 'off');
   cam?.setShakeScale(settings.shake === 'off' ? 0 : settings.shake === 'low' ? 0.42 : 1);
 }
 
 function toMenu() {
+  setTimeout(() => rosterCleanup?.resumePreview?.(), 0);
+  $('wardrobe-prompt')?.remove(); wardrobeRack = null;
   if (currentMeadowlands) {
     if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
-    currentMeadowlands.dispose();
+    (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
+    (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
     currentMeadowlands = null;
   }
   if (buildingManager) {
@@ -489,30 +745,47 @@ function toMenu() {
     buildingManager = null;
   }
   colony = null;
+  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; arena.setStadiumVisible?.(true); }
+  escapeResetTimer = 0;
+  if (hillZone) { hillZone.dispose(); hillZone = null; }
   audio.stopAmbience?.();
+  audio.setSceneMood?.({}); // silence adventure ambience layers
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+  currentBuildTelemetry = null;
+  if (currentDweebball) { currentDweebball.dispose(); currentDweebball = null; }
   match.phase = Phase.MENU;
+  teamRings?.dispose();
+  teamRings = null;
   clearRematch();
   spectateTarget = null;
   arena.hazardsActive = false;
   controller && (controller.enabled = false);
   resetSuddenDeathFx();
+  photoFinish = 0;
+  try { mutatorDirector.end(mutatorCtx()); } catch (e) { console.error('[Mutator] end error:', e); }
   cam.unlock();
   audio.stopMusic();
   audio.setCharge(0);
   hud.setSpectator('');
   hideSpectatorOverlay();
+  removeDarwinBoard();
+  tutorial?.hide?.();
+  try { modeDirector.reset(); } catch (e) { console.warn('[ModeDirector] reset error:', e); }
   for (const id of ['hud', 'results-screen', 'round-screen', 'pause-screen', 'game-switcher-modal', 'civ-hud', 'spectator-duel-overlay']) $(id)?.classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
 
 // ─── Match flow ───
 
+let trainingLab = null;
 function clearDweebs() {
+  trainingLab?.dispose();
+  trainingLab = null;
   controller?.destroy();
   controller = null;
+  combat?.clearGooZones?.();
   for (const d of dweebs) d.destroy();
   dweebs = [];
   bots = [];
@@ -529,7 +802,8 @@ function startWarfare(submode = 'defense') {
   spectateTarget = null;
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
-  if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+  if (currentMeadowlands) { (petPen?.dispose(), petPen = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
+  if (currentMeadowlands) { (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
@@ -685,7 +959,30 @@ function generateOpponentConfig(playerConfig, oppType = 'random') {
   return cfg;
 }
 
+function adoptTournamentBracket() {
+  if (!tournamentBracket && currentBuildLab?.tournament) {
+    tournamentBracket = currentBuildLab.tournament;
+  }
+  return tournamentBracket;
+}
+
+function persistTournamentBracket() {
+  const inProgress = !!tournamentBracket && tournamentBracket.status === 'in';
+  try {
+    if (inProgress) localStorage.setItem(TOURNAMENT_KEY, JSON.stringify(tournamentBracket.toJSON()));
+    else localStorage.removeItem(TOURNAMENT_KEY);
+  } catch { /* private mode */ }
+  if (currentBuildLab) {
+    currentBuildLab.tournament = inProgress ? tournamentBracket : null;
+  }
+}
+
+function pushTournamentState(state) {
+  currentBuildHud?.renderTournament?.(state);
+}
+
 function startBuildLab() {
+  pendingTournamentFight = null;
   hideSpectatorOverlay();
   clearRematch();
   clearDweebs();
@@ -694,7 +991,8 @@ function startBuildLab() {
   spectateTarget = null;
   if (arena.setStadiumVisible) arena.setStadiumVisible(false);
   for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = false;
-  if (currentMeadowlands) { currentMeadowlands.dispose(); currentMeadowlands = null; }
+  if (currentMeadowlands) { (petPen?.dispose(), petPen = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
+  if (currentMeadowlands) { (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose()); currentMeadowlands = null; }
   if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
   if (currentMimicLab) { currentMimicLab.dispose(); currentMimicLab = null; }
   if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
@@ -740,6 +1038,97 @@ function startBuildLab() {
       const cfg = currentBuildLab.rerollUnlocked();
       currentBuildHud.syncForm(cfg);
     },
+    onGauntletStart: () => currentBuildLab?.startGauntlet(),
+    onGauntletFight: () => currentBuildLab?.gauntletOpponent(),
+    onGauntletAbandon: () => currentBuildLab?.abandonGauntlet(),
+    onGauntletState: () => currentBuildLab?.gauntletState(),
+    onLaunchGauntlet: () => {
+      const state = currentBuildLab?.gauntletState();
+      if (state?.alive && state.opponent) launchGauntletArena(currentBuildLab.config, state);
+    },
+    // Stable handlers
+    onStableGet: () => currentBuildLab?.stableSlots ?? [],
+    onStableSave: idx => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const entry = currentBuildLab.saveStableSlot(idx);
+      if (entry) {
+        currentBuildHud.renderStable(currentBuildLab.stableSlots);
+        fx?._toyWord?.('SAVED!', { x: 0, y: 1.2, z: 0 }, 0xffd23f, 1.2);
+        fx?.cam?.shake?.(0.15);
+      }
+    },
+    onStableLoad: idx => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const ok = currentBuildLab.loadStableSlot(idx);
+      if (ok) {
+        currentBuildHud.syncForm(currentBuildLab.config);
+        currentBuildHud.renderStable(currentBuildLab.stableSlots);
+        fx?._toyWord?.('LOADED!', { x: 0, y: 1.2, z: 0 }, 0x5ee06a, 1.2);
+        fx?.cam?.shake?.(0.1);
+      }
+    },
+    onStableDelete: idx => {
+      if (!currentBuildLab || !currentBuildHud) return;
+      const ok = currentBuildLab.deleteStableSlot(idx);
+      if (ok) {
+        currentBuildHud._stableSelected = -1;
+        currentBuildHud.renderStable(currentBuildLab.stableSlots);
+        fx?._toyWord?.('CLEARED!', { x: 0, y: 1.2, z: 0 }, 0xff4d5e, 1.2);
+        fx?.cam?.shake?.(0.15);
+      }
+    },
+    onTournamentState: () => adoptTournamentBracket()?.state?.() ?? null,
+    onTournamentStart: () => {
+      if (currentBuildLab) {
+        const state = currentBuildLab.startTournament();
+        tournamentBracket = currentBuildLab.tournament;
+        return state;
+      }
+      const playerConfig = lastBuilderPlayerConfig || tournamentBracket?.player;
+      if (!playerConfig) return null;
+      tournamentBracket = new TournamentBracket(playerConfig);
+      persistTournamentBracket();
+      return tournamentBracket.state();
+    },
+    onTournamentFight: () => adoptTournamentBracket()?.opponentForPlayer?.() ?? null,
+    onTournamentResult: playerWon => {
+      if (!adoptTournamentBracket()) return null;
+      const state = tournamentBracket.recordPlayerResult(!!playerWon);
+      persistTournamentBracket();
+      pushTournamentState(state);
+      return state;
+    },
+    onTournamentAbandon: () => {
+      tournamentBracket = null;
+      if (currentBuildLab) currentBuildLab.abandonTournament?.();
+      else {
+        try { localStorage.removeItem(TOURNAMENT_KEY); } catch { /* private mode */ }
+      }
+      pushTournamentState(null);
+    },
+    onLaunchTournament: (opponent, meta) => {
+      if (!opponent || !adoptTournamentBracket()) return;
+      const playerConfig = currentBuildLab?.config || tournamentBracket?.player || lastBuilderPlayerConfig;
+      if (!playerConfig) return;
+      pendingTournamentFight = {
+        roundIndex: tournamentBracket.currentRoundIndex,
+        opponentId: opponent.entrantId || opponent.id || null,
+        tournament: !!meta?.tournament,
+      };
+      launchBuilderArena(playerConfig, 'tournament', opponent);
+    },
+    onExportCode: () => currentBuildLab?.exportBuildCode(),
+    onImportCode: (code) => currentBuildLab?.importBuildCode(code),
+    onShareJuice: () => {
+      // Juice: camera shake + toy word
+      fx?.cam?.shake?.(0.25);
+      fx?._toyWord?.('SHARED!', { x: 0, y: 1.2, z: 0 }, 0xffd23f, 'big');
+    },
+    onImportJuice: () => {
+      // Juice: camera shake + toy word
+      fx?.cam?.shake?.(0.3);
+      fx?._toyWord?.('IMPORTED!', { x: 0, y: 1.2, z: 0 }, 0x5ee06a, 'big');
+    },
   });
 
   // Sync initial lock state
@@ -766,9 +1155,10 @@ function exitBuildLab() {
   setTimeout(() => { location.hash = '#/'; }, 0);
 }
 
-function launchBuilderArena(playerConfig, oppType = 'random') {
+function launchBuilderArena(playerConfig, oppType = 'random', oppConfigOverride = null) {
   lastBuilderPlayerConfig = playerConfig;
   lastBuilderOppType = oppType;
+  lastBuilderOppConfig = oppConfigOverride || null;
 
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
@@ -800,7 +1190,90 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
   wireDweeb(player);
   applyCustomDweebToBrawler(player, playerConfig);
 
-  const oppConfig = generateOpponentConfig(playerConfig, oppType);
+  const oppConfig = oppConfigOverride || generateOpponentConfig(playerConfig, oppType);
+  const spawn1 = arena.getSpawnPoint(1, 2);
+  const oppDweeb = new Dweeb(scene, physics, {
+    isPlayer: false,
+    name: oppConfig.name || 'Rival Bot',
+    type: oppConfig.shape || 'cube',
+    color: 0xffffff,
+    index: 1,
+    position: spawn1,
+  });
+  dweebs.push(oppDweeb);
+  wireDweeb(oppDweeb);
+  applyCustomDweebToBrawler(oppDweeb, oppConfig);
+
+  builderBots = [
+    new BuilderBot(player, arena, combat, playerConfig.dna),
+    new BuilderBot(oppDweeb, arena, combat, oppConfig.dna),
+  ];
+
+  controller = new Controller(player, cam, combat);
+  controller.onPausePressed = () => { if (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN || paused) setPaused(!paused); };
+  controller.enabled = false;
+
+  combat.status?.setDweebs(dweebs);
+  combat.setDweebs(dweebs);
+  fx.reactions?.setDweebs(dweebs);
+  arena.dweebs = dweebs;
+  hud.setup(dweebs);
+
+  // Combat telemetry for Build-A-Dweeb arena
+  currentBuildTelemetry = new CombatTelemetry();
+  currentBuildHud?.attachTelemetry(currentBuildTelemetry);
+
+  match.settings.stocks = 3;
+  match.settings.mode = 'build_arena';
+  match.startMatch(dweebs);
+
+  cam.unlock();
+  cam.snapTo(0, 2, 9);
+  hud.setSuddenDeath('🤖 100% AUTONOMOUS AI ARENA DUEL 🤖');
+  setTimeout(() => { if (match.running) hud.setSuddenDeath(''); }, 3500);
+
+  showSpectatorOverlay(playerConfig, oppConfig);
+
+  audio.init();
+  audio.resume();
+  applyAudioSettings();
+}
+
+function launchGauntletArena(playerConfig, gauntletState) {
+  lastBuilderPlayerConfig = playerConfig;
+  lastBuilderOppType = 'gauntlet';
+
+  if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
+  if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+
+  clearRematch();
+  clearDweebs();
+
+  arena.setArena('stadium');
+  arena.reset();
+  if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+  for (const o of arena.objects || []) if (o.mesh) o.mesh.visible = true;
+  arena.hazardsActive = true;
+  spectateTarget = null;
+  currentMode = 'build_arena';
+
+  for (const id of ['game-switcher-modal', 'pause-screen', 'main-menu', 'results-screen']) $(id)?.classList.add('hidden');
+  $('hud').classList.remove('hidden');
+
+  const spawn0 = arena.getSpawnPoint(0, 2);
+  player = new Dweeb(scene, physics, {
+    isPlayer: true,
+    name: playerConfig.name || 'Your Dweeb',
+    type: playerConfig.shape || 'blob',
+    color: 0xffffff,
+    index: 0,
+    position: spawn0,
+  });
+  dweebs.push(player);
+  wireDweeb(player);
+  applyCustomDweebToBrawler(player, playerConfig);
+
+  const oppConfig = gauntletState.opponent;
   const spawn1 = arena.getSpawnPoint(1, 2);
   const oppDweeb = new Dweeb(scene, physics, {
     isPlayer: false,
@@ -832,7 +1305,7 @@ function launchBuilderArena(playerConfig, oppType = 'random') {
 
   cam.unlock();
   cam.snapTo(0, 2, 9);
-  hud.setSuddenDeath('🤖 100% AUTONOMOUS AI ARENA DUEL 🤖');
+  hud.setSuddenDeath(`🌊 GAUNTLET · WAVE ${gauntletState.wave} · ${oppConfig.name || 'Champion'}`);
   setTimeout(() => { if (match.running) hud.setSuddenDeath(''); }, 3500);
 
   showSpectatorOverlay(playerConfig, oppConfig);
@@ -874,11 +1347,13 @@ function startMatch() {
   // An online lobby hands over its own bot rule for this one match (see legacy.js).
   const override = window.__dweebsMatchOverride;
   window.__dweebsMatchOverride = null;
+  onlineMatch = !!override;
   const botCount = Math.min(ROSTER.length, override ? override.bots : +settings.bots);
   const total = botCount + 1;
   const myColor = PALETTE[settings.color] ?? PALETTE.yellow;
   player = new Dweeb(scene, physics, { isPlayer: true, name: 'You', type: settings.type, color: myColor, index: 0, position: arena.getSpawnPoint(0, total) });
   dweebs.push(player);
+  applyWardrobe(player);
   for (let i = 0; i < botCount; i++) {
     // A bot wearing the player's colour swaps into the yellow the player gave up
     const r = ROSTER[i].color === myColor ? { ...ROSTER[i], color: PALETTE.yellow } : ROSTER[i];
@@ -889,27 +1364,54 @@ function startMatch() {
   for (const d of dweebs) wireDweeb(d);
 
   controller = new Controller(player, cam, combat);
+  controller.onPausePressed = () => { if (match.phase === Phase.PLAYING || match.phase === Phase.COUNTDOWN || paused) setPaused(!paused); };
+  combat.status?.setDweebs(dweebs);
   combat.setDweebs(dweebs);
+  fx.reactions?.setDweebs(dweebs);
   // clearDweebs() swaps in a fresh array, so the arena's hazard lists must be re-pointed at it
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
+  if (import.meta.env.DEV) window.__dweebs = { hud, physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) Object.defineProperty(window, '__pets', { get: () => petPen, configurable: true });
+  if (import.meta.env.DEV) window.__dweebs.matchEvents = matchEvents;
+  if (import.meta.env.DEV) Object.defineProperty(window, '__db', { get: () => currentDweebball, configurable: true });
+  if (import.meta.env.DEV) Object.defineProperty(window, '__river', { get: () => currentMeadowlands?.river, configurable: true });
+  if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'wardrobe', { get: () => ({ wardrobe, wardrobeRack, colony }), configurable: true });
+  if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'quests', { get: () => questBoard, configurable: true });
   fx.player = player;
   hud.setup(dweebs);
 
   currentMode = settings.mode || 'derby';
+  // Dweebscape is co-op and combatless: the other dweebs just stand around being useful weights.
+  if (GAME_MODES[currentMode]?.hasEscapePuzzles) bots = [];
   match.settings.stocks = (GAME_MODES[currentMode]?.stocks ?? +settings.stocks);
   match.settings.mode = currentMode;
   match.startMatch(dweebs);
+  if (currentMode === 'derby') updateDarwinBoard();
+
+  if (currentMode === 'training') {
+    trainingLab = new TrainingLab({
+      arena,
+      getPlayer: () => player,
+      getDweebs: () => dweebs,
+      onReset: () => dweebs.forEach((d, i) => {
+        d.respawn(arena.getSpawnPoint(i, dweebs.length, currentMode), 0);
+        d.held = null;
+      }),
+    });
+  }
 
   // ── Mode Initialization (Knockout Arena vs Expedition & Dynasty) ──
-  const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands');
+  const isAdventure = (currentMode === 'adventure') || (settings.arena === 'meadowlands' && currentMode !== 'escape');
 
   if (isAdventure) {
     if (arena.setStadiumVisible) arena.setStadiumVisible(false);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
-    if (currentMeadowlands) currentMeadowlands.dispose();
+    if (currentMeadowlands) (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
+    if (currentMeadowlands) (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
     currentMeadowlands = new Meadowlands(physics, scene, { fx });
+    if (currentMeadowlands.river) currentMeadowlands.river.onCatch = (label, pos) => hud.popup(label, pos, 'small', 0x3fa9ff);
     colony = new Colony();
     bots = []; // Citizens are autonomous and peaceful; no brawler AI in adventure
     for (const d of dweebs) {
@@ -943,6 +1445,16 @@ function startMatch() {
       const restored = applySave(savedVillage, { colony, buildingManager, world: currentMeadowlands });
       colony._addLog(`📂 Welcome back! Restored ${restored.citizens} citizens and ${restored.structures} structures.`);
     }
+    try { petPen = new PetPen({ world: currentMeadowlands, colony, hud, audio }); } catch (e) { console.warn('[pets]', e); petPen = null; }
+    try {
+      wardrobe = loadWardrobe();
+      syncOwned(wardrobe, colony);
+      const wy = currentMeadowlands._getHeight?.(WARDROBE_POS.x, WARDROBE_POS.z) ?? 0;
+      wardrobeRack = buildWardrobeRack(currentMeadowlands.group, WARDROBE_POS.x, wy, WARDROBE_POS.z);
+      refreshRack(wardrobeRack, wardrobe);
+      if (player) applyWardrobe(player, wardrobe);
+    } catch (e) { console.warn('[wardrobe]', e); wardrobeRack = null; }
+    try { questBoard = new QuestBoard({ world: currentMeadowlands, colony, hud, audio, buildingManager }); } catch (e) { console.warn('[quests]', e); questBoard = null; }
 
     for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
     $('hud')?.classList.remove('hidden');
@@ -953,11 +1465,75 @@ function startMatch() {
     audio.startMusic(false);
     controller.enabled = true;
     match.phase = Phase.PLAYING;
-    match.running = false; // Prevents brawler stocks, sudden death, countdowns, and blast zone KOs
+    // (match.running is a getter on Match: assigning it threw a TypeError in strict mode and
+    // aborted the rest of this setup. Adventure keeps phase PLAYING; the Meadowlands paths own KOs.)
+    // (was `match.running = false`, but `running` is a getter: in a module that assignment threw and
+    // aborted the rest of adventure setup. Behaviour is unchanged — the phase above already decides it.)
     hud.clearTransient();
     trails.clear();
     bursts.clear();
     decals.clear();
+    return;
+  }
+
+  // Dweebball mode: 2v2 sport with ball and goals
+  const isDweebball = currentMode === 'dweebball';
+  if (isDweebball) {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMeadowlands) {
+      if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
+      currentMeadowlands.dispose();
+      currentMeadowlands = null;
+    }
+    if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
+    colony = null;
+    $('civ-hud')?.classList.add('hidden');
+    $('hud-top')?.classList.remove('hidden');
+    $('hud-cards')?.classList.remove('hidden');
+
+    // Create exactly 4 dweebs for 2v2 (player + 3 bots)
+    // We already have dweebs created above, but we need exactly 4
+    while (dweebs.length < 4) {
+      const i = dweebs.length;
+      const r = ROSTER[i % ROSTER.length];
+      const d = new Dweeb(scene, physics, { ...r, index: i, position: arena.getSpawnPoint(i, 4) });
+      dweebs.push(d);
+      const bot = new Bot(d, arena, combat, settings.difficulty);
+      d.bot = bot; // Store bot reference for Dweebball AI
+      bots.push(bot);
+      wireDweeb(d);
+    }
+    // If more than 4, trim
+    while (dweebs.length > 4) {
+      const d = dweebs.pop();
+      d.destroy();
+      bots.pop();
+    }
+
+    combat.setDweebs(dweebs);
+    arena.dweebs = dweebs;
+    fx.player = player;
+    hud.setup(dweebs);
+
+    for (const b of bots) if (b.dweeb) b.dweeb.bot = b;
+    currentDweebball = new Dweebball({ physics, scene, arena, hud, fx, audio });
+    currentDweebball.start(dweebs);
+
+    // Dweebball uses infinite stocks, no sudden death
+    match.settings.stocks = 999;
+    match.settings.mode = 'dweebball';
+    match.startMatch(dweebs);
+
+    for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    audio.init();
+    audio.resume();
+    applyAudioSettings();
+    audio.startAmbience();
+    audio.startMusic(false);
+    startRound();
+    cam.lock();
     return;
   } else {
     if (arena.setStadiumVisible) arena.setStadiumVisible(true);
@@ -965,7 +1541,8 @@ function startMatch() {
     if (currentMeadowlands) {
       // Save the village before tearing it down.
       if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
-      currentMeadowlands.dispose();
+      (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
+      (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
       currentMeadowlands = null;
     }
     if (buildingManager) {
@@ -980,6 +1557,7 @@ function startMatch() {
 
   for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
   $('hud').classList.remove('hidden');
+  rosterCleanup?.disposePreview();
   audio.init();
   audio.resume();
   applyAudioSettings();
@@ -987,12 +1565,41 @@ function startMatch() {
   audio.startMusic(false);
   startRound();
   cam.lock();
+  // Start tutorial for local brawl/derby modes (not online, not adventure, not build_arena)
+  const isOnline = !!window.__dweebsMatchOverride;
+  if ((currentMode === 'brawl' || currentMode === 'derby') && !isOnline) {
+    tutorial?.start(player);
+  }
+}
+
+// Build ctx for mutators: { physics, arena, dweebs, hud, combat, time, match }
+// One persistent ctx: mutators keep their timers on it between frames.
+const _mutatorCtx = {};
+function mutatorCtx() {
+  return Object.assign(_mutatorCtx, { physics, arena, dweebs, hud, combat, time: match?.time ?? 0, match });
+}
+
+let teamRings = null;
+let lastBonkAt = 0;
+/** A teammate's hit bounced off: say so (throttled) instead of silently eating the input. */
+function friendlyBonk(victim, attacker) {
+  if (!attacker?.isPlayer && !victim.isPlayer) return;
+  const now = performance.now();
+  if (now - lastBonkAt < 900) return;
+  lastBonkAt = now;
+  hud.popup('TEAMMATE!', victim.getPosition(), 'small', victim.teamColor ?? 0xffffff);
 }
 
 function startRound() {
   const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
+  if (currentMode !== 'derby') hideDarwinBoard();
+  else updateDarwinBoard();
+  const isDweebball = currentMode === 'dweebball';
+
+  // Undo last round's mutator before the round reset re-applies arena stats.
+  try { mutatorDirector.end(mutatorCtx()); } catch (e) { console.error('[Mutator] end error:', e); }
   if (arena.dropWall) {
-    if (modeDef.hasWallDrop) {
+    if (modeDef.hasWallDrop && !isDweebball) {
       arena.dropWall.dropped = false;
       arena.dropWall.curY = 7.0;
       arena.dropWall.group.position.y = 7.0;
@@ -1004,17 +1611,26 @@ function startRound() {
   }
 
   arena.hazardsActive = false;
+  if (!isDweebball) arena.reset();
   arena.reset();
+  combat.status?.clear();
   resetSuddenDeathFx();
+  photoFinish = 0;
+  comboDirector?.reset?.();
   hud.clearTransient();
   trails.clear();
   bursts.clear();
   decals.clear();
   $('round-screen').classList.add('hidden');
 
+  // King of the Hill: draw the zone + race board, and point the bots at it
+  if (hillZone) { hillZone.dispose(); hillZone = null; }
+  if (modeDef.isHill) hillZone = new HillZone(scene, BALANCE.hill);
+  for (const b of bots) b.hill = modeDef.isHill ? { x: 0, z: 0, r: BALANCE.hill.radius } : null;
+
   // Spawn batteries if in escape mode
   // Spawn arcing cannons and bouncy melons in Wall Drop mode
-  if (modeDef.hasWallDrop) {
+  if (modeDef.hasWallDrop && !isDweebball) {
     // Team West (Pink side)
     arena.spawnItem('melonCannon', { x: -7, y: 2, z: -3 });
     arena.spawnItem('explodingMelon', { x: -6, y: 2, z: 2 });
@@ -1025,21 +1641,33 @@ function startRound() {
     arena.spawnItem('spikyBall', { x: 8, y: 2, z: 0 });
   }
 
+  if (currentEscapeSandbox) { currentEscapeSandbox.dispose(); currentEscapeSandbox = null; }
+  escapeResetTimer = 0;
   if (modeDef.hasEscapePuzzles) {
+    // The vault sits on its own island out on the lake: hide the stadium scenery so the
+    // horizon is just water and sky, and drop the brawl clock (there are no rounds here).
+    arena.setStadiumVisible?.(false);
+    $('hud-top')?.classList.add('hidden');
+    currentEscapeSandbox = new EscapeSandbox(physics, scene, { arena, fx, hud, audio });
+    // A few seconds to soak in the win, then a fresh vault (try another way out)
+    currentEscapeSandbox.onEscaped = () => { escapeResetTimer = 6; };
+  }
+
+  if (modeDef.hasEscapePuzzles && !isDweebball) {
     arena.spawnItem('powerBattery', { x: 8, y: 3, z: -4 });
     arena.spawnItem('powerBattery', { x: 8, y: 3, z: 4 });
   }
 
   const total = dweebs.length;
   dweebs.forEach((d, i) => {
-    const p = arena.getSpawnPoint(i, total, currentMode);
+    const p = currentEscapeSandbox ? currentEscapeSandbox.spawnPoint(i, total) : arena.getSpawnPoint(i, total, currentMode);
     d.eliminated = false;
     // Stage physics belongs to the arena: the Moonbase is lighter, the Iceberg slicker.
     d.gravityScale = arena.gravity;
     d.jumpScale = arena.gravity < 1 ? 0.72 + arena.gravity * 0.28 : 1;
     d.respawn(p, 0);
     d.held = null;
-    d.yaw = Math.atan2(-p.x, -p.z);
+    d.yaw = currentEscapeSandbox ? Math.PI : Math.atan2(-p.x, -p.z);
     // Arena floor feel: the Iceberg's traction lives on the stage, not the Dweeb.
     d.traction = arena.traction;
     d.slide = arena.slide;
@@ -1047,17 +1675,37 @@ function startRound() {
       // Set team indicator color: even index = Team Pink, odd index = Team Cyan
       d.team = i % 2 === 0 ? 'pink' : 'cyan';
       d.teamColor = i % 2 === 0 ? 0xff4d5e : 0x3fa9ff;
+    } else {
+      // Teams must not leak from a Wall Drop match into a free-for-all (friendly fire is off).
+      d.team = null;
     }
+    d.onFriendlyBonk = friendlyBonk;
   });
+  if (modeDef.isTeams) assignTeams(dweebs);
+  teamRings?.dispose();
+  teamRings = (modeDef.isTeams || modeDef.hasWallDrop) ? new TeamRings(scene) : null;
+  if (modeDef.isTeams && player?.team) {
+    const t = teamById(player.team);
+    const mates = dweebs.filter(o => o !== player && o.team === player.team).map(o => o.name).join(' + ');
+    hud.feed(`You're <b style="color:#${t.color.toString(16).padStart(6, '0')}">TEAM ${t.name}</b>${mates ? ` with ${mates}` : ''} · no friendly fire`, 'style');
+  }
   match.beginRound();
+  // Pick and begin round mutator (brawl-like modes only)
+  try {
+    const def = mutatorDirector.pick(currentMode);
+    mutatorDirector.begin(def, mutatorCtx());
+    if (def) { hud.announce(def.name, 'mutator', 2.4); hud.feed?.(`MUTATOR · ${def.blurb}`); }
+  } catch (e) { console.error('[Mutator] startRound error:', e); }
   hud.setRound(match.round, winsHtml());
   controller.enabled = false;
+  if (match.round === 1 && !currentMeadowlands) hud.feed('<b>EMOTES</b> · 1 Taunt · 2 Cheer · 3 Dance · 4 Sweat · 5 GG · 6 Flex');
   cam.targetDistance = 9;
   cam.pitch = -0.42;
   const pp = player.getPosition();
-  cam.yaw = Math.atan2(-pp.x, -pp.z) + Math.PI;
+  cam.yaw = currentEscapeSandbox ? 0 : Math.atan2(-pp.x, -pp.z) + Math.PI;
   cam.snapTo(pp.x, pp.y, pp.z);
   audio.startMusic(false);
+  try { modeDirector.start(currentMode); } catch (e) { console.warn('[ModeDirector] start error:', e); }
 }
 
 function winsHtml() {
@@ -1075,6 +1723,8 @@ const matchEvents = {
   onGo() {
     const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
     arena.hazardsActive = true;
+    arena.clawEnabled = ['brawl', 'teams', 'sudden', 'hill'].includes(currentMode) && !window.__dweebsMatchOverride;
+    if (!arena.clawEnabled) arena.claw?.reset();
     if (modeDef.hasWallDrop && arena) {
       arena.dropTheWall();
       hud.announce('WALL DROPPED! FIGHT!', 'danger', 1.8);
@@ -1100,8 +1750,17 @@ const matchEvents = {
     audio.musicIntense = true;
   },
   onKO(d, credited, kind, pos) {
+    emotes?.onKO(d, credited);
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
+    // Record KO for build_arena telemetry
+    currentBuildTelemetry?.recordKO?.({
+      dweebId: d.index,
+      name: d.name,
+      byId: credited?.index,
+      time: match.time,
+    });
+    comboDirector?.registerKO?.(d, credited, performance.now() / 1000);
     if (deathCinema) {
       let cause = 'VAPORIZED IN THE VOID';
       if (kind === 'splash') cause = 'DROWNED IN THE LAGOON';
@@ -1123,6 +1782,7 @@ const matchEvents = {
     d.koedAt = t;
     const { line, context } = koLine(ctx, credited ? Hud.nameTag(credited) : '', Hud.nameTag(d));
     if (credited && !credited.eliminated) combat.addStyle(credited, 25, kind === 'star' ? 'STAR KO' : 'K.O.');
+    if (credited?.isPlayer) tutorial?.note('ko');
     hud.feed(line, `ko ${context}`);
     const tag = { revenge: 'REVENGE', trick: 'TRICKSHOT KO', sd: 'SUDDEN DEATH', style: 'STYLE KO', self: 'SELF-KO' }[context];
     if (d.isPlayer) hud.announce(d.eliminated ? 'ELIMINATED!' : playerKOWord(kind, false) + (tag ? `<small>${tag}</small>` : ''), 'ko', 1.2);
@@ -1130,9 +1790,79 @@ const matchEvents = {
     if (d.eliminated && !d.isPlayer) hud.popup('OUT!', pos, 'big', d.color);
     // Kill-cam lite: lean toward where they went when the player was part of it
     if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
+
+    // PHOTO FINISH: when a KO leaves exactly one dweeb standing in stock modes
+    const stockModes = ['derby', 'brawl', 'teams', 'sudden', 'walldrop'];
+    const isStockMode = stockModes.includes(currentMode);
+    const remaining = dweebs.filter(dw => !dw.eliminated).length;
+    if (d.eliminated && isStockMode && dweebs.length > 1 && remaining === 1 && !deathCinema?.isPlaying) {
+      photoFinish = 0.9;
+      hud.announce('PHOTO FINISH!', 'ko', 1.2);
+      audio.duck?.(0.3, 1.2);
+      cam.kickFov?.(10);
+      hud.flashImpact?.();
+    }
+    // --- Derby mode: Darwin award ---
+    if (currentMode === 'derby') {
+      const vertSpeed = Math.abs(d.koSpeedY || 0);
+      let points = 100; // base
+      const bonuses = [];
+      if (kind === 'splash') { points += 75; bonuses.push({ label: 'BELLY FLOP', value: 75 }); }
+      if (pos.y > 6) { points += 100; bonuses.push({ label: 'SKY DIVE', value: 100 }); }
+      if (!credited) { points += 80; bonuses.push({ label: 'SELF-OWN', value: 80 }); }
+      const vertBonus = Math.min(150, Math.round(vertSpeed * 4));
+      if (vertBonus > 0) { points += vertBonus; bonuses.push({ label: 'METEOR', value: vertBonus }); }
+      if (sd) { points += 100; bonuses.push({ label: 'SUDDEN DEATH', value: 100 }); }
+      // Label from biggest bonus
+      let label = 'DARWIN';
+      if (bonuses.length) {
+        bonuses.sort((a, b) => b.value - a.value);
+        label = bonuses[0].label;
+      }
+      match.awardDarwin(d, points, label);
+      // Feedback
+      hud.feed(`<b style="color:#ffd23f">DARWIN +${points}</b> ${Hud.nameTag(d)} · ${label}`, 'ko');
+      hud.popup('DARWIN +' + points, pos, 'big', 0xffd23f);
+      particles.confetti(pos, 30);
+      arena.excite?.(0.4);
+    }
+  },
+  onDarwinAward(d, points, label) {
+    // Update the Darwin leaderboard panel
+    updateDarwinBoard();
+  },
+  onHillHold(holder) {
+    if (!holder) return;
+    const p = holder.getPosition();
+    hud.feed(`${Hud.nameTag(holder)} <b>takes the hill!</b>`, holder.isPlayer ? 'style' : '');
+    hud.popup(holder.isPlayer ? 'YOUR HILL!' : 'KING!', { x: p.x, y: p.y + 1.8, z: p.z }, 'small', holder.color);
+    particles.ring({ x: 0, y: 0.1, z: 0 }, { color: holder.color, size: BALANCE.hill.radius * 1.6, life: 0.45 });
+    arena.excite?.(0.25);
+  },
+  onHillScore(d, score) {
+    fx.hillScoreFx(d, score);
+    const left = BALANCE.hill.target - score;
+    if (left > 0 && left <= 10) hud.announce(`${nameOf(d)}: ${left} TO GO!`, d.isPlayer ? 'go' : 'danger', 1.0);
+    arena.excite?.(0.4);
   },
   onFlail(d, pos) {
     fx.flail(d, pos);
+  },
+  onCrowdGasp(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdGasp(pan);
+  },
+  onCrowdAww(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdAww(pan);
+  },
+  onCrowdChant(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdChant(pan);
+  },
+  onCrowdLaugh(pos) {
+    const pan = fx._pan(pos);
+    audio.playCrowdLaugh(pan);
   },
   onRespawn(d) {
     d.respawn(arena.getRespawnPoint());
@@ -1146,7 +1876,10 @@ const matchEvents = {
     audio.setCharge(0);
     const you = winner.isPlayer;
     const banners = winBanners({ winner, match, isMatch: false });
-    hud.announce(you ? 'YOU WIN THE ROUND!' : `${winner.name.toUpperCase()} WINS!`, you ? 'go small' : 'small', 2.5);
+    const squad = currentMode === 'teams' ? teamById(winner.team) : null;
+    const yourSquad = squad && player?.team === winner.team;
+    if (squad) hud.announce(yourSquad ? 'YOUR TEAM WINS THE ROUND!' : `TEAM ${squad.name} WINS!`, yourSquad ? 'go small' : 'small', 2.5);
+    else hud.announce(you ? 'YOU WIN THE ROUND!' : `${winner.name.toUpperCase()} WINS!`, you ? 'go small' : 'small', 2.5);
     if (you) audio.playVictory(); else audio.playCheer(1);
     arena.excite(1.5);
 
@@ -1185,17 +1918,62 @@ const matchEvents = {
     spectateTarget = null;
     hud.setSpectator('');
     const you = winner.isPlayer;
+    // Endless Gauntlet: bank the wave (or end the run) and tell the player where they stand.
+    let gauntletNote = '';
+    if (currentMode === 'build_arena' && lastBuilderOppType === 'gauntlet') {
+      const g = recordGauntletBout(you);
+      if (g) gauntletNote = g.alive ? `🌊 WAVE ${g.lastCleared} CLEARED · NEXT: ${g.opponent?.name || 'WAVE ' + g.wave}` : `💀 GAUNTLET OVER ON WAVE ${g.wave} · BEST ${g.best}`;
+    }
+
+    let tournamentChampion = false;
+    if (pendingTournamentFight) {
+      pendingTournamentFight = null;
+      if (tournamentBracket) {
+        const state = tournamentBracket.recordPlayerResult(you);
+        tournamentChampion = state?.status === 'champion';
+        persistTournamentBracket();
+        pushTournamentState(state);
+      }
+    }
     if (currentMode === 'build_arena') {
-      $('result-title').textContent = `${winner.name.toUpperCase()} WINS!`;
+      $('result-title').textContent = tournamentChampion ? '🏆 CHAMPION! 🏆' : `${winner.name.toUpperCase()} WINS!`;
+      // Render combat telemetry recap
+      const recap = currentBuildTelemetry?.recap?.();
+      if (recap) currentBuildHud?.renderMatchRecap?.(recap);
     } else {
       $('result-title').textContent = you ? 'YOU WIN!' : `${winner.name.toUpperCase()} WINS!`;
     }
     $('results-podium').innerHTML = podium(standings.slice(0, 3), d => `${plural(match.roundWins.get(d), 'round')} · ${plural(d.totalKos || 0, 'KO')}`,
       d => `${statsFor(d.type).label} · style peak ${Math.round(d.stylePeak)} · ${d.trickshots || 0} trickshots`);
-    $('result-banners').innerHTML = bannersHtml(winBanners({ winner, match, isMatch: true }));
+    $('result-banners').innerHTML = (tournamentChampion
+      ? '<div class="banner">COLOSSEUM CHAMPION<small>You cleared every round of the Build-A-Dweeb ladder!</small></div>'
+      : '') + bannersHtml(winBanners({ winner, match, isMatch: true }));
     $('result-reel').innerHTML = highlightReel();
     const a = arenaById(arena.arenaId);
     $('result-arena').textContent = `${a.icon} ${a.name}`;
+    if (gauntletNote) $('result-banners').insertAdjacentHTML('afterbegin', bannersHtml([{ title: gauntletNote, sub: you ? 'Your build lives on. The next champion is tougher.' : 'Back to the workshop to tune your build.' }]));
+    const rematchBtn = $('btn-build-rematch');
+    if (rematchBtn) {
+      rematchBtn.dataset.label ??= rematchBtn.textContent;
+      rematchBtn.textContent = gauntletNote ? (you ? '🌊 NEXT WAVE' : '🔄 NEW GAUNTLET') : rematchBtn.dataset.label;
+    }
+    try {
+      const me = standings.find(d => d.isPlayer);
+      if (me && currentMode !== 'build_arena') {
+        const { career, notes } = recordMatch({ mode: currentMode || 'brawl', won: you, kos: me.totalKos || 0,
+          falls: me.totalFalls || me.falls || 0, stylePeak: me.stylePeak || 0, dweeb: me.type, arena: a.name });
+        const el = $('result-career');
+        if (el) el.innerHTML = careerSummaryHtml(career, notes);
+      }
+    } catch (e) { console.warn('career record failed', e); }
+
+    // Podium awards + match report
+    try {
+      const awardsEl = $('result-awards');
+      const reportEl = $('result-report');
+      if (awardsEl) awardsEl.innerHTML = buildAwardCards(match, dweebs);
+      if (reportEl) reportEl.innerHTML = buildMatchReport(dweebs);
+    } catch { /* never throw */ }
 
     if (currentMode === 'build_arena') {
       $('rematch-vote')?.classList.add('hidden');
@@ -1215,11 +1993,76 @@ const matchEvents = {
     }
 
     $('results-screen').classList.remove('hidden');
-    hud.confetti();
+    hud.confetti(tournamentChampion ? 120 : undefined);
     audio.playBanner(you);
     if (you) audio.playVictory(); else audio.playDefeat();
+
+    // Daily contract progress
+    try {
+      const payload = {
+        mode: currentMode,
+        win: you,
+        kos: player.totalKos ?? player.kos ?? 0,
+        trickshots: player.trickshots ?? 0,
+        stylePeak: player.stylePeak ?? 0,
+      };
+      const result = recordDailyMatch(payload);
+      if (result.justCompleted) {
+        hud.announce('DAILY CONTRACT COMPLETE!', result.contract.title, 2);
+      }
+    } catch (e) {
+      console.warn('Daily contract recordMatch failed:', e);
+    }
   },
 };
+
+const escName = d => String(nameOf(d) ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hexOf = d => '#' + ((d.color ?? 0xffffff) >>> 0).toString(16).padStart(6, '0').slice(-6);
+
+function buildAwardCards(match, dweebs) {
+  const mvp = dweebs.reduce((a, d) => (d.totalKos || 0) > (a?.totalKos || 0) ? d : a, null);
+  const h = match.highlights;
+  let yeet = null;
+  if (h?.launch && h.launchOn) {
+    yeet = { dweeb: h.launchBy || h.launchOn, value: Math.round(h.launch), label: `${Math.round(h.launch)} launch power` };
+  } else {
+    const air = dweebs.reduce((a, d) => (d.maxAir || 0) > (a?.maxAir || 0) ? d : a, null);
+    if (air && air.maxAir > 0) yeet = { dweeb: air, value: air.maxAir, label: `${air.maxAir.toFixed(1)}s` };
+  }
+  const showman = dweebs.reduce((a, d) => (d.stylePeak || 0) > (a?.stylePeak || 0) ? d : a, null);
+
+  const cards = [];
+  if (mvp) {
+    const color = hexOf(mvp);
+    const nameTag = `<span style="color:${color}">${escName(mvp)}</span>`;
+    cards.push(`<div class="award-card"><div class="award-emoji">🏆</div><div class="award-title">MVP</div><div class="award-name">${nameTag}</div><div class="award-value">${mvp.totalKos} KO${mvp.totalKos === 1 ? '' : 's'}</div></div>`);
+  }
+  if (yeet?.dweeb) {
+    const color = hexOf(yeet.dweeb);
+    const nameTag = `<span style="color:${color}">${escName(yeet.dweeb)}</span>`;
+    cards.push(`<div class="award-card"><div class="award-emoji">🚀</div><div class="award-title">BIGGEST YEET</div><div class="award-name">${nameTag}</div><div class="award-value">${yeet.label}</div></div>`);
+  }
+  if (showman) {
+    const color = hexOf(showman);
+    const nameTag = `<span style="color:${color}">${escName(showman)}</span>`;
+    cards.push(`<div class="award-card"><div class="award-emoji">✨</div><div class="award-title">SHOWMAN</div><div class="award-name">${nameTag}</div><div class="award-value">${Math.round(showman.stylePeak)} style</div></div>`);
+  }
+  return `<div class="award-grid">${cards.join('')}</div>`;
+}
+
+function buildMatchReport(dweebs) {
+  const rows = dweebs.map(d => {
+    const color = hexOf(d);
+    const nameTag = `<span style="color:${color}">${escName(d)}</span>`;
+    const kos = d.totalKos || 0;
+    const falls = d.totalFalls || 0;
+    const dmg = Math.round(d.damageDealt || 0);
+    const tricks = d.trickshots || 0;
+    const air = d.maxAir ? d.maxAir.toFixed(1) : '0.0';
+    return `<tr><td>${nameTag}</td><td>${kos}</td><td>${falls}</td><td>${dmg}</td><td>${tricks}</td><td>${air}s</td></tr>`;
+  }).join('');
+  return `<table class="report-table"><thead><tr><th>Dweeb</th><th>KOs</th><th>Falls</th><th>Dmg</th><th>Tricks</th><th>Air</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
 
 function bannersHtml(list) {
   return list.map(b => `<div class="banner">${b.title}<small>${b.sub}</small></div>`).join('');
@@ -1299,6 +2142,48 @@ function highlightReel() {
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
+// ─── Darwin Leaderboard (derby mode) ───
+let darwinBoardEl = null;
+
+function ensureDarwinBoard() {
+  if (darwinBoardEl) return darwinBoardEl;
+  darwinBoardEl = document.createElement('div');
+  darwinBoardEl.id = 'darwin-board';
+  darwinBoardEl.style.cssText = `
+    position: fixed; top: 16px; right: 16px; z-index: 20;
+    background: rgba(255, 248, 238, 0.98); border: 3px solid #1b1030;
+    border-radius: 8px; padding: 8px 12px; min-width: 160px;
+    font-family: "Nunito", sans-serif; font-weight: 700; font-size: 13px;
+    color: #1b1030; box-shadow: 0 4px 12px rgba(27, 16, 48, 0.25);
+    pointer-events: none;
+  `;
+  document.body.appendChild(darwinBoardEl);
+  return darwinBoardEl;
+}
+
+function updateDarwinBoard() {
+  if (currentMode !== 'derby') { hideDarwinBoard(); return; }
+  const el = ensureDarwinBoard();
+  // Sort dweebs by darwin points descending
+  const ranked = [...dweebs].sort((a, b) => (b.darwin || 0) - (a.darwin || 0));
+  el.innerHTML = '<div style="font-size:11px;letter-spacing:1px;margin-bottom:4px;color:#8a6a9a">DARWIN</div>' +
+    ranked.map((d, i) => `
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-top:${i>0?'1px dashed #d8c8b8':''}">
+        <span style="color:${hex(d.color)}">${i+1}. ${d.isPlayer ? 'YOU' : d.name}</span>
+        <span style="color:#1b1030;background:#ffd23f;border-radius:6px;padding:0 6px">${d.darwin || 0}</span>
+      </div>
+    `).join('');
+  el.style.display = 'block';
+}
+
+function hideDarwinBoard() {
+  if (darwinBoardEl) darwinBoardEl.style.display = 'none';
+}
+
+function removeDarwinBoard() {
+  if (darwinBoardEl) { darwinBoardEl.remove(); darwinBoardEl = null; }
+}
+
 function podium(list, stat, extra = null) {
   const heights = [150, 110, 80];
   const order = list.length >= 3 ? [1, 0, 2] : list.map((_, i) => i);
@@ -1327,13 +2212,35 @@ function wireDweeb(d) {
     hud.popup('SHIELD!', dw.getPosition(), 'small', 0xffd23f);
   };
   d.onBubblePop = dw => fx.bubblePop(dw);
-  d.onTech = dw => fx.tech(dw);
-  d.onHit = (dw, launch) => match.noteLaunch(dw, launch);
-  d.onFlailJump = dw => fx.flailJump(dw);
+  d.onTech = dw => {
+    fx.tech(dw);
+    currentBuildTelemetry?.recordEvasion?.({ dweebId: dw.index, name: dw.name, time: match.time });
+  };
+  d.onHit = (dw, launch) => {
+    match.noteLaunch(dw, launch);
+    // Record damage dealt by the attacker (lastHitBy)
+    if (dw.lastHitBy && currentBuildTelemetry) {
+      const dmg = Math.max(1, Math.round(launch * 10)); // approximate damage from launch
+      currentBuildTelemetry.recordDamage({
+        attackerId: dw.lastHitBy.index,
+        attackerName: dw.lastHitBy.name,
+        targetId: dw.index,
+        targetName: dw.name,
+        damage: dmg,
+        time: match.time,
+        kind: 'hit',
+      });
+    }
+  };
+  d.onFlailJump = dw => {
+    fx.flailJump(dw);
+    currentBuildTelemetry?.recordRecoveryJump?.({ dweebId: dw.index, name: dw.name, time: match.time });
+  };
   d.onParryStart = dw => fx.parryStart(dw);
   d.onParry = (dw, attacker) => {
     fx.parry(dw, attacker);
     combat.addStyle(dw, BALANCE.parry.style, 'PARRY');
+    currentBuildTelemetry?.recordEvasion?.({ dweebId: dw.index, name: dw.name, time: match.time });
   };
 }
 
@@ -1361,7 +2268,12 @@ function loop() {
   const rawDt = Math.min(clock.getDelta(), 0.1);
   const inGame = match.phase !== Phase.MENU && match.phase !== Phase.RESULTS;
 
+  // Adaptive quality governor (only runs when quality === 'auto')
+  if (qualityGovernor) qualityGovernor.update(rawDt);
+
   if (paused) {
+    (outlineEnabled ? effect : renderer).render(scene, camera);
+    controller?.pollPadWhilePaused?.(); // Start on a gamepad unpauses
     effect.render(scene, camera);
     return;
   }
@@ -1371,7 +2283,7 @@ function loop() {
     currentWarfare.update(rawDt);
     sky.update(rawDt);
     water.update(rawDt);
-    effect.render(scene, camera);
+    (outlineEnabled ? effect : renderer).render(scene, camera);
     return;
   }
 
@@ -1380,13 +2292,21 @@ function loop() {
     currentBuildLab.update(rawDt);
     sky.update(rawDt);
     water.update(rawDt);
-    effect.render(scene, camera);
+    (outlineEnabled ? effect : renderer).render(scene, camera);
     return;
   }
 
   // Hit-stop: slow simulation time to a crawl for a split second
   fx.update(rawDt);
-  const dt = fx.hitStop > 0 ? rawDt * 0.08 : rawDt;
+  let dt = (fx.hitStop > 0 ? rawDt * 0.08 : rawDt) * (trainingLab && inGame ? trainingLab.timeScale : 1);
+  if (trainingLab) { trainingLab.el.style.display = inGame ? '' : 'none'; if (inGame) trainingLab.update(rawDt); }
+
+  // Photo Finish: dramatic slow-mo when one dweeb remains
+  if (photoFinish > 0) {
+    photoFinish -= rawDt;
+    dt *= 0.22;
+  }
+  comboDirector?.update?.(rawDt);
 
   if (inGame && dweebs.length) {
     if (currentMode !== 'build_arena') {
@@ -1396,8 +2316,11 @@ function loop() {
       colony.update(dt, currentMeadowlands);
     }
     if (match.running) {
-      for (const b of bots) b.update(dt, dweebs);
+      try { modeDirector.update(dt, Object.assign(_modeCtx, { arena, hud, audio, dweebs, match, particles })); } catch (e) { console.warn('[ModeDirector] update error:', e); }
+      if (!trainingLab || trainingLab.botActive()) for (const b of bots) b.update(dt, dweebs);
+      if (emotes) { emotes.setActors(dweebs, bots, player); emotes.enabled = !!controller?.enabled && !currentMeadowlands /* adventure uses 1–6 for camera/tools */; emotes.update(dt); }
       for (const b of builderBots) b.update(dt, dweebs);
+      try { mutatorDirector.update(dt, mutatorCtx()); } catch (e) { console.error('[Mutator] update error:', e); }
     }
     else if (!currentMeadowlands) for (const d of dweebs) d.moveInput.set(0, 0);
     for (const d of dweebs) d.preStep(dt);
@@ -1412,8 +2335,13 @@ function loop() {
     }
     handleImpacts();
     combat.update(dt, match.time);
+    combat.status?.update(dt);
     updateDrops(dt);
     match.update(dt);
+    teamRings?.update(dt, dweebs);
+    if (currentDweebball) currentDweebball.update(dt, dweebs, match);
+    tutorial?.update(dt);
+    if (hillZone) hillZone.update(dt, dweebs, match.hillHolder, nameOf);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {
       for (const d of dweebs) deathCinema.recordFrame(d, match.time);
     }
@@ -1421,6 +2349,8 @@ function loop() {
       deathCinema.update(dt, cam);
     } else {
       hud.update(rawDt, match, camera, player);
+      // Update build_arena telemetry HUD (live DPS/impact gauges)
+      if (currentMode === 'build_arena') currentBuildHud?.updateTelemetry?.();
       const charging = player.active && controller.live ? player.charging : 0;
       audio.setCharge(player.charging > 0 ? charging : 0);
       haptics?.charge(charging);
@@ -1429,6 +2359,11 @@ function loop() {
       updateFocus(rawDt);
       updateNearMiss();
       followCamera();
+      // Speed-based FOV
+      if (player && player.velocity) {
+        const speed = Math.hypot(player.velocity.x, player.velocity.z);
+        cam.setSpeedFov(speed);
+      }
     }
   } else {
     // Menu: slow orbit around the stage
@@ -1444,12 +2379,41 @@ function loop() {
     cam.setTarget(0, -1, 0);
   }
   arena.update(dt);
+  if (currentEscapeSandbox && inGame) {
+    currentEscapeSandbox.update(dt, dweebs, camera);
+    if (escapeResetTimer > 0 && (escapeResetTimer -= rawDt) <= 0) startRound();
+  }
   if (currentMeadowlands) {
     if (buildingManager && player) {
       buildingManager.update(rawDt, player, currentMeadowlands.terrainMesh, { dweebs, colony, world: currentMeadowlands });
       buildingManager.updatePlaced(rawDt, dweebs);
     }
     currentMeadowlands.update(dt, dweebs, colony);
+    petPen?.update(dt, player);
+    updateWardrobe(dt);
+    if (questBoard && player) questBoard.update(dt, player);
+
+    // Adaptive adventure ambience (throttled to 4 Hz)
+    sceneMoodTimer += dt;
+    if (sceneMoodTimer >= 0.25) {
+      sceneMoodTimer = 0;
+      const night = currentMeadowlands?.isNight ?? false;
+      const rain = currentMeadowlands?.weather === 'rain';
+      // Danger: 1 if any hostile critter within 10m of player
+      let danger = 0;
+      if (player?.active) {
+        const p = player.getPosition?.();
+        if (p && currentMeadowlands?.critters) {
+          for (const c of currentMeadowlands.critters) {
+            if (c.hostile && Math.hypot(c.x - p.x, c.z - p.z) < 10) { danger = 1; break; }
+          }
+        }
+      }
+      audio.setSceneMood?.({ night, rain, danger });
+      // Thunder on rain start
+      if (rain && lastWeather !== 'rain') audio.playThunder?.();
+      lastWeather = currentMeadowlands?.weather ?? 'clear';
+    }
 
     // Gently rescue any dweeb that falls below the map
     for (const d of dweebs) {
@@ -1478,6 +2442,7 @@ function loop() {
       const genEl = $('civ-gen');
       if (genEl) genEl.textContent = colony.generation;
     }
+    refreshAdvanceGenerationHud();
 
     // Dynasty Objective Banner
     const objBanner = $('dynasty-objective-banner');
@@ -1496,6 +2461,7 @@ function loop() {
       } else {
         objBanner.textContent = `Goal: Expand New Dweebtopia! Build Watchtowers & Barricades to defend against Critters (Gen ${colony.generation})`;
       }
+      if (questBoard) objBanner.textContent = `${questBoard.bannerText()}  ·  ${objBanner.textContent}`;
     }
 
     // Citizen Observation Card in Observer mode
@@ -1608,10 +2574,54 @@ function loop() {
   water.update(rawDt);
   cam.update(rawDt);
   audio.updateLoops(rawDt, physics.rollSpeed, arena.cheer);
-  effect.render(scene, camera);
+  (outlineEnabled ? effect : renderer).render(scene, camera);
 }
 
 /** Turn physics impacts into sound, dust and breakage. */
+function nearWardrobe() {
+  if (!currentMeadowlands || !wardrobeRack || !player) return false;
+  const p = player.getPosition();
+  return Math.hypot(p.x - WARDROBE_POS.x, p.z - WARDROBE_POS.z) < 2.8;
+}
+
+function updateWardrobe(dt) {
+  if (!wardrobe || !colony) return;
+  wardrobeSyncT -= dt;
+  if (wardrobeSyncT <= 0) {
+    wardrobeSyncT = 1;
+    const fresh = syncOwned(wardrobe, colony);
+    if (fresh.length) {
+      hud.announce('NEW COSMETIC!', fresh.join(' · ') + ' — try it on at the wardrobe', 2);
+      if (wardrobeRack) refreshRack(wardrobeRack, wardrobe);
+    }
+  }
+  let el = $('wardrobe-prompt');
+  const near = nearWardrobe();
+  if (near && !el) {
+    el = document.createElement('div');
+    el.id = 'wardrobe-prompt';
+    el.style.cssText = 'position:fixed;left:50%;bottom:190px;transform:translateX(-50%);background:rgba(27,16,48,.85);color:#fff;font:900 16px Nunito,sans-serif;padding:10px 18px;border-radius:12px;border-left:6px solid #ffd23f;z-index:90;pointer-events:none';
+    document.body.appendChild(el);
+  }
+  if (el) {
+    el.style.display = near ? 'block' : 'none';
+    if (near) el.textContent = (wardrobe.hats.length || wardrobe.tools.length)
+      ? `👒 WARDROBE · [H] hat: ${wardrobe.hat || 'none'} · [T] tool: ${wardrobe.tool || 'none'}`
+      : '👒 WARDROBE · Open ancient vaults to find hats and tools!';
+  }
+}
+
+function onWardrobeKey(e) {
+  if (e.repeat || !nearWardrobe() || !wardrobe) return;
+  const slot = e.code === 'KeyH' ? 'hat' : e.code === 'KeyT' ? 'tool' : null;
+  if (!slot) return;
+  const name = cycleWardrobe(wardrobe, slot);
+  if (name === undefined) return;
+  applyWardrobe(player, wardrobe);
+  hud.popup(name ? name.toUpperCase() + '!' : 'BARE ' + (slot === 'hat' ? 'HEAD' : 'HANDS'), player.getPosition(), 'small', 0xffd23f);
+  audio.playUIClick?.();
+}
+
 function handleImpacts() {
   impactBudget = 6;
   const list = physics.getImpacts().sort((a, b) => b.speed - a.speed);
@@ -1637,15 +2647,29 @@ function handleImpacts() {
       // Breakables take damage from hard impacts (energy ∝ speed² × mass)
       if (obj && !obj.broken && obj.def.breakable && imp.speed > 4 && (obj.thrownBy || imp.speed > 7)) {
         if (obj.def.explosive && imp.speed > 9) combat.explode(obj.getPosition(), obj.thrownBy, obj);
-        else if (obj.applyDamage(imp.speed * imp.speed * side.mass * 12)) combat.breakObject(obj);
+        else combat.damageObject(obj, imp.speed * imp.speed * side.mass * 12, obj.thrownBy, { speed: imp.speed });
       }
+    }
+    // Record kinetic impact force for build_arena telemetry (dweeb-vs-dweeb impacts)
+    if (currentBuildTelemetry && imp.a.kind === 'dweeb' && imp.b.kind === 'dweeb') {
+      const force = imp.speed * (imp.a.mass + imp.b.mass) * 0.5;
+      currentBuildTelemetry.recordImpact({ dweebId: imp.a.ref.index, name: imp.a.ref.name, force, time: match.time });
+      currentBuildTelemetry.recordImpact({ dweebId: imp.b.ref.index, name: imp.b.ref.name, force, time: match.time });
+    }
+
+    // Tumbling dweebs thud, puff and bounce when they smack the ground or a prop
+    for (const side of [imp.a, imp.b]) {
+      const d = side.kind === 'dweeb' ? side.ref : null;
+      if (!d?.ragdolling || imp.speed < 4.5 || (d._ragContactCd ?? 0) > match.time) continue;
+      d._ragContactCd = match.time + 0.18;
+      fx.ragdollContact?.(d, imp.speed, imp.pos);
     }
     if (impactBudget-- > 0) fx.impact(imp);
   }
 }
 
 function updateDrops(dt) {
-  if (!match.running) return;
+  if (!match.running || currentEscapeSandbox) return;
   const finale = match.suddenDeath && match.timer <= 10;
   if (match.suddenDeath) updateSuddenDeath(dt);
   arena.itemTimer -= dt;
@@ -1767,8 +2791,9 @@ function updateFocus(dt) {
   // Only empty hands or a melee weapon can focus a grab/punch target.
   const focus = held ? null : combat.focusTarget(player);
   if (focus) {
-    const name = focus.kind === 'object' ? (focus.ref.def?.name ?? 'ITEM') : focus.ref.name;
-    const prompt = focus.kind === 'object' ? `E · PICK UP · ${name}` : `E · GRAB · LMB · PUNCH · ${name}`;
+    const name = focus.kind === 'dweeb' ? focus.ref.name : (focus.ref.def?.name ?? 'ITEM');
+    const prompt = focus.kind === 'catch' ? `E · CATCH · ${name}` :
+      focus.kind === 'object' ? `E · PICK UP · ${name}` : `E · GRAB · LMB · PUNCH · ${name}`;
     hud.setFocus(prompt.toUpperCase(), focus.kind);
     aimGuide.setFocus(focus.ref, focus.kind, dt);
   } else {
@@ -1871,6 +2896,64 @@ function followCamera() {
   }
 }
 
+let lastAdvanceHudSig = '';
+const ERA_NAMES = ['Dawn', 'Hearth', 'Bloom', 'Tide', 'Ember', 'Starlight'];
+
+function refreshAdvanceGenerationHud() {
+  const btn = $('btn-advance-generation');
+  const statusEl = $('advance-generation-status');
+  if (!colony) return null;
+  const readiness = typeof colony.generationReadiness === 'function'
+    ? colony.generationReadiness(currentMeadowlands)
+    : { eligible: false, missing: ['Dynasty milestones unavailable'] };
+
+  const sig = `${readiness.eligible}|${readiness.missing.join('|')}`;
+  if (sig === lastAdvanceHudSig) return readiness;
+  lastAdvanceHudSig = sig;
+  if (btn) {
+    btn.disabled = !readiness.eligible;
+    btn.classList.toggle('ready', !!readiness.eligible);
+    btn.title = readiness.eligible
+      ? 'Ready! Click or press G to usher in the next generation.'
+      : `Missing: ${readiness.missing.join(' · ')}`;
+  }
+  if (statusEl) {
+    statusEl.textContent = readiness.eligible
+      ? '✨ Dynasty milestone complete — advance the generation! (G)'
+      : `📜 Next Era: ${readiness.missing.join(' · ')}`;
+    statusEl.classList.toggle('ready', !!readiness.eligible);
+  }
+  return readiness;
+}
+
+function advanceColonyGeneration() {
+  if (!colony) return false;
+  const readiness = typeof colony.generationReadiness === 'function'
+    ? colony.generationReadiness(currentMeadowlands)
+    : null;
+  if (!readiness || !readiness.eligible) {
+    hud?.feed?.(`<b>DYNASTY</b> · Not yet — ${readiness?.missing?.join(' · ') || 'milestones incomplete'}.`, 'style');
+    return false;
+  }
+
+  audio?.playUIClick?.();
+  const result = colony.passGeneration(currentMeadowlands);
+  const genEl = $('civ-gen');
+  if (genEl) genEl.textContent = colony.generation;
+
+  const era = ERA_NAMES[(colony.generation - 1) % ERA_NAMES.length];
+  const verbs = result?.inheritedVerbs?.length ?? colony.unlockedVerbs.size;
+  const perkDesc = result?.perk?.desc || 'Ancestral knowledge endures.';
+  hud?.announce?.(`📜 GENERATION ${colony.generation}<small>THE ${era.toUpperCase()} ERA</small>`, 'go', 3.0);
+  hud?.feed?.(`<b>DYNASTY</b> · Heirs inherit ${verbs} verb${verbs === 1 ? '' : 's'}. ${perkDesc}`, 'style');
+
+  if (currentMeadowlands && buildingManager) {
+    saveVillage({ colony, buildingManager, world: currentMeadowlands });
+  }
+  refreshAdvanceGenerationHud();
+  return true;
+}
+
 let civControlsWired = false;
 function wireCivCameraControls() {
   if (civControlsWired) return;
@@ -1937,6 +3020,9 @@ function wireCivCameraControls() {
     }
   });
 
+  const btnAdvance = $('btn-advance-generation');
+  btnAdvance?.addEventListener('click', () => advanceColonyGeneration());
+
   const btnExitMall = $('btn-civ-exit-mall');
   btnExitMall?.addEventListener('click', () => {
     audio.playUIClick();
@@ -1944,7 +3030,8 @@ function wireCivCameraControls() {
       saveVillage({ colony, buildingManager, world: currentMeadowlands });
     }
     if (currentMeadowlands) {
-      currentMeadowlands.dispose();
+      (petPen?.dispose(), petPen = null, currentMeadowlands.dispose());
+      (questBoard?.dispose(), questBoard = null, currentMeadowlands.dispose());
       currentMeadowlands = null;
     }
     if (buildingManager) {
@@ -1989,6 +3076,8 @@ function wireCivCameraControls() {
         audio.playUIClick();
         colony.launchExpedition(currentMeadowlands);
       }
+    } else if (e.key === 'g' || e.key === 'G') {
+      advanceColonyGeneration();
     } else if (e.key === 'b' || e.key === 'B') {
       toggleBuild();
     } else if (e.key === 'r' || e.key === 'R') {
@@ -2008,9 +3097,25 @@ function wireCivCameraControls() {
       }
     } else if (e.key === 'e' || e.key === 'E') {
       if (buildingManager && buildingManager.activeBlueprint) {
-        const res = buildingManager.confirmPlacement(colony, currentMeadowlands);
+        // Shift+E = queue for Builders; E = instant placement
+        const queue = e.shiftKey;
+        const res = buildingManager.confirmPlacement(colony, currentMeadowlands, { queue });
         if (res && !res.success) {
-          hud?.toast?.(res.reason || 'Cannot place here');
+          hud?.feed?.(`<b>${res.reason || 'Cannot place here'}</b>`, 'ko');
+        } else if (res && res.success) {
+          if (res.queued) {
+            hud?.feed?.(`<b>📋 Queued for Builders</b> · paid when they raise it`, 'style');
+          } else {
+            hud?.feed?.(`<b>🔨 Built instantly!</b>`, 'style');
+          }
+        }
+      } else if (e.shiftKey && colony && colony.buildQueue && colony.buildQueue.length > 0) {
+        // Shift+E with no active blueprint = cancel last queued build
+        const res = buildingManager.cancelLastQueuedBuild(colony);
+        if (res.success) {
+          hud?.feed?.(`<b>❌ Unqueued the ${res.name}</b>`, 'ko');
+        } else {
+          hud?.feed?.(`<b>${res.reason}</b>`, 'ko');
         }
       } else if (currentGatherTarget && colony && currentMeadowlands) {
         const silos = buildingManager
