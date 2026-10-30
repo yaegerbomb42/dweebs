@@ -77,6 +77,7 @@ export class InteractiveObject {
     this.eyes = [];
     this.flickers = [];
     this.screen = null;
+    this.jaw = null;
     model.traverse(o => {
       const pu = o.userData.pupil;
       if (pu) {
@@ -88,6 +89,7 @@ export class InteractiveObject {
         });
       }
       if (o.userData.flicker) this.flickers.push(o);
+      if (o.userData.jaw) this.jaw = o;
       if (o.userData.flame) this.flame = o;
       if (o.userData.screen) {
         o.material = o.material.clone(); // per-instance face

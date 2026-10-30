@@ -936,6 +936,41 @@ const BUILDERS = {
     k.eye([0.07, 0.08, 0.22], [0.3, 0.2, 1], 0.04);
   },
 
+  chatteringTeeth(k) {
+    const W = 0xfff8ee, gum = 0xd94a5a, tongue = 0xff7a9a, key = 0xc9d3e6;
+    // Upper jaw, teeth and little skittering feet
+    k.add(B(0.4, 0.1, 0.3, 0.045), gum, { p: [0, 0.05, 0] });
+    for (let i = -2; i <= 2; i++) {
+      k.add(B(0.062, 0.075, 0.065, 0.012), W, { p: [i * 0.074, 0, 0.145] });
+    }
+    for (const x of [-0.185, 0.185]) for (let i = -1; i <= 1; i++) {
+      k.add(B(0.06, 0.065, 0.07, 0.012), W, { p: [x, 0, i * 0.085] });
+    }
+    for (const x of [-0.13, 0.13]) k.add(B(0.09, 0.045, 0.13, 0.018), W, { p: [x, -0.115, 0.01] });
+    // Googly eyes make it read as a tiny angry pet
+    k.eye([-0.11, 0.13, 0.1], [-0.25, 0.5, 1], 0.045);
+    k.eye([0.11, 0.13, 0.1], [0.25, 0.5, 1], 0.045);
+    // Wind-up key
+    k.add(Cyl(0.012, 0.012, 0.07, 6), key, { p: [0, 0.14, -0.11] });
+    for (const x of [-0.038, 0.038]) {
+      k.add(Tor(0.038, 0.011, 3, 10), key, { p: [x, 0.185, -0.11], r: [PI / 2, 0, 0], s: [1, 1, 0.55] });
+    }
+    // Lower jaw is its own pivot so the runtime can snap it open and shut
+    const jaw = new Kit();
+    jaw.add(B(0.36, 0.08, 0.26, 0.04), gum, { p: [0, 0, 0.13] });
+    for (let i = -2; i <= 2; i++) {
+      jaw.add(B(0.058, 0.07, 0.06, 0.012), W, { p: [i * 0.07, 0.055, 0.265] });
+    }
+    for (const x of [-0.165, 0.165]) for (let i = -1; i <= 1; i++) {
+      jaw.add(B(0.055, 0.06, 0.065, 0.012), W, { p: [x, 0.055, 0.13 + i * 0.075] });
+    }
+    jaw.add(Ico(0.08, 1), tongue, { p: [0, 0.025, 0.2], s: [1.3, 0.32, 1.5] });
+    const jawModel = jaw.build();
+    jawModel.name = 'jaw';
+    jawModel.userData.jaw = true;
+    jawModel.position.set(0, -0.06, -0.13);
+    k.root.add(jawModel);
+  },
   // ─── Piñata Loot Burst ───
   candy(k) {
     const wrapper = 0xfff8ee, twist = 0xff4d5e;
