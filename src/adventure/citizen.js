@@ -53,6 +53,7 @@ export const CITIZEN_STATES = {
   IDLE: 'IDLE',
   WANDER: 'WANDER',
   FORAGE: 'FORAGE',
+  HAUL: 'HAUL',
   REST: 'REST',
   SOCIALIZE: 'SOCIALIZE',
   TINKER: 'TINKER',
@@ -126,6 +127,13 @@ export class Citizen {
     // Toy-hammer repair duty (landmarks from the ToyTown district).
     this._repairSwing = 0;
     this.repairHammer = null;
+
+    // Physical hauling: a woven basket on the back and the resource units it holds.
+    this.carrying = null; // { res: 'berries'|'wood'|'stone', amount: number }
+    this.basket = null;
+    this.basketBerries = null;
+    this._basketSway = 0;
+    this._basketSwayV = 0;
   }
 
   /** A tiny toy hammer appears while a worker is patching a broken fort. */
@@ -148,6 +156,178 @@ export class Citizen {
     this.dweeb.mesh?.add(g);
     this.repairHammer = g;
     return g;
+  }
+
+  /** A woven berry basket appears only while the citizen is hauling goods. */
+  _ensureBasket() {
+    if (this.basket) return this.basket;
+    if (!this.dweeb || !this.dweeb.mesh) return null;
+    const g = new THREE.Group();
+    const wicker = toonMat({ color: 0xa86b33, flatShading: true });
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.27, 0.19, 0.24, 8, 1, true),
+      wicker,
+    );
+    body.position.y = 0.12;
+    const bottom = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.19, 0.19, 0.04, 8),
+      toonMat({ color: 0x8a5a2b, flatShading: true }),
+    );
+    bottom.position.y = 0.02;
+    const handle = new THREE.Mesh(
+      new THREE.TorusGeometry(0.2, 0.022, 4, 8, Math.PI),
+      wicker,
+    );
+    handle.position.y = 0.25;
+    handle.rotation.z = Math.PI;
+    g.add(body, bottom, handle);
+
+    const berries = new THREE.Group();
+    for (let i = 0; i < 5; i++) {
+      const berry = new THREE.Mesh(
+        new THREE.SphereGeometry(0.065, 6, 6),
+        toonMat({ color: 0xdc2626, flatShading: true }),
+      );
+      const a = (i / 5) * Math.PI * 2;
+      berry.position.set(Math.cos(a) * 0.11, 0.08 + (i % 2) * 0.06, Math.sin(a) * 0.11);
+      berry.visible = false;
+      berries.add(berry);
+    }
+    g.add(berries);
+
+    g.position.set(0.34, 0.55, 0.22);
+    g.visible = false;
+    this.dweeb.mesh.add(g);
+    this.basket = g;
+    this.basketBerries = berries;
+    return g;
+  }
+
+  /** Attach one unit to the basket without starting the delivery trip yet. */
+  _addToBasket(res, amount = 1) {
+    if (!res || amount <= 0) return false;
+    if (this.carrying && this.carrying.res === res) {
+      this.carrying.amount += amount;
+    } else {
+      // Only one resource type fits in a basket; bank any old load first.
+      this.carrying = { res, amount };
+    }
+    this._ensureBasket();
+    this._updateBasketVisual();
+    return true;
+  }
+
+  _updateBasketVisual() {
+    if (!this.basket) return;
+    const carrying = !!this.carrying && this.carrying.amount > 0;
+    this.basket.visible = carrying;
+    if (!carrying || !this.basketBerries) return;
+    const shown = Math.min(5, Math.ceil(this.carrying.amount));
+    this.basketBerries.children.forEach((berry, i) => {
+      berry.visible = i < shown;
+    });
+  }
+
+  /** Springy sway proportional to walking speed; also a tiny idle wobble. */
+  _updateBasket(dt) {
+    if (!this.basket) return;
+    if (!this.carrying || this.carrying.amount <= 0) {
+      this.basket.visible = false;
+      return;
+    }
+    this.basket.visible = true;
+    let speed = 0;
+    try {
+      const v = this.dweeb?.body?.linvel?.();
+      if (v) speed = Math.min(1.6, Math.hypot(v.x || 0, v.z || 0));
+    } catch {
+      speed = 0;
+    }
+    const target = speed * 0.28 + Math.sin(this.clock * 9) * 0.04 * (0.4 + speed);
+    this._basketSwayV += (target - this._basketSway) * 42 * dt - this._basketSwayV * 8 * dt;
+    this._basketSway += this._basketSwayV * dt;
+    this._basketSway = THREE.MathUtils.clamp(this._basketSway, -0.55, 0.55);
+    this.basket.rotation.z = -this._basketSway;
+    this.basket.rotation.x = Math.sin(this.clock * 11) * 0.05 * (0.3 + speed);
+    this.basket.position.y = 0.55 + Math.abs(this._basketSway) * 0.08;
+  }
+
+  /** Clear the basket and hide its mesh (after a successful drop). */
+  _clearBasket() {
+    this.carrying = null;
+    this._basketSway = 0;
+    this._basketSwayV = 0;
+    this._updateBasketVisual();
+  }
+
+  /** Bank the carried load directly when no physical hauling system exists. */
+  _bankCarried(colony, world) {
+    if (!this.carrying || !colony || typeof colony.addResource !== 'function') {
+      this._clearBasket();
+      return;
+    }
+    const { res, amount } = this.carrying;
+    let silos = [];
+    try {
+      silos = typeof colony._silosFrom === 'function'
+        ? colony._silosFrom(world)
+        : (world?.buildingManager?.placedStructures || []).filter(s => s && s.id === 'silo');
+    } catch {
+      silos = [];
+    }
+    if (amount > 0) colony.addResource(res, amount, silos);
+    this._clearBasket();
+  }
+
+  /** Turn a loaded basket into a walk to the nearest supply pile / silo. */
+  _startHaulTrip(world) {
+    if (!this.carrying || this.carrying.amount <= 0) return false;
+    const target = world && typeof world.haulTargetFor === 'function'
+      ? world.haulTargetFor(this, this.carrying.res)
+      : null;
+    if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.z)) return false;
+    this.state = CITIZEN_STATES.HAUL;
+    this.targetEntity = target.pile || null;
+    this.targetPos.set(target.x, target.y ?? 0.5, target.z);
+    this.stateTimer = 24;
+    this.activityText = `Hauling ${this.carrying.amount} ${this.carrying.res} to the village pile 🧺`;
+    return true;
+  }
+
+  /** Drop carried goods into a physical pile, then bank what the pile accepts. */
+  _depositHaul(world, colony) {
+    if (!this.carrying || this.carrying.amount <= 0) {
+      this.stateTimer = 0;
+      this._clearBasket();
+      return;
+    }
+    const fallback = { ...this.carrying };
+    let dropped = null;
+    try {
+      dropped = world && typeof world.dropHaul === 'function'
+        ? world.dropHaul(this, colony)
+        : null;
+    } catch {
+      dropped = null;
+    }
+    const res = dropped?.res || fallback.res;
+    const amount = dropped?.amount ?? fallback.amount;
+    const pile = dropped?.pile || null;
+    this._clearBasket();
+    if (colony && typeof colony.addResource === 'function' && amount > 0) {
+      let silos = [];
+      try {
+        silos = typeof colony._silosFrom === 'function'
+          ? colony._silosFrom(world)
+          : (world?.buildingManager?.placedStructures || []).filter(s => s && s.id === 'silo');
+      } catch {
+        silos = [];
+      }
+      colony.addResource(res, amount, silos, pile);
+    }
+    this.activityText = `Dropped ${amount} ${res} into the village pile 🧺`;
+    this.say('Fresh supplies! 🧺', '🍓', 2);
+    this.stateTimer = 0.2;
   }
 
   /** Assign (or clear with null) a role. Returns true if the role id is valid. */
@@ -351,6 +531,14 @@ export class Citizen {
   }
 
   _selectNextGoal(world, otherCitizens, colony = null) {
+    // Priority 0: A loaded basket must reach a supply pile before anything else.
+    if (this.carrying && this.carrying.amount > 0) {
+      if (this._startHaulTrip(world)) return;
+      // No physical hauling support (or no safe target): bank the load directly.
+      this._bankCarried(colony, world);
+    }
+
+    // Priority 1: High Hunger -> Find Berry Bush (foragers go earlier)
     const raining = !!(world && world.weather === 'rain');
 
     // A Builder heading off to eat/sleep/rest frees their blueprint claim so
@@ -589,6 +777,7 @@ export class Citizen {
     const distToTarget = Math.hypot(this.targetPos.x - pos.x, this.targetPos.z - pos.z);
 
     if (this.repairHammer) this.repairHammer.visible = this.state === CITIZEN_STATES.REPAIR;
+    this._updateBasket(dt);
 
     // Repair duty: walk to the damaged landmark, then tap-tap-tap it back together.
     if (this.state === CITIZEN_STATES.REPAIR) {
@@ -687,6 +876,26 @@ export class Citizen {
             this._emptyBushStreak = 0;
             if (this.role === 'forager' && colony) {
               this.hunger = Math.max(0, this.hunger - 8);
+              const canHaul = world
+                && typeof world.haulTargetFor === 'function'
+                && typeof world.dropHaul === 'function';
+              if (canHaul) {
+                // Real berries go into the basket; a full basket (or an empty
+                // bush) turns the forage into a physical delivery trip.
+                this._addToBasket('berries', 1);
+                const full = !this.carrying || this.carrying.amount >= 3;
+                if (full || bush.available <= 0) {
+                  if (!this._startHaulTrip(world)) this._bankCarried(colony, world);
+                } else {
+                  this.activityText = `Filling the berry basket (${this.carrying.amount}/3) 🧺`;
+                }
+              } else {
+                const silos = world.buildingManager
+                  ? world.buildingManager.placedStructures.filter(s => s.id === 'silo')
+                  : [];
+                colony.addResource('berries', 1, silos);
+                this.activityText = 'Picking berries for the village stores 🍓';
+              }
               const silos = world.buildingManager
                 ? world.buildingManager.placedStructures.filter(s => s.id === 'silo')
                 : [];
@@ -715,6 +924,8 @@ export class Citizen {
             this.stateTimer = 0;
           }
         }
+      } else if (this.state === CITIZEN_STATES.HAUL) {
+        this._depositHaul(world, colony);
       } else if (this.state === CITIZEN_STATES.SOCIALIZE && this.targetEntity) {
         this.social = Math.max(0, this.social - dt * 20);
         // Friendships grow while chatting — three times as fast at a festival.

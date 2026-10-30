@@ -71,6 +71,11 @@ export class Meadowlands {
     this.ziplines = [];       // registered by watchtower structures
     this.looseProps = [];     // { body } physics props launchpads can fling
     this.stuntFeed = [];      // recent physics stunts citizens react to
+    this.haulProps = [];      // pooled visual berry/log/stone props dropped by haulers
+    this.supplyPiles = [];    // village stockpile triggers near the fire and silos
+    this.maxHaulProps = 20;   // hard cap on live dropped prop meshes
+    this._haulGeos = {};
+    this._haulMats = {};
     this.torchlights = [];    // PointLights around constructed buildings
     this.ruins = [];          // treasure-vault ruin sites (3-plate puzzles)
     this.critters = [];       // invading mischief critters
@@ -101,6 +106,11 @@ export class Meadowlands {
     this.beetleTimer = 20;    // seconds until the first friendly beetle wanders in
 
     this._buildWorld();
+    // Three visible village stockpiles around the campfire. Foragers deliver
+    // berries here (or to a pile beside the nearest silo when one exists).
+    this._createSupplyPile(3.2, 2.2, 'berries');
+    this._createSupplyPile(4.4, 1.0, 'wood');
+    this._createSupplyPile(2.0, 3.4, 'stone');
     this.river = new River(this);
     this._createToyTown();
   }
@@ -938,6 +948,267 @@ export class Meadowlands {
 
     if (this.physicsWorld) {
       this.physicsWorld.createFixedCylinder(x, y + 0.8, z, 1.0, 0.8, 'wood');
+    }
+  }
+
+  // ─── 5b. Physical Hauling: Baskets, Supply Piles & Loose Props ───
+
+  /** A visible village stockpile: a shallow wicker tray plus dropped props. */
+  _createSupplyPile(x, z, res = 'berries') {
+    const y = this._getHeight(x, z);
+    const group = new THREE.Group();
+    group.position.set(x, y, z);
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.85, 1.0, 0.12, 8),
+      toonMat({ color: 0x8a5a2b, flatShading: true }),
+    );
+    base.position.y = 0.06;
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.9, 0.07, 5, 10),
+      toonMat({ color: 0xb8864e, flatShading: true }),
+    );
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.12;
+    group.add(base, rim);
+    this.group.add(group);
+
+    const pile = {
+      x, y, z, res, amount: 0, mesh: group, props: [], radius: 1.8, kickCd: 0,
+    };
+    // colony.addResource() calls this so only banked goods leave the pile.
+    pile.consume = (count) => {
+      const n = Math.max(0, Math.floor(count || 0));
+      pile.amount = Math.max(0, pile.amount - n);
+      let left = n;
+      for (const rec of pile.props) {
+        if (left <= 0) break;
+        if (!rec || rec.consumed || rec.knocked) continue;
+        rec.consumed = true;
+        rec.shrink = 8;
+        rec.shrinkTotal = 8;
+        left -= 1;
+      }
+      return n - left;
+    };
+    this.supplyPiles.push(pile);
+    return pile;
+  }
+
+  _pileNear(x, z, res = 'berries', maxDist = 5) {
+    let best = null;
+    let bestD = maxDist;
+    for (const pile of this.supplyPiles) {
+      if (!pile || pile.res !== res) continue;
+      const d = Math.hypot(pile.x - x, pile.z - z);
+      if (d <= bestD) { best = pile; bestD = d; }
+    }
+    return best;
+  }
+
+  _ensurePileNear(x, z, res = 'berries') {
+    const existing = this._pileNear(x, z, res, 5);
+    if (existing) return existing;
+    const r = Math.hypot(x, z) || 1;
+    return this._createSupplyPile(x + (x / r) * 2.6, z + (z / r) * 2.6, res);
+  }
+
+  /** Where a hauling citizen should walk: a pile beside the nearest silo, else the fire. */
+  haulTargetFor(citizen, res = 'berries') {
+    const targetRes = res || 'berries';
+    let pile = null;
+    let cx = 0, cz = 0;
+    try {
+      const p = citizen?.dweeb?.body?.translation?.();
+      if (p) { cx = p.x; cz = p.z; }
+    } catch {
+      cx = 0; cz = 0;
+    }
+    try {
+      const silos = this.buildingManager
+        ? this.buildingManager.placedStructures.filter(s => s && s.id === 'silo' && s.pos)
+        : [];
+      let bestSilo = null;
+      let bestD = Infinity;
+      for (const silo of silos) {
+        const d = Math.hypot(silo.pos.x - cx, silo.pos.z - cz);
+        if (d < bestD) { bestD = d; bestSilo = silo; }
+      }
+      if (bestSilo) pile = this._ensurePileNear(bestSilo.pos.x, bestSilo.pos.z, targetRes);
+    } catch {
+      pile = null;
+    }
+    if (!pile) {
+      pile = this.supplyPiles.find(p => p && p.res === targetRes)
+        || this._createSupplyPile(3.2, 2.2, targetRes);
+    }
+    if (!pile) return null;
+    return { x: pile.x, y: pile.y, z: pile.z, pile };
+  }
+
+  _haulPropMesh(res) {
+    const key = res === 'wood' ? 'wood' : res === 'stone' ? 'stone' : 'berry';
+    if (!this._haulGeos[key]) {
+      if (key === 'wood') {
+        this._haulGeos[key] = new THREE.BoxGeometry(0.2, 0.18, 0.2);
+      } else if (key === 'stone') {
+        this._haulGeos[key] = new THREE.DodecahedronGeometry(0.14, 0);
+      } else {
+        this._haulGeos[key] = new THREE.SphereGeometry(0.11, 6, 6);
+      }
+    }
+    if (!this._haulMats[key]) {
+      const color = key === 'wood' ? 0x8a5a2b : key === 'stone' ? 0x64748b : 0xdc2626;
+      this._haulMats[key] = toonMat({ color, flatShading: true });
+    }
+    return new THREE.Mesh(this._haulGeos[key], this._haulMats[key]);
+  }
+
+  _addPileProp(pile, res) {
+    if (!pile || !pile.mesh) return null;
+    // Recycle the oldest prop once the pool is full.
+    while (this.haulProps.length >= this.maxHaulProps) {
+      const old = this.haulProps.shift();
+      this._removeHaulProp(old);
+    }
+    const mesh = this._haulPropMesh(res);
+    pile.mesh.add(mesh);
+    const ang = Math.random() * Math.PI * 2;
+    const rr = Math.random() * 0.55;
+    const floorY = 0.18 + Math.min(0.28, pile.props.length * 0.012);
+    mesh.position.set(Math.cos(ang) * rr, 1.25 + Math.random() * 0.5, Math.sin(ang) * rr);
+    mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    const rec = {
+      mesh, pile, res, floorY, vy: 0.8 + Math.random() * 2,
+      falling: true, knocked: false, consumed: false,
+      age: 0, spillT: 0, svx: 0, svy: 0, svz: 0,
+      shrink: 0, shrinkTotal: 8,
+    };
+    pile.props.push(rec);
+    this.haulProps.push(rec);
+    return rec;
+  }
+
+  _removeHaulProp(rec) {
+    if (!rec) return;
+    if (rec.mesh && rec.mesh.parent) rec.mesh.parent.remove(rec.mesh);
+    if (rec.pile && Array.isArray(rec.pile.props)) {
+      const idx = rec.pile.props.indexOf(rec);
+      if (idx !== -1) rec.pile.props.splice(idx, 1);
+    }
+  }
+
+  _knockPileProp(pile) {
+    if (!pile || !Array.isArray(pile.props)) return false;
+    for (let i = pile.props.length - 1; i >= 0; i--) {
+      const rec = pile.props[i];
+      if (!rec || rec.consumed || rec.knocked || !rec.mesh) continue;
+      rec.knocked = true;
+      rec.spillT = 0;
+      rec.svx = (Math.random() - 0.5) * 3.4;
+      rec.svz = (Math.random() - 0.5) * 3.4;
+      rec.svy = 2 + Math.random() * 2.2;
+      return true;
+    }
+    return false;
+  }
+
+  /** A forager arrives: prop drops visibly into a pile, then the colony banks it. */
+  dropHaul(citizen) {
+    if (!citizen || !citizen.carrying) return null;
+    const res = citizen.carrying.res || 'berries';
+    const amount = Math.max(0, Math.floor(citizen.carrying.amount || 0));
+    if (amount <= 0) return { res, amount: 0, pile: null };
+
+    let pile = null;
+    try {
+      const p = citizen.dweeb?.body?.translation?.();
+      if (p) {
+        pile = this._pileNear(p.x, p.z, res, 5) || this._ensurePileNear(p.x, p.z, res);
+      }
+    } catch {
+      pile = null;
+    }
+    if (!pile) {
+      pile = this.supplyPiles.find(p => p && p.res === res)
+        || this._createSupplyPile(3.2, 2.2, res);
+    }
+    if (pile) {
+      const visualCount = Math.min(amount, 6);
+      for (let i = 0; i < visualCount; i++) this._addPileProp(pile, res);
+      pile.amount += amount;
+    }
+    return { res, amount, pile };
+  }
+
+  _updateHaulProps(dt) {
+    for (let i = this.haulProps.length - 1; i >= 0; i--) {
+      const rec = this.haulProps[i];
+      if (!rec || !rec.mesh) { this.haulProps.splice(i, 1); continue; }
+      rec.age += dt;
+
+      if (rec.falling) {
+        rec.vy -= 14 * dt;
+        rec.mesh.position.y += rec.vy * dt;
+        if (rec.mesh.position.y <= rec.floorY) {
+          rec.mesh.position.y = rec.floorY;
+          rec.falling = false;
+          rec.vy = 0;
+        }
+      }
+
+      if (rec.knocked) {
+        rec.spillT += dt;
+        rec.mesh.position.x += rec.svx * dt;
+        rec.mesh.position.z += rec.svz * dt;
+        rec.svy -= 12 * dt;
+        rec.mesh.position.y += rec.svy * dt;
+        if (rec.mesh.position.y < 0.12) {
+          rec.mesh.position.y = 0.12;
+          rec.svy = Math.abs(rec.svy) * 0.32;
+          rec.svx *= 0.7;
+          rec.svz *= 0.7;
+        }
+        rec.mesh.rotation.x += dt * 4;
+        rec.mesh.rotation.z += dt * 3;
+        if (rec.spillT > 6) {
+          this._removeHaulProp(rec);
+          this.haulProps.splice(i, 1);
+        }
+        continue;
+      }
+
+      if (rec.consumed) {
+        rec.shrink -= dt;
+        const s = rec.shrinkTotal > 0 ? Math.max(0, rec.shrink / rec.shrinkTotal) : 0;
+        rec.mesh.scale.setScalar(s);
+        if (rec.shrink <= 0) {
+          this._removeHaulProp(rec);
+          this.haulProps.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  /** Running through a pile knocks a few loose props away (cosmetic spill). */
+  _updateSupplyPiles(dt, dweebs = []) {
+    for (const pile of this.supplyPiles) {
+      if (pile) pile.kickCd = Math.max(0, (pile.kickCd || 0) - dt);
+    }
+    for (const d of dweebs) {
+      if (!d || !d.body) continue;
+      let p;
+      try { p = d.body.translation(); } catch { continue; }
+      if (!p) continue;
+      for (const pile of this.supplyPiles) {
+        if (!pile || !pile.props || pile.props.length === 0) continue;
+        if ((pile.kickCd || 0) > 0) continue;
+        if (Math.hypot(p.x - pile.x, p.z - pile.z) > pile.radius) continue;
+        let v;
+        try { v = d.body.linvel(); } catch { v = null; }
+        if (!v || Math.hypot(v.x || 0, v.z || 0) < 2.5) continue;
+        pile.kickCd = 2.5;
+        this._knockPileProp(pile);
+      }
     }
   }
 
@@ -1806,6 +2077,9 @@ export class Meadowlands {
     this._updateDayNight(dt);
     if (this.timeOfDay < prevTod) this._onNewDay(colony);
     this._updateWeather(dt, colony);
+    this._updateBushRegrowth(dt);
+    this._updateSupplyPiles(dt, dweebs);
+    this._updateHaulProps(dt);
     this._updateBushRegrowth(dt, colony);
     this._updateCritters(dt, dweebs, colony);
     this.river?.update(dt, dweebs, colony);
@@ -1956,6 +2230,8 @@ export class Meadowlands {
     this.river = null;
     this.toyTown?.dispose();
     this.toyTown = null;
+    this.haulProps.length = 0;
+    this.supplyPiles.length = 0;
     this.scene.remove(this.group);
     for (const c of this.colliders) {
       if (this.physicsWorld && c.body) {
