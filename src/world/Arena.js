@@ -18,6 +18,7 @@ import { StageHazards } from './StageHazards.js';
 import { BALANCE } from '../game/Balance.js';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { DEFAULT_ARENA, arenaById } from '../game/Arenas.js';
+import { BrutalistArena, BRUTALIST_OFFSET } from './BrutalistArena.js';
 import * as S from '../render/Stickers.js';
 
 export const CORE_RADIUS = 11;
@@ -190,6 +191,7 @@ export class Arena {
     this.conveyors = [];
     this.crustTimer = 0;
     this.crusts = 0;
+    this.brutalistArena = null; // lazy-built by setArena('brutalist')
   }
 
   build() {
@@ -235,6 +237,25 @@ export class Arena {
     this.gravity = def.gravity ?? 1;
     this.wind = !!def.wind;
     this.physicsWorld.setGravityScale?.(this.gravity);
+
+    // ─── Brutalist Foundry: custom multi-level geometry (see BrutalistArena.js) ───
+    if (def.isBrutalist) {
+      if (!this.brutalistArena) {
+        this.brutalistArena = new BrutalistArena(this.scene, this.physicsWorld, BRUTALIST_OFFSET);
+        this.brutalistArena.build();
+      }
+      this.brutalistArena.setVisible(true);
+      this.setStadiumVisible(false);
+      if (this.lava) this.lava.mesh.visible = false;
+      this._clearTheme();
+      this._resetArenaHazards();
+      return;
+    }
+    // Switching away from brutalist: hide it, restore the stadium.
+    if (this.brutalistArena) {
+      this.brutalistArena.setVisible(false);
+      this.setStadiumVisible(true);
+    }
 
     if (this.coreMat) {
       const tint = { volcano: 0x4a3b46, iceberg: 0xbfeaff, pinball: 0x3a3550 }[def.id] ?? 0x6fdc5a;
@@ -1865,6 +1886,10 @@ export class Arena {
   }
 
   getSpawnPoint(index, total = 4, mode = 'derby') {
+    // Brutalist Foundry has its own multi-level layout — use its spawn points.
+    if (this.arenaId === 'brutalist' && this.brutalistArena) {
+      return this.brutalistArena.getSpawnPoint(index, total);
+    }
     if (mode === 'walldrop') {
       // Split players onto Team West (negative x) and Team East (positive x)
       const team = index % 2 === 0 ? -1 : 1;
