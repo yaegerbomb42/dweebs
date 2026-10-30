@@ -147,8 +147,9 @@ export class DweebWarfare {
     });
     const mapTag = ` · ${this.st.mapName} MAP`;
     if (mode === 'defense') {
+      this.hud.banner('DEFEND THE FORT', `Survive ${FINAL_WAVE} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}`, '', 2.6);
+      this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–5</b> to recruit.', 8);
       this.hud.banner('DEFEND THE FORT', `Survive ${this.st.finalWave} waves · boss every 5 · ${DIFFICULTY[this.difficulty].label}${mapTag}`, '', 2.6);
-      this.hud.toast('Click the board to move your <b>rally flag</b>. Press <b>1–4</b> to recruit.', 8);
     } else if (this.isLocalPvp) {
       this.hud.banner('VERSUS', `Smash the red fort before they smash yours${mapTag}`, '', 2.6);
       this.hud.toast('Two commanders, one board. Player 2 uses <b>7–0</b>, <b>[</b> and <b>]</b>.', 8);
@@ -594,7 +595,7 @@ export class DweebWarfare {
       }
       if (k === 'm') { this.toggleMute(); return; }
       if (this.phase !== 'playing') return;
-      const n = '1234'.indexOf(e.key);
+      const n = '12345'.indexOf(e.key);
       if (n >= 0) { this.recruit(RECRUITABLE[n]); e.preventDefault(); }
       else if (k === 'q') { this.callArtillery(); e.preventDefault(); }
       else if (k === 'e') { this.callSupply(); e.preventDefault(); }
@@ -603,9 +604,9 @@ export class DweebWarfare {
       else if (k === 'f') { this.callRepair(); e.preventDefault(); }
       else if (k === 'y') { this.callTrap(); e.preventDefault(); }
       else if (k === ' ') { this._cmd({ type: 'startWave' }); e.preventDefault(); }
-      // Player 2 local PvP controls (keys 7, 8, 9, 0, and [)
+      // Player 2 local PvP controls (keys 7, 8, 9, 0, -)
       else if (this.isLocalPvp) {
-        const p2n = '7890'.indexOf(e.key);
+        const p2n = '7890-'.indexOf(e.key);
         if (p2n >= 0) { this.recruit(RECRUITABLE[p2n], 'red'); e.preventDefault(); }
         else if (k === '[') { this.callArtillery('red'); e.preventDefault(); }
         else if (k === ']') { this.callSupply('red'); e.preventDefault(); }

@@ -545,6 +545,52 @@ function halt(u) {
 
 function updateUnit(st, u, enemies) {
   const s = stats(u.type);
+  if (u.type === 'medic') {
+    // Medic: heal the most wounded ally in range before normal targeting
+    const speed = s.speed * u.speedMul * (u.dash > 0 ? CHARGE.speedMul : 1);
+    const home = st.forts[u.team];
+    const enemyTeam = otherTeam(u.team);
+    const efort = st.forts[enemyTeam];
+
+    // Retreat and heal
+    if (u.state === 'fight' && shouldRetreat(u)) {
+      u.state = 'retreat';
+      u.targetId = 0;
+      st.events.push({ type: 'retreat', id: u.id, team: u.team, x: u.x, z: u.z });
+    }
+    if (u.state === 'retreat') {
+      const dx = home.x - u.x, dz = home.z - u.z;
+      const near = dx * dx + dz * dz <= (home.r + 4) * (home.r + 4);
+      if (near) {
+        halt(u);
+        u.hp = Math.min(u.maxHp, u.hp + (u.maxHp * 0.08) / WF_HZ);
+        if (u.hp >= u.maxHp * REJOIN_AT) u.state = 'fight';
+      } else {
+        seek(u, home.x + dirOf(u.team) * 2, home.z, speed * 1.1);
+      }
+      return;
+    }
+
+    // Heal pulse: find most wounded ally in range
+    if (u.cd <= 0) {
+      let best = null, bestPct = 1;
+      for (const a of st.units) {
+        if (!a.alive || a.team !== u.team || a === u || a.carriedBy) continue;
+        const dx = a.x - u.x, dz = a.z - u.z;
+        if (dx * dx + dz * dz > s.range * s.range) continue;
+        const pct = a.hp / a.maxHp;
+        if (pct < bestPct) { bestPct = pct; best = a; }
+      }
+      if (best) {
+        halt(u);
+        u.cd = Math.round(s.cooldown * u.cdMul);
+        best.hp = Math.min(best.maxHp, best.hp + s.heal);
+        st.events.push({ type: 'heal', id: best.id, x: best.x, z: best.z, healer: u.id, amount: s.heal });
+        return;
+      }
+    }
+    // No wounded ally: fall through to normal targeting with weak melee
+  }
   if (u.carriedBy) {
     const c = st.byId.get(u.carriedBy);
     if (c && c.alive) { u.x = c.x; u.z = c.z; u.vx = c.vx; u.vz = c.vz; u.kx = 0; u.kz = 0; return; }
