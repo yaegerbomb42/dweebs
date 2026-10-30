@@ -866,6 +866,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) Object.defineProperty(window, '__river', { get: () => currentMeadowlands?.river, configurable: true });
   fx.player = player;
   hud.setup(dweebs);
 
@@ -882,6 +883,7 @@ function startMatch() {
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
     if (currentMeadowlands) currentMeadowlands.dispose();
     currentMeadowlands = new Meadowlands(physics, scene, { fx });
+    if (currentMeadowlands.river) currentMeadowlands.river.onCatch = (label, pos) => hud.popup(label, pos, 'small', 0x3fa9ff);
     colony = new Colony();
     bots = []; // Citizens are autonomous and peaceful; no brawler AI in adventure
     for (const d of dweebs) {

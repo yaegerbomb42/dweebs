@@ -20,6 +20,8 @@ export const TOOL_POOL = ['🔧 Wobbly Wrench', '🔨 Plush Hammer', '✂️ Sni
 /** Cap on torch PointLights so 30+ structures stay at 60 fps. */
 export const MAX_TORCHLIGHTS = 12;
 
+import { River } from './River.js';
+
 export class Meadowlands {
   constructor(physicsWorld, scene, options = {}) {
     this.physicsWorld = physicsWorld;
@@ -70,6 +72,7 @@ export class Meadowlands {
     this._baseFog = undefined; // scene fog captured lazily before a fog event
 
     this._buildWorld();
+    this.river = new River(this);
     this._createToyTown();
   }
 
@@ -1496,6 +1499,7 @@ export class Meadowlands {
     this._updateWeather(dt, colony);
     this._updateBushRegrowth(dt);
     this._updateCritters(dt, dweebs, colony);
+    this.river?.update(dt, dweebs, colony);
 
     // Flicker Campfire Light (brighter after dark)
     if (this.campfireLight) {
@@ -1638,6 +1642,8 @@ export class Meadowlands {
   }
 
   dispose() {
+    this.river?.dispose();
+    this.river = null;
     this.toyTown?.dispose();
     this.toyTown = null;
     this.scene.remove(this.group);
