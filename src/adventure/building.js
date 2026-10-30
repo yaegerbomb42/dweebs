@@ -245,6 +245,11 @@ export class BuildingManager {
     if (!this.activeBlueprint || !this.isValidPlacement) return null;
     const bp = this.activeBlueprint;
 
+    // Locked blueprints need a town-tier milestone or a ruin-vault chest first.
+    if (colony && typeof colony.isBlueprintUnlocked === 'function' && !colony.isBlueprintUnlocked(bp.id)) {
+      return { success: false, reason: `🔒 The ${bp.name} blueprint is locked — grow your town or find it in a ruin vault!` };
+    }
+
     // Check colony resource costs
     if (colony) {
       for (const [res, count] of Object.entries(bp.cost)) {
@@ -667,6 +672,89 @@ export class BuildingManager {
         world.ziplines = world.ziplines || [];
         world.ziplines.push(zipline);
       }
+
+      // ── Watchtower defense: the crow's nest spots nocturnal thieves and
+      // pelts them with plush darts. Friendly beetles are never targeted.
+      result.dartTimer = 0;
+      result.dartInterval = 2.2;
+      result.dartRange = 16;
+      result.projectiles = [];
+      result.update = (dt, ctx) => {
+        const { world: w, colony } = ctx || {};
+        result.dartTimer += dt;
+        // Fly the darts already in the air.
+        for (let i = result.projectiles.length - 1; i >= 0; i--) {
+          const dart = result.projectiles[i];
+          dart.life -= dt;
+          dart.vel.y -= 10 * dt;
+          dart.mesh.position.x += dart.vel.x * dt;
+          dart.mesh.position.y += dart.vel.y * dt;
+          dart.mesh.position.z += dart.vel.z * dt;
+          let dead = dart.life <= 0 || dart.mesh.position.y < 0;
+          if (!dead && w && w.critters) {
+            for (let j = w.critters.length - 1; j >= 0; j--) {
+              const c = w.critters[j];
+              if (c.kind !== 'thief') continue; // watchtowers hunt thieves
+              const d = Math.hypot(
+                dart.mesh.position.x - c.x,
+                dart.mesh.position.y - (c.y + 0.5),
+                dart.mesh.position.z - c.z
+              );
+              if (d < 1.1) {
+                c.hp -= 1;
+                // Knock the thief back away from the tower.
+                const kx = c.x - pos.x;
+                const kz = c.z - pos.z;
+                const kl = Math.hypot(kx, kz) || 1;
+                c.x += (kx / kl) * 1.5;
+                c.z += (kz / kl) * 1.5;
+                dead = true;
+                if (c.hp <= 0) {
+                  if (w.removeCritter) w.removeCritter(c);
+                  if (colony) {
+                    colony.resources.gold = (colony.resources.gold || 0) + 1;
+                    colony._addLog('🗼 The watchtower pelted a sneaky thief! +1 🪙');
+                  }
+                }
+                break;
+              }
+            }
+          }
+          if (dead) {
+            if (dart.mesh.parent) dart.mesh.parent.remove(dart.mesh);
+            result.projectiles.splice(i, 1);
+          }
+        }
+        // Look for a thief to pelt.
+        if (!w || !w.critters || result.dartTimer < result.dartInterval) return;
+        let target = null;
+        let best = Infinity;
+        for (const c of w.critters) {
+          if (c.kind !== 'thief') continue;
+          const d = Math.hypot(c.x - pos.x, c.z - pos.z);
+          if (d < result.dartRange && d < best) { best = d; target = c; }
+        }
+        if (!target) return;
+        result.dartTimer = 0;
+        const fromT = { x: pos.x, y: pos.y + 6.4, z: pos.z };
+        const dx = target.x - fromT.x;
+        const dy = (target.y + 0.5) - fromT.y;
+        const dz = target.z - fromT.z;
+        const dist = Math.hypot(dx, dy, dz) || 1;
+        const speed = 20;
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0.22, 6, 6),
+          toonMat({ color: PALETTE.yellow, flatShading: true })
+        );
+        mesh.position.set(fromT.x, fromT.y, fromT.z);
+        noOutline(mesh);
+        if (result.scene) result.scene.add(mesh);
+        result.projectiles.push({
+          mesh,
+          vel: { x: (dx / dist) * speed, y: (dy / dist) * speed + 4, z: (dz / dist) * speed },
+          life: 2.5,
+        });
+      };
     } else if (id === 'berrymill') {
       // ── Automated Berry Gatherer / Windmill: blades spin, berries roll in.
       const tower = new THREE.Mesh(
@@ -846,6 +934,7 @@ export class BuildingManager {
           if (!dead && world && world.critters) {
             for (let j = world.critters.length - 1; j >= 0; j--) {
               const c = world.critters[j];
+              if (c.hostile === false) continue; // cannons never fire on friendly beetles
               const d = Math.hypot(
                 ball.mesh.position.x - c.x,
                 ball.mesh.position.y - (c.y + 0.5),
@@ -882,6 +971,7 @@ export class BuildingManager {
         let target = null;
         let best = Infinity;
         for (const c of world.critters) {
+          if (c.hostile === false) continue; // friendly beetles are not targets
           const d = Math.hypot(c.x - pos.x, c.z - pos.z);
           if (d < result.range && d < best) { best = d; target = c; }
         }

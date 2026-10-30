@@ -70,6 +70,12 @@ describe('warfare lobby (unit)', () => {
     expect(sanitizeCmd({ type: 'stance', team: 'blue', stance: 'defense' }, 'red'))
       .toEqual({ type: 'stance', team: 'red', stance: 'defense' });
     expect(sanitizeCmd({ type: 'stance', stance: 'nuke' }, 'red')).toBeNull();
+    // New commander powers (wave 2): warhorn and repair are team-scoped, trap aims.
+    expect(sanitizeCmd({ type: 'warhorn', team: 'blue' }, 'red')).toEqual({ type: 'warhorn', team: 'red' });
+    expect(sanitizeCmd({ type: 'repair', team: 'blue' }, 'red')).toEqual({ type: 'repair', team: 'red' });
+    expect(sanitizeCmd({ type: 'trap', team: 'blue', x: 7.777, z: -1.234 }, 'red'))
+      .toEqual({ type: 'trap', team: 'red', x: 7.78, z: -1.23 });
+    expect(sanitizeCmd({ type: 'trap', x: 'NaN', z: 1 }, 'red')).toBeNull();
   });
 
   it('pairs by mode, by code, and a finished player does not trigger peerLeft', () => {

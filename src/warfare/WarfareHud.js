@@ -3,11 +3,18 @@
 import { UNIT_TYPES, RECRUITABLE, COUNTER_OF } from '../sim/warfareUnits.js';
 import { FINAL_WAVE, isBossWave } from '../sim/warfareWaves.js';
 import { WF_HZ } from '../sim/warfareBattle.js';
+import { BATTLEGROUNDS, getBattleground } from './Battlegrounds.js';
+
+/** localStorage key for the picked battleground. */
+export const MAP_KEY = 'dweebs-warfare-map';
 
 const CSS = `
 .wf-root{position:fixed;inset:0;pointer-events:none;z-index:40;font-family:Nunito,system-ui,sans-serif;color:#fff8ee;user-select:none}
 .wf-root *{box-sizing:border-box}
 .wf-root .wf-hidden{display:none!important}
+.wf-maps{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;margin-top:10px;font-size:14px;opacity:.95}
+.wf-maps button{font-size:13px;padding:7px 12px;border-radius:10px;background:#3a2a55;color:#fff8ee;box-shadow:0 3px 0 #241a38}
+.wf-maps button.on{background:#ffd23f;color:#1b1030;box-shadow:0 3px 0 #b88a12}
 .wf-root button{pointer-events:auto;font-family:'Lilita One',Nunito,sans-serif;cursor:pointer;border:0;border-radius:14px;padding:10px 18px;font-size:18px;letter-spacing:.5px;color:#1b1030;background:#ffd23f;box-shadow:0 4px 0 #b88a12;transition:transform .08s}
 .wf-root button:hover{transform:translateY(-2px)}
 .wf-root button:active{transform:translateY(2px);box-shadow:0 1px 0 #b88a12}
@@ -131,6 +138,7 @@ export class WarfareHud {
             <button class="alt" data-a="online-versus">ONLINE VERSUS</button>
           </div>
           <div class="wf-diff">Fort defense: <button data-a="diff-easy">EASY</button><button data-a="diff-normal">NORMAL</button><button data-a="diff-hard">HARD</button></div>
+          <div class="wf-maps"><span>⚔️ Battleground:</span>${BATTLEGROUNDS.map(m => `<button data-a="map-${m.id}" data-map="${m.id}" title="${m.blurb}">${m.name}</button>`).join('')}</div>
           <div class="wf-small"><span data-f="best"></span> · WASD/arrows pan · wheel zooms · M mutes · Esc pauses</div>
           <div style="margin-top:14px"><button class="alt" data-a="exit">◀ BACK TO THE MALL</button></div>
         </div>
@@ -235,7 +243,19 @@ export class WarfareHud {
     root.addEventListener('pointerdown', e => { if (e.target.closest('button,.wf-card,.wf-screen')) e.stopPropagation(); });
     this.bannerT = 0;
     this.last = {};
+    this.mapId = 'meadow';
+    try { const m = localStorage.getItem(MAP_KEY); if (m && getBattleground(m).id === m) this.mapId = m; } catch { /* private mode */ }
     this.refreshBest();
+    this.setMap(this.mapId);
+  }
+
+  /** Campaign map picker on the title screen. */
+  setMap(id) {
+    const bg = getBattleground(id);
+    this.mapId = bg.id;
+    try { localStorage.setItem(MAP_KEY, bg.id); } catch { /* private mode */ }
+    for (const b of this.root.querySelectorAll('.wf-maps button')) b.classList.toggle('on', b.dataset.map === bg.id);
+    return bg;
   }
 
   screen(name) {

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { counterMult } from '../sim/warfareUnits.js';
 import { buildBoard } from './WarfareBoard.js';
+import { getBattleground } from './Battlegrounds.js';
 import { buildUnit, buildShell, buildRing, teamMat, flashMat, TEAM_COLORS, sharedMats } from './WarfareModels.js';
 import { WarfareFx } from './WarfareFx.js';
 
@@ -16,7 +17,7 @@ export class WarfareView {
     this.group = new THREE.Group();
     this.group.name = 'warfare';
     scene.add(this.group);
-    this.board = buildBoard();
+    this.board = buildBoard(getBattleground('meadow'));
     this.group.add(this.board.group);
     this.dyn = new THREE.Group();
     this.group.add(this.dyn);
@@ -43,6 +44,13 @@ export class WarfareView {
   }
 
   get pickMesh() { return this.board.pick; }
+
+  /** Swap the battleground board (units and fx are cleared by reset()). */
+  setMap(map) {
+    this.group.remove(this.board.group);
+    this.board = buildBoard(map || getBattleground('meadow'));
+    this.group.add(this.board.group);
+  }
 
   reset() {
     for (const e of this.entries.values()) this.dyn.remove(e.m.root);
@@ -118,7 +126,7 @@ export class WarfareView {
             this.entries.delete(ev.id);
             this.dyn.remove(e.m.root);
             const root = e.m.root;
-            root.position.set(e.x, 0, e.z);
+            root.position.set(e.x, e.y ?? 0, e.z);
             e.m.body.material = teamMat(e.team);
             fx.deathPop(root, e.team, ev.kx, ev.kz, ev.unit === 'boss' || ev.unit === 'brute');
             if (ev.unit === 'boss') { fx.addShake(1.2); fx.explosion(e.x, e.z, 6, true); }
@@ -126,6 +134,20 @@ export class WarfareView {
           break;
         }
         case 'explode': fx.explosion(ev.x, ev.z, ev.r, !!ev.big); break;
+        case 'artillery': {
+          const r = ev.radius || 8.5;
+          fx.explosion(ev.x, ev.z, r, true);
+          fx.crater(ev.x, ev.z, r);
+          fx.dustCloud(ev.x, ev.z, r);
+          break;
+        }
+        case 'barricadeDown': {
+          const bm = this.board.barricades.find(b => Math.hypot(b.x - ev.x, b.z - ev.z) < 0.6);
+          if (bm) bm.g.visible = false;
+          fx.dustCloud(ev.x, ev.z, ev.r || 3);
+          fx.addShake(0.25);
+          break;
+        }
         case 'slam': fx.shockwave(ev.x, ev.z, ev.r * 1.3, 0xd4a73a); fx.addShake(ev.unit === 'boss' ? 0.7 : 0.25); fx.puff(ev.x, ev.z); break;
         case 'fire': if (e) { fx.puff(ev.x, ev.z); fx.muzzle(ev.x, ev.z); e.leanX -= (ev.tx - ev.x) * 0.01; e.leanZ -= (ev.tz - ev.z) * 0.01; } break;
         case 'grab': fx.number(ev.x, 2.6, ev.z, 'GRAB!', 'word'); break;
@@ -151,9 +173,15 @@ export class WarfareView {
   frame(st, alpha, dt) {
     this.time += dt;
     const t = this.time;
+    const hg = st && st.highGround;
+    const groundY = (x, z) => {
+      if (hg) for (const r of hg) if (Math.abs(x - r.x) <= r.w / 2 && Math.abs(z - r.z) <= r.h / 2) return 0.74;
+      return 0;
+    };
     for (const [, e] of this.entries) {
       const root = e.m.root;
       const x = lerp(e.px, e.x, alpha), z = lerp(e.pz, e.z, alpha);
+      e.y = lerp(e.y ?? 0, groundY(x, z), Math.min(1, dt * 8));
       const sp = Math.hypot(e.vx || 0, e.vz || 0);
       if (sp > 0.3) {
         const want = Math.atan2(-(e.vz || 0), e.vx || 0);
@@ -166,12 +194,12 @@ export class WarfareView {
       root.rotation.y = e.yaw;
       const tilt = e.m.tilt;
       if (e.carried) {
-        root.position.y = 1.5;
+        root.position.y = 1.5 + e.y;
         tilt.rotation.x = Math.sin(t * 14 + e.x) * 0.5;
         tilt.rotation.z = Math.PI * 0.45;
       } else {
         const bob = sp > 0.5 ? Math.abs(Math.sin(t * (8 + sp))) * 0.14 : 0;
-        root.position.y = bob;
+        root.position.y = e.y + bob;
         e.leanX *= Math.max(0, 1 - dt * 6); e.leanZ *= Math.max(0, 1 - dt * 6);
         tilt.rotation.z = (sp > 0.5 ? Math.sin(t * (8 + sp)) * 0.12 : 0) - e.leanX * 0.5;
         tilt.rotation.x = e.leanZ * 0.5;

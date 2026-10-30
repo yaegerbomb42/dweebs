@@ -14,9 +14,13 @@ import {
   FEET_TYPES,
   BROW_STYLES,
   MOUTH_STYLES,
+  refreshDweebCollider,
+  installAppendageGameplay,
 } from './CustomDweebModel.js';
+import { TournamentBracket } from './Tournament.js';
 
 const STORAGE_KEY = 'dweebs-custom-build';
+const TOURNAMENT_KEY = 'dweebs-tournament-v1';
 
 export class BuildADweebLab {
   constructor(scene, camera, renderer) {
@@ -32,6 +36,11 @@ export class BuildADweebLab {
     this.turntableAngle = 0;
     this.autoRotate = true;
     this.clock = 0;
+
+    // Live fighter synced to lab mutations (DNA → collider, no reload) and
+    // the active tournament bracket (null when no tournament is running).
+    this.attachedFighter = null;
+    this.tournament = this.loadTournament();
 
     this._buildStage();
     this.rebuildModel();
@@ -77,6 +86,36 @@ export class BuildADweebLab {
     this.modelInstance = buildCustomDweebModel(this.config);
     this.currentModelRoot = this.modelInstance.root;
     this.group.add(this.currentModelRoot);
+
+    // DNA mutation → live fighter sync: refresh the attached fighter's
+    // bounding-box collider and appendage gameplay synchronously so a
+    // mutation never needs a scene reload to take effect physically.
+    if (this.attachedFighter) {
+      this.modelInstance.root.updateWorldMatrix(true, true);
+      const bounds = new THREE.Box3().setFromObject(this.modelInstance.root);
+      refreshDweebCollider(this.attachedFighter, this.config, bounds);
+      installAppendageGameplay(this.attachedFighter, this.config);
+    }
+  }
+
+  /**
+   * Attach a live fighter dweeb: every lab mutation (mutateRandom /
+   * updateConfig / applyPreset) synchronously refreshes its physics collider
+   * bounds and appendage gameplay to match the new DNA. Pass null to detach.
+   */
+  attachFighter(dweeb) {
+    this.attachedFighter = dweeb || null;
+    if (this.attachedFighter && this.modelInstance) {
+      this.modelInstance.root.updateWorldMatrix(true, true);
+      refreshDweebCollider(this.attachedFighter, this.config,
+        new THREE.Box3().setFromObject(this.modelInstance.root));
+      installAppendageGameplay(this.attachedFighter, this.config);
+    }
+    return this.attachedFighter;
+  }
+
+  detachFighter() {
+    this.attachedFighter = null;
   }
 
   updateConfig(patch) {
@@ -158,6 +197,62 @@ export class BuildADweebLab {
     this.rebuildModel();
     this.saveConfig();
     return this.config;
+  }
+
+  // ─── Colosseum tournament ladder ──────────────────────────────────────────
+
+  /** Start a new tournament bracket with the lab's current build. */
+  startTournament() {
+    this.tournament = new TournamentBracket(this.config);
+    this.saveTournament();
+    return this.tournament.state();
+  }
+
+  /** Champion config for the player's pending bout (null when none). */
+  tournamentOpponent() {
+    return this.tournament ? this.tournament.opponentForPlayer() : null;
+  }
+
+  /**
+   * Record the player's bout result and advance the bracket. Persists across
+   * the workshop ⇄ arena round-trip; cleared when the run ends.
+   */
+  recordTournamentResult(playerWon) {
+    if (!this.tournament) return null;
+    const state = this.tournament.recordPlayerResult(!!playerWon);
+    if (state.status === 'in') this.saveTournament();
+    else this.clearTournamentStorage();
+    return state;
+  }
+
+  /** Plain bracket summary for the HUD (null when no tournament active). */
+  tournamentState() {
+    return this.tournament ? this.tournament.state() : null;
+  }
+
+  abandonTournament() {
+    this.tournament = null;
+    this.clearTournamentStorage();
+  }
+
+  saveTournament() {
+    try {
+      if (this.tournament) localStorage.setItem(TOURNAMENT_KEY, JSON.stringify(this.tournament.toJSON()));
+    } catch { /* private mode */ }
+  }
+
+  loadTournament() {
+    try {
+      const saved = localStorage.getItem(TOURNAMENT_KEY);
+      if (!saved) return null;
+      const t = TournamentBracket.fromJSON(JSON.parse(saved));
+      return t.status === 'in' ? t : null;
+    } catch { /* corrupted / private mode */ }
+    return null;
+  }
+
+  clearTournamentStorage() {
+    try { localStorage.removeItem(TOURNAMENT_KEY); } catch { /* private mode */ }
   }
 
   update(dt) {

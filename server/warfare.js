@@ -13,11 +13,16 @@
 //   server → client  {wf:'queued', mode, code} · {wf:'start', seed, mode, slot, team, turnTicks, turnMs, partner}
 //                    {wf:'turn', n, cmds:[…]} · {wf:'desync', turn} · {wf:'peerLeft'} · {wf:'error', message}
 
+import { BATTLEGROUND_IDS } from '../src/warfare/Battlegrounds.js';
+
 export const TURN_MS = 100;           // 10 turns/s
 export const TURN_TICKS = 3;          // sim runs at 30 Hz → 3 ticks per turn
 export const MAX_CMDS_PER_TURN = 12;  // per player, per turn
+/** Ring buffer of recent turn broadcasts per match, so a reconnecting player can catch up. */
+export const TURN_LOG = 240;          // 24 s of turns
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const RECRUITABLE = new Set(['shield', 'rocket', 'stealer', 'kami']);
+const STANCES = new Set(['charge', 'defense']);
 const DIFFICULTIES = new Set(['easy', 'normal', 'hard']);
 
 /** Keep only well-formed commands, and force the sender's team (a client cannot command the other side). */
@@ -30,6 +35,7 @@ export function sanitizeCmd(c, team) {
   }
   if (c.type === 'recruit') return RECRUITABLE.has(c.unit) ? { type: 'recruit', team, unit: c.unit } : null;
   if (c.type === 'startWave') return { type: 'startWave', team };
+  if (c.type === 'stance') return STANCES.has(c.stance) ? { type: 'stance', team, stance: c.stance } : null;
   // Commander powers (Q/E/R): the client burns the local cooldown when the button is
   // pressed, so a dropped command is a power that fizzles online but works offline.
   // Artillery carries an aim point like rally (rounded the same way, so both sims see
@@ -41,8 +47,15 @@ export function sanitizeCmd(c, team) {
     return { type: 'artillery', team, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100 };
   }
   if (c.type === 'supply') return { type: 'supply', team };
-  if (c.type === 'stance') {
-    return c.stance === 'charge' || c.stance === 'defense' ? { type: 'stance', team, stance: c.stance } : null;
+  // New commander powers (wave 2): warhorn and repair are team-scoped with no
+  // coordinates (the sim derives position from the rally point / base); trap
+  // carries an aim point like artillery, rounded the same way.
+  if (c.type === 'warhorn') return { type: 'warhorn', team };
+  if (c.type === 'repair') return { type: 'repair', team };
+  if (c.type === 'trap') {
+    const x = Number(c.x), z = Number(c.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+    return { type: 'trap', team, x: Math.round(x * 100) / 100, z: Math.round(z * 100) / 100 };
   }
   return null;
 }
@@ -73,6 +86,7 @@ export class WarfareLobby {
       case 'cancel': this._unqueue(client); return;
       case 'cmd': return this._cmd(client, m);
       case 'hash': return this._hash(client, m);
+      case 'rejoin': return this._rejoin(client, m);
       case 'over': return this._over(client);
       case 'leave': this.drop(client); return;
       default: client.send({ wf: 'error', message: `unknown ${m.wf}` });
@@ -94,7 +108,8 @@ export class WarfareLobby {
     }
     if (!partner) {
       const difficulty = DIFFICULTIES.has(m.difficulty) ? m.difficulty : 'normal';
-      const entry = { client, mode, code: this._code(), name, difficulty };
+      const map = BATTLEGROUND_IDS.includes(m.map) ? m.map : 'meadow';
+      const entry = { client, mode, code: this._code(), name, difficulty, map };
       this.waiting.push(entry);
       client.send({ wf: 'queued', mode, code: entry.code });
       return;
@@ -110,17 +125,23 @@ export class WarfareLobby {
   _start(a, b) {
     const seed = (Math.floor(this.rand() * 0x7ffffffe) + 1) | 0;
     const mode = a.mode;
+    const map = BATTLEGROUND_IDS.includes(a.map) ? a.map : 'meadow';
+    const tok = () => {
+      let s = '';
+      for (let i = 0; i < 12; i++) s += CODE_ALPHABET[Math.floor(this.rand() * CODE_ALPHABET.length)];
+      return s;
+    };
     const players = [
-      { client: a.client, slot: 0, team: 'blue', name: a.name, alive: true },
-      { client: b.client, slot: 1, team: mode === 'versus' ? 'red' : 'blue', name: b.name, alive: true },
+      { client: a.client, slot: 0, team: 'blue', name: a.name, alive: true, token: tok() },
+      { client: b.client, slot: 1, team: mode === 'versus' ? 'red' : 'blue', name: b.name, alive: true, token: tok() },
     ];
     const difficulty = a.difficulty || 'normal'; // the host (whoever waited) picks
-    const match = { mode, seed, difficulty, players, turn: 0, inbox: [], hashes: new Map(), desynced: false };
+    const match = { mode, seed, difficulty, map, players, turn: 0, inbox: [], hashes: new Map(), desynced: false, log: [], lastAgreed: null, expectHash: 0 };
     this.matches.add(match);
     for (const p of players) {
       this.byClient.set(p.client, match);
       const other = players[1 - p.slot];
-      p.client.send({ wf: 'start', seed, mode, difficulty, slot: p.slot, team: p.team, turnTicks: TURN_TICKS, turnMs: TURN_MS, partner: other.name });
+      p.client.send({ wf: 'start', seed, mode, difficulty, map, slot: p.slot, team: p.team, token: p.token, turnTicks: TURN_TICKS, turnMs: TURN_MS, partner: other.name });
     }
   }
 
@@ -139,6 +160,7 @@ export class WarfareLobby {
     const match = this.byClient.get(client);
     if (!match || match.desynced) return;
     const p = match.players.find(q => q.client === client);
+    if (!p) return;
     const turn = m.turn | 0;
     const rec = match.hashes.get(turn) || {};
     rec[p.slot] = m.h >>> 0;
@@ -148,9 +170,48 @@ export class WarfareLobby {
       if (rec[0] !== rec[1]) {
         match.desynced = true;
         for (const q of match.players) if (q.alive) q.client.send({ wf: 'desync', turn });
+      } else {
+        match.lastAgreed = { turn, h: rec[0] >>> 0 };
+        if (match.expectHash && turn >= match.expectHash) match.expectHash = 0;
       }
     }
     if (match.hashes.size > 64) match.hashes.clear();
+  }
+
+  /**
+   * A dropped co-op player rejoins on a fresh socket: {wf:'rejoin', token, from}.
+   * Missed turns are replayed from the ring buffer, then both peers are asked for an
+   * immediate hash at the resync turn (tightened check — no waiting for the next
+   * scheduled hash after a reconnect on a laggy link).
+   */
+  _rejoin(client, m) {
+    if (this.byClient.has(client)) return client.send({ wf: 'error', message: 'already in a match' });
+    const token = String(m.token || '');
+    let found = null;
+    for (const match of this.matches) {
+      const p = match.players.find(q => q.token === token);
+      if (p) { found = { match, p }; break; }
+    }
+    if (!found) return client.send({ wf: 'error', message: 'no match to rejoin' });
+    const { match, p } = found;
+    // A laggy client often reconnects before its dead socket's close is processed:
+    // the new socket takes over the slot, and the stale close becomes a no-op.
+    if (p.alive) this.byClient.delete(p.client);
+    const from = Math.max(0, m.from | 0);
+    const missed = match.log.filter(t => t.n >= from);
+    if (missed.length && missed[0].n !== from) {
+      // the ring buffer no longer reaches back far enough: a clean forfeit beats a bad resync
+      return client.send({ wf: 'resync', ok: false, reason: 'turn log expired' });
+    }
+    p.client = client;
+    p.alive = true;
+    this.byClient.set(client, match);
+    match.expectHash = match.turn; // both peers must agree once more, right now
+    client.send({ wf: 'resync', ok: true, slot: p.slot, team: p.team, token: p.token, mode: match.mode, seed: match.seed, difficulty: match.difficulty, map: match.map, turnTicks: TURN_TICKS, turnMs: TURN_MS, from, turns: missed, lastAgreed: match.lastAgreed });
+    for (const q of match.players) {
+      if (q !== p && q.alive) q.client.send({ wf: 'peerBack', name: p.name });
+      if (q.alive) q.client.send({ wf: 'verifyHash', turn: match.turn });
+    }
   }
 
   /** Broadcast one turn for every live match. Call every TURN_MS. */
@@ -159,6 +220,8 @@ export class WarfareLobby {
       const msg = { wf: 'turn', n: match.turn, cmds: match.inbox };
       match.inbox = [];
       match.turn++;
+      match.log.push(msg);
+      if (match.log.length > TURN_LOG) match.log.splice(0, match.log.length - TURN_LOG);
       for (const p of match.players) if (p.alive) p.client.send(msg);
     }
   }
