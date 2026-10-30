@@ -22,6 +22,7 @@ import {
   motionOK,
   refreshHub,
 } from '../src/app/hub-extras.js';
+import { contractFor, todayKey } from '../src/app/daily.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const screensSrc = readFileSync(path.join(root, 'src/app/screens.js'), 'utf8');
@@ -51,7 +52,7 @@ function fakeEl() {
     innerHTML: '',
     dataset: {},
     style: {},
-    classList: { add() {}, remove() {} },
+    classList: { add() {}, remove() {}, toggle() {} },
     setAttribute() {},
     children: [],
     append(...kids) { this.children.push(...kids); },
@@ -171,11 +172,13 @@ describe('hub paint functions (fake DOM)', () => {
 
   it('paints the daily card and stores the target for boot.js', () => {
     const r = fakeRoot();
-    const c = DAILY_CHALLENGES[2];
-    applyDaily(r, c);
+    // applyDaily now paints today's contract from the Daily Contracts system
+    // (src/app/daily.js), not a passed-in challenge.
+    const c = contractFor(todayKey());
+    applyDaily(r);
     expect(r.querySelector('#daily-title').textContent).toContain(c.title);
-    expect(r.querySelector('#daily-desc').textContent).toBe(c.desc);
-    expect(r.querySelector('#app-btn-daily').dataset.target).toBe(c.target);
+    const LAUNCH = { brawl: 'app-btn-brawl', derby: 'app-btn-derby', walldrop: 'app-btn-walldrop', build_arena: 'app-btn-builder' };
+    expect(r.querySelector('#app-btn-daily').dataset.target).toBe(LAUNCH[c.mode] || 'app-btn-brawl');
   });
 
   it('builds the profile chip as text, never as markup', () => {
@@ -250,14 +253,14 @@ describe('bigger hub markup in screens.js', () => {
     }
   });
 
-  it('adds the trophy wall with four trophies', () => {
+  it('adds the trophy wall with five trophies', () => {
     const m = titleMarkup();
     expect(m).toContain('hub-trophies');
-    for (const key of ['warfare', 'village', 'build']) {
+    for (const key of ['warfare', 'village', 'build', 'career']) {
       expect(m, `trophy ${key}`).toContain(`data-trophy="${key}"`);
     }
     const trophies = m.match(/class="hub-trophy"/g) || [];
-    expect(trophies.length).toBe(4);
+    expect(trophies.length).toBe(5);
   });
 
   it('adds the daily challenge card with a launch button', () => {
@@ -279,7 +282,9 @@ describe('bigger hub markup in screens.js', () => {
     const m = titleMarkup();
     const arcade = m.indexOf('hub-arcade');
     const footer = m.indexOf('hub-footer');
-    for (const cls of ['hub-trophies', 'hub-daily', 'hub-news']) {
+    // Note: 'class="hub-news"' targets the what's-new panel section, not the
+    // hub-news-ticker div at the top of the hub (both share the hub-news prefix).
+    for (const cls of ['hub-trophies', 'hub-daily', 'class="hub-news"']) {
       const i = m.indexOf(cls);
       expect(i).toBeGreaterThan(arcade);
       expect(i).toBeLessThan(footer);

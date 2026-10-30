@@ -19,9 +19,9 @@ import { sanitizeCmd, WarfareLobby, TURN_LOG, TURN_TICKS } from '../server/warfa
 const TT = TURN_TICKS;
 
 describe('battlegrounds', () => {
-  it('ships exactly 5 battlegrounds with unique ids', () => {
-    expect(BATTLEGROUNDS.length).toBe(5);
-    expect(new Set(BATTLEGROUND_IDS).size).toBe(5);
+  it('ships exactly 7 battlegrounds with unique ids', () => {
+    expect(BATTLEGROUNDS.length).toBe(7);
+    expect(new Set(BATTLEGROUND_IDS).size).toBe(7);
     for (const b of BATTLEGROUNDS) {
       expect(b.id).toMatch(/^[a-z-]+$/);
       expect(b.name.length).toBeGreaterThan(0);
