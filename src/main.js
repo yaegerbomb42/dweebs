@@ -26,6 +26,7 @@ import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
 import { ModeDirector } from './game/ModeDirector.js';
 import { ARENAS, arenaById, DEFAULT_ARENA } from './game/Arenas.js';
 import { Fx } from './game/Fx.js';
+import { Dweebball } from './game/Dweebball.js';
 import { StatusSystem } from './game/StatusEffects.js';
 import { Haptics } from './game/Haptics.js';
 import { Hud } from './ui/Hud.js';
@@ -125,6 +126,7 @@ let sdPhase = -1, potatoTimer = 0, currentMode = DEFAULT_MODE;
 let spectateTarget = null;
 let comboDirector = null; // hit chains / juggles / assists (game/ComboDirector.js)
 let rematch = null;
+let currentDweebball = null;
 let tutorial = null;
 let mutatorDirector = new MutatorDirector();
 // Near-miss tease: track how close the player's current launch gets to a blast line / the lagoon
@@ -674,6 +676,7 @@ function toMenu() {
   if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; document.body.classList.remove('warfare-active'); }
   if (currentBuildLab) { currentBuildLab.dispose(); currentBuildLab = null; }
   if (currentBuildHud) { currentBuildHud.dispose(); currentBuildHud = null; }
+  if (currentDweebball) { currentDweebball.dispose(); currentDweebball = null; }
   match.phase = Phase.MENU;
   clearRematch();
   spectateTarget = null;
@@ -1073,6 +1076,7 @@ function startMatch() {
   // (lava, conveyors, contraptions and wind all iterate arena.dweebs).
   arena.dweebs = dweebs;
   if (import.meta.env.DEV) window.__dweebs = { physics, arena, combat, match, audio, player, dweebs, fx, cam, camera, trails, bursts, decals, bots, renderer, controller, aimGuide };
+  if (import.meta.env.DEV) Object.defineProperty(window, '__db', { get: () => currentDweebball, configurable: true });
   if (import.meta.env.DEV) Object.defineProperty(window, '__river', { get: () => currentMeadowlands?.river, configurable: true });
   if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'wardrobe', { get: () => ({ wardrobe, wardrobeRack, colony }), configurable: true });
   if (import.meta.env.DEV) Object.defineProperty(window.__dweebs, 'quests', { get: () => questBoard, configurable: true });
@@ -1154,6 +1158,67 @@ function startMatch() {
     bursts.clear();
     decals.clear();
     return;
+  }
+
+  // Dweebball mode: 2v2 sport with ball and goals
+  const isDweebball = currentMode === 'dweebball';
+  if (isDweebball) {
+    if (arena.setStadiumVisible) arena.setStadiumVisible(true);
+    if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
+    if (currentMeadowlands) {
+      if (colony && buildingManager) saveVillage({ colony, buildingManager, world: currentMeadowlands });
+      currentMeadowlands.dispose();
+      currentMeadowlands = null;
+    }
+    if (buildingManager) { buildingManager.cancelPlacing(); buildingManager = null; }
+    colony = null;
+    $('civ-hud')?.classList.add('hidden');
+    $('hud-top')?.classList.remove('hidden');
+    $('hud-cards')?.classList.remove('hidden');
+
+    // Create exactly 4 dweebs for 2v2 (player + 3 bots)
+    // We already have dweebs created above, but we need exactly 4
+    while (dweebs.length < 4) {
+      const i = dweebs.length;
+      const r = ROSTER[i % ROSTER.length];
+      const d = new Dweeb(scene, physics, { ...r, index: i, position: arena.getSpawnPoint(i, 4) });
+      dweebs.push(d);
+      const bot = new Bot(d, arena, combat, settings.difficulty);
+      d.bot = bot; // Store bot reference for Dweebball AI
+      bots.push(bot);
+      wireDweeb(d);
+    }
+    // If more than 4, trim
+    while (dweebs.length > 4) {
+      const d = dweebs.pop();
+      d.destroy();
+      bots.pop();
+    }
+
+    combat.setDweebs(dweebs);
+    arena.dweebs = dweebs;
+    fx.player = player;
+    hud.setup(dweebs);
+
+    for (const b of bots) if (b.dweeb) b.dweeb.bot = b;
+    currentDweebball = new Dweebball({ physics, scene, arena, hud, fx, audio });
+    currentDweebball.start(dweebs);
+
+    // Dweebball uses infinite stocks, no sudden death
+    match.settings.stocks = 999;
+    match.settings.mode = 'dweebball';
+    match.startMatch(dweebs);
+
+    for (const id of ['main-menu', 'results-screen', 'round-screen', 'how-to-play']) $(id)?.classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    audio.init();
+    audio.resume();
+    applyAudioSettings();
+    audio.startAmbience();
+    audio.startMusic(false);
+    startRound();
+    cam.lock();
+    return;
   } else {
     if (arena.setStadiumVisible) arena.setStadiumVisible(true);
     if (currentWarfare) { currentWarfare.dispose(); currentWarfare = null; }
@@ -1198,10 +1263,12 @@ function mutatorCtx() {
 
 function startRound() {
   const modeDef = GAME_MODES[currentMode] || GAME_MODES.derby;
+  const isDweebball = currentMode === 'dweebball';
+
   // Undo last round's mutator before the round reset re-applies arena stats.
   try { mutatorDirector.end(mutatorCtx()); } catch (e) { console.error('[Mutator] end error:', e); }
   if (arena.dropWall) {
-    if (modeDef.hasWallDrop) {
+    if (modeDef.hasWallDrop && !isDweebball) {
       arena.dropWall.dropped = false;
       arena.dropWall.curY = 7.0;
       arena.dropWall.group.position.y = 7.0;
@@ -1213,6 +1280,7 @@ function startRound() {
   }
 
   arena.hazardsActive = false;
+  if (!isDweebball) arena.reset();
   arena.reset();
   combat.status?.clear();
   resetSuddenDeathFx();
@@ -1230,7 +1298,7 @@ function startRound() {
 
   // Spawn batteries if in escape mode
   // Spawn arcing cannons and bouncy melons in Wall Drop mode
-  if (modeDef.hasWallDrop) {
+  if (modeDef.hasWallDrop && !isDweebball) {
     // Team West (Pink side)
     arena.spawnItem('melonCannon', { x: -7, y: 2, z: -3 });
     arena.spawnItem('explodingMelon', { x: -6, y: 2, z: 2 });
@@ -1241,7 +1309,7 @@ function startRound() {
     arena.spawnItem('spikyBall', { x: 8, y: 2, z: 0 });
   }
 
-  if (modeDef.hasEscapePuzzles) {
+  if (modeDef.hasEscapePuzzles && !isDweebball) {
     arena.spawnItem('powerBattery', { x: 8, y: 3, z: -4 });
     arena.spawnItem('powerBattery', { x: 8, y: 3, z: 4 });
   }
@@ -1689,6 +1757,7 @@ function loop() {
     combat.status?.update(dt);
     updateDrops(dt);
     match.update(dt);
+    if (currentDweebball) currentDweebball.update(dt, dweebs, match);
     tutorial?.update(dt);
     if (hillZone) hillZone.update(dt, dweebs, match.hillHolder, nameOf);
     if (deathCinema && !deathCinema.isPlaying && currentMode !== 'adventure') {

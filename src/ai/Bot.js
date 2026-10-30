@@ -162,6 +162,17 @@ export class Bot {
 
     if (!d.canAct) return;
 
+    // Forced target override (used by Dweebball mode for simple bot steering)
+    if (this.forcedTarget) {
+      this._steerTo(this.forcedTarget.x, this.forcedTarget.z, 1);
+      // Still allow jumping if stuck
+      if (d.grounded && this.jumpCd <= 0 && Math.random() < 0.1) {
+        d.requestJump();
+        this.jumpCd = 0.5;
+      }
+      return;
+    }
+
     if (this.thinkTimer <= 0) {
       this.thinkTimer = this.p.reaction * (0.6 + Math.random() * 0.8);
       this._think(dweebs, pos);
