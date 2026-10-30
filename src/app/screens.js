@@ -13,61 +13,53 @@
 
 import { el } from './dom.js';
 import { BINDING_LABELS } from './settings.js';
+import { MALL_MODES, DIFFICULTY_LABELS, difficultyStars } from './mall.js';
 
-export function buildScreens() {
-  const title = el(`
+/** One launchable sub-game button. */
+function subButton(s, btnClass) {
+  const d = DIFFICULTY_LABELS[s.difficulty] || '';
+  return `<button class="btn mall-sub-btn ${btnClass}" id="${s.id}" title="${s.title} · ${d}"
+      data-launch='${JSON.stringify(s.launch)}'>${s.label}</button>`;
+}
+
+/** Difficulty badge: star pips + label, e.g. ★★☆ NORMAL. */
+function diffBadge(level) {
+  const label = DIFFICULTY_LABELS[level] || '';
+  return `<span class="mall-diff mall-diff-${level}" title="Difficulty: ${label}"
+    aria-label="Difficulty ${label}">${difficultyStars(level)} ${label}</span>`;
+}
+
+/** One mall card, rendered from the MALL_MODES data model. */
+function mallCard(card) {
+  const subs = card.subgames.map(s => subButton(s, card.btnClass)).join('');
+  const main = card.launch;
+  return `
+  <article class="mall-card card-${card.id}" id="${card.cardId}">
+    <div class="mall-badge ${card.badgeClass}">${card.badge}</div>
+    <div class="mall-icon ${card.iconAnim}" aria-hidden="true">${card.icon}</div>
+    <h3 class="mall-card-title">${card.title}</h3>
+    ${diffBadge(card.difficulty)}
+    <p class="mall-card-desc">${card.desc}</p>
+    ${subs ? `<div class="mall-subgames">${subs}</div>` : ''}
+    <button class="btn mall-btn ${card.btnClass}" id="${main.id}"
+      data-launch='${JSON.stringify(main.launch)}'>${main.label}</button>
+  </article>`;
+}
+
+/** Pure HTML for the mall title screen — exported so tests can assert every
+ * launch button exists in the DOM boot.js wires, without needing a browser. */
+export function mallTitleHtml() {
+  const cards = MALL_MODES.map(mallCard).join('');
+  return `
     <section id="app-title" class="app-screen hidden" aria-label="The Dweeb Mall">
       <div class="mall-container">
         <header class="mall-header">
           <h1 class="mall-title">THE DWEEB MALL</h1>
-          <p class="mall-subtitle">4 massive physics experiences — one living universe</p>
+          <p class="mall-subtitle">6 toy-box physics experiences — one living universe</p>
         </header>
 
         <div class="mall-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); max-width: 1040px; margin: 0 auto;">
-          <!-- Game 1: Classic Brawler -->
-          <article class="mall-card card-classic" id="mall-card-1">
-            <div class="mall-badge">STADIUM BRAWLER</div>
-            <div class="mall-icon">🥊</div>
-            <h3 class="mall-card-title">Knockout Arena</h3>
-            <p class="mall-card-desc">The original 4-player stadium brawler. Dumb ways to die, crazy physics weapons & sudden death.</p>
-            <div class="mall-subgames">
-              <button class="btn mall-sub-btn yellow" id="app-btn-derby" title="Dumb Ways to Die">☠️ Derby</button>
-              <button class="btn mall-sub-btn yellow" id="app-btn-walldrop" title="Wall Drop PVP">🧱 Wall Drop</button>
-              <button class="btn mall-sub-btn yellow" id="app-btn-brawl" title="Knockout Brawl">🥊 Brawl</button>
-            </div>
-            <button class="btn mall-btn yellow" id="app-btn-classic">PLAY BRAWLER</button>
-          </article>
-
-          <!-- Game 2: Expedition & Dynasty -->
-          <article class="mall-card card-dynasty" id="mall-card-2">
-            <div class="mall-badge badge-green">LIVING CIVILIZATION</div>
-            <div class="mall-icon">🌱</div>
-            <h3 class="mall-card-title">Expedition &amp; Dynasty</h3>
-            <p class="mall-card-desc">Open-world colony in The Meadowlands. Assign citizen roles, build toy contraptions, solve ruin vaults, and guide your dynasty.</p>
-            <button class="btn mall-btn green" id="app-btn-dynasty">ENTER EXPEDITION</button>
-          </article>
-
-          <!-- Game 3: Dweeb Warfare -->
-          <article class="mall-card card-warfare" id="mall-card-5">
-            <div class="mall-badge badge-red">PHYSICS BATTLE SIM</div>
-            <div class="mall-icon">⚔️</div>
-            <h3 class="mall-card-title">Dweeb Warfare</h3>
-            <p class="mall-card-desc">Massive army combat. Tactical commander abilities, artillery barrages, supply drops, unit counters, and 100v100 warfare.</p>
-            <div class="mall-subgames">
-              <button class="btn mall-sub-btn pink" id="app-btn-warfare-defense" title="Defend Fort 20 Waves">🛡️ Defend Fort</button>
-              <button class="btn mall-sub-btn blue" id="app-btn-warfare-versus" title="100v100 Duel vs AI">⚔️ Versus AI</button>
-            </div>
-            <button class="btn mall-btn pink" id="app-btn-warfare">START WARFARE</button>
-          </article>
-
-          <!-- Game 4: Build-A-Dweeb -->
-          <article class="mall-card card-builder" id="mall-card-builder">
-            <div class="mall-badge badge-purple">CREATURE LAB &amp; AI ARENA</div>
-            <div class="mall-icon">🧬</div>
-            <h3 class="mall-card-title">Build-A-Dweeb</h3>
-            <p class="mall-card-desc">Sculpt a custom 3D creature with body shapes, eyes, appendages, colors, and AI combat DNA. Watch them clash in autonomous colosseum battles!</p>
-            <button class="btn mall-btn purple" id="app-btn-builder">ENTER 3D LAB</button>
-          </article>
+          ${cards}
         </div>
 
         <footer class="mall-footer">
@@ -77,7 +69,15 @@ export function buildScreens() {
           <button class="btn blue" id="app-btn-settings">SETTINGS</button>
         </footer>
       </div>
-    </section>`);
+    </section>`;
+}
+
+function buildMallTitle() {
+  return el(mallTitleHtml());
+}
+
+export function buildScreens() {
+  const title = buildMallTitle();
 
   const online = el(`
     <section id="app-online" class="app-screen hidden" aria-label="Play online">
