@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { STYLE } from '../combat/CombatSystem.js';
 import { statsFor } from '../game/Balance.js';
+import { accessColor, getShapeBadge } from '../render/ColorAccess.js';
 
 const _p = new THREE.Vector3();
 const PCT_PUNCH = [50, 100, 150]; // the damage number punch-scales as it crosses these
@@ -50,6 +51,7 @@ export class Hud {
     this.cards = new Map();
     this.plates = new Map();
     this.announceTimer = 0;
+    this.colorblindMode = 'off';
   }
 
   setup(dweebs) {
@@ -59,31 +61,40 @@ export class Hud {
     this.platesEl.innerHTML = '';
     this.cards.clear();
     this.plates.clear();
-    for (const d of dweebs) {
+    for (let i = 0; i < dweebs.length; i++) {
+      const d = dweebs[i];
+      const displayColor = this.colorblindMode !== 'off' ? accessColor(d.color, this.colorblindMode) : d.color;
       const card = document.createElement('div');
       card.className = 'card' + (d.isPlayer ? ' you' : '');
-      card.style.setProperty('--c', hex(d.color));
+      card.style.setProperty('--c', hex(displayColor));
+      const shapeBadge = getShapeBadge(i);
+      const nameHtml = d.isPlayer ? 'YOU' : `${d.name} <span class="shape-badge" aria-hidden="true">${shapeBadge}</span>`;
       card.innerHTML = `
         <div class="portrait"><span class="shape ${d.type}"><i class="brow"></i><i class="mouth"></i></span></div>
         <div class="card-body">
+          <div class="card-name">${nameHtml}</div>
           <div class="card-name">${d.isPlayer ? 'YOU' : d.name}</div>
+          <div class="sig"></div>
           <div class="pct"><span class="pct-num">0</span><span class="pct-sign">%</span></div>
           <div class="stocks"></div>
           <div class="buffs"></div>
         </div>`;
-      card.title = statsFor(d.type).label;
+      const sig = d.signature || statsFor(d.type).signature;
+      card.title = statsFor(d.type).label + (sig?.name ? ` · ${sig.name}` : '');
       this.cardsEl.appendChild(card);
       if (d.isPlayer) card.querySelector('.card-body').appendChild(this.styleEl);
       this.cards.set(d, {
         el: card, num: card.querySelector('.pct-num'), pct: card.querySelector('.pct'),
-        stocks: card.querySelector('.stocks'), buffs: card.querySelector('.buffs'), shape: card.querySelector('.shape'), mood: '',
+        stocks: card.querySelector('.stocks'), buffs: card.querySelector('.buffs'), shape: card.querySelector('.shape'),
+        sig: card.querySelector('.sig'), mood: '', lastSig: null,
         lastPct: -1, lastStocks: -1, lastBuffs: '', shake: 0,
       });
 
       const plate = document.createElement('div');
       plate.className = 'plate' + (d.isPlayer ? ' you' : '');
-      plate.style.setProperty('--c', hex(d.color));
-      plate.textContent = d.isPlayer ? 'YOU' : d.name;
+      plate.style.setProperty('--c', hex(displayColor));
+      const plateName = d.isPlayer ? 'YOU' : `${d.name} ${shapeBadge}`;
+      plate.textContent = plateName;
       this.platesEl.appendChild(plate);
       this.plates.set(d, plate);
     }
@@ -267,6 +278,12 @@ export class Hud {
         c.lastBuffs = buffs;
         c.buffs.textContent = buffs;
       }
+      const sigName = (d.signature || statsFor(d.type).signature)?.name || '';
+      if (sigName !== c.lastSig && c.sig) {
+        c.lastSig = sigName;
+        c.sig.textContent = sigName;
+        c.sig.style.display = sigName ? 'block' : 'none';
+      }
       c.el.classList.toggle('out', d.eliminated);
       c.el.classList.toggle('respawning', d.out && !d.eliminated);
 
@@ -300,10 +317,11 @@ export class Hud {
       this.chargeFill.style.width = `${Math.round(player.charging * 100)}%`;
       this.chargeEl.classList.toggle('full', player.charging >= 1);
     } else this.chargeEl.classList.remove('show');
-    this.holdEl.classList.toggle('show', !!player?.held);
+    this.holdEl.classList.toggle('show', !!player?.held || (player?.catchWindow > 0));
     if (player?.held) {
       const gadget = player.held.ref.def?.gadget;
-      if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
+      if (player.catchWindow > 0) this.holdEl.innerHTML = '<b>CAUGHT!</b> <kbd>LMB</kbd>/<kbd>RMB</kbd> throw · <kbd>Q</kbd> drop';
+      else if (gadget === 'freezeRay') this.holdEl.innerHTML = '<kbd>LMB</kbd> FREEZE RAY · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (gadget === 'magnet') this.holdEl.innerHTML = '<kbd>LMB</kbd> MAGNET PULL · <kbd>RMB</kbd>/<kbd>E</kbd> throw · <kbd>Q</kbd> drop';
       else if (player.held.ref.isWeapon) {
         const wname = { spiky: 'spiky ball', glove: 'boxing glove' }[player.held.ref.def.weapon] || player.held.ref.def.weapon;

@@ -97,6 +97,15 @@ export const BALANCE = {
     max: 0.18,
   },
 
+  slip: {
+    radius: 0.7,           // metres a grounded Dweeb must step inside a peel
+    cooldown: 1.6,         // per-Dweeb grace so a pile of peels cannot stun-lock
+    stun: 0.55,
+    up: 4.6,
+    forward: 4.2,
+    spin: 9,
+  },
+
   // Recovery tools (Spec 6)
   airDodge: { speed: 11, invuln: 0.25, duration: 0.28, cooldown: 1.2 },
   tech: { buffer: 0.1, invuln: 0.3, missProne: 0.55 },
@@ -231,6 +240,7 @@ export const BALANCE = {
   gadgets: {
     freezeRay: { range: 7.5, cone: 0.55, cooldown: 0.85, freeze: 1.5, style: 7 },
     magnet: { range: 8, cooldown: 1.15, pull: 16, style: 5 },
+    grappleGlove: { range: 22, cooldown: 1.2, spring: 60, maxSpeed: 18, detachDist: 1.5, maxTime: 2.5, yankSpeed: 14, yankUp: 4, hitstun: 0.3, style: 8 },
   },
 
   // Style meter (Spec: gains, tiers, decay). Single source of truth — CombatSystem.STYLE,
@@ -297,14 +307,14 @@ export const TYPE_STATS = {
   bean:        { label: 'Bean',        mass: 3.1, move: 0.97, jump: 1.02, armor: 1.0,  growthTaken: 0.98, airAccel: 1.0,  escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Tilted legume with side eyes' },
   tadpole:     { label: 'Tadpole',     mass: 2.7, move: 1.08, jump: 1.08, armor: 1.05, growthTaken: 1.0,  airAccel: 1.1,  escape: 1.0, diveCd: 0.95, diveDmg: 0.95, hitDmg: 1.0,  blurb: 'Wagging spring tail' },
   floppy:      { label: 'Floppy',      mass: 3.0, move: 1.0,  jump: 1.05, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.0,  escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Heavy drooping ear lobes' },
-  chonk:       { label: 'Chonk',       mass: 4.0, move: 0.82, jump: 0.85, armor: 0.86, growthTaken: 0.90, airAccel: 0.8,  escape: 1.3, diveCd: 1.3,  diveDmg: 1.25, hitDmg: 1.15, blurb: 'Heavy 4-legged block' },
-  ghosty:      { label: 'Ghosty',      mass: 2.4, move: 1.14, jump: 1.2,  armor: 1.18, growthTaken: 1.08, airAccel: 1.25, escape: 1.1, diveCd: 0.9,  diveDmg: 0.9,  hitDmg: 0.95, blurb: 'Floating sheet specter' },
+  chonk:       { label: 'Chonk',       mass: 4.0, move: 0.82, jump: 0.85, armor: 0.86, growthTaken: 0.90, airAccel: 0.8,  escape: 1.3, diveCd: 1.3,  diveDmg: 1.25, hitDmg: 1.15, blurb: 'Heavy 4-legged block', signature: { id: 'quake', name: 'Chonk Quake', blurb: 'Hard landings shove rivals', radius: 2.8, minFall: 12 } },
+  ghosty:      { label: 'Ghosty',      mass: 2.4, move: 1.14, jump: 1.2,  armor: 1.18, growthTaken: 1.08, airAccel: 1.25, escape: 1.1, diveCd: 0.9,  diveDmg: 0.9,  hitDmg: 0.95, blurb: 'Floating sheet specter', signature: { id: 'phase', name: 'Ghost Phase', blurb: 'First air-dodge per stock is free', invuln: 0.1 } },
   triclops:    { label: 'Tri-Clops',   mass: 3.1, move: 0.98, jump: 1.02, armor: 1.0,  growthTaken: 0.98, airAccel: 0.98, escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Pyramid with 3 mismatched eyes' },
   rolling_eye: { label: 'Roll-Eye',    mass: 2.9, move: 1.04, jump: 1.02, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.02, escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Smiley orb with wander eye' },
   sherbet:     { label: 'Sherbet',     mass: 2.8, move: 1.06, jump: 1.06, armor: 1.02, growthTaken: 1.0,  airAccel: 1.05, escape: 1.0, diveCd: 1.0,  diveDmg: 1.0,  hitDmg: 1.0,  blurb: 'Pastel rainbow swirl' },
   antenna:     { label: 'Antenna',     mass: 2.7, move: 1.07, jump: 1.08, armor: 1.04, growthTaken: 1.0,  airAccel: 1.06, escape: 1.0, diveCd: 0.98, diveDmg: 0.98, hitDmg: 1.0,  blurb: 'Teardrop with radio top' },
-  boing:       { label: 'Boing',       mass: 3.0, move: 1.1,  jump: 1.35, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.12, escape: 1.0, diveCd: 0.9,  diveDmg: 1.05, hitDmg: 1.05, blurb: 'Steel coiled spring legs' },
-  boxer:       { label: 'Boxer',       mass: 3.5, move: 0.95, jump: 0.92, armor: 0.88, growthTaken: 0.92, airAccel: 0.9,  escape: 1.1, diveCd: 1.1,  diveDmg: 1.25, hitDmg: 1.2,  blurb: 'Giant boxing gloves' },
+  boing:       { label: 'Boing',       mass: 3.0, move: 1.1,  jump: 1.35, armor: 1.0,  growthTaken: 1.0,  airAccel: 1.12, escape: 1.0, diveCd: 0.9,  diveDmg: 1.05, hitDmg: 1.05, blurb: 'Steel coiled spring legs', signature: { id: 'pogo', name: 'Pogo Spring', blurb: 'Hold jump to pogo on landing', bounce: 11.5 } },
+  boxer:       { label: 'Boxer',       mass: 3.5, move: 0.95, jump: 0.92, armor: 0.88, growthTaken: 0.92, airAccel: 0.9,  escape: 1.1, diveCd: 1.1,  diveDmg: 1.25, hitDmg: 1.2,  blurb: 'Giant boxing gloves', signature: { id: 'uppercut', name: 'Uppercut Streak', blurb: 'Every 3rd punch is an uppercut', every: 3 } },
   plunger:     { label: 'Plunger',     mass: 3.1, move: 1.0,  jump: 1.0,  armor: 0.98, growthTaken: 0.98, airAccel: 1.0,  escape: 1.05,diveCd: 1.0,  diveDmg: 1.05, hitDmg: 1.05, blurb: 'Accordion suction cup arms' },
 };
 
