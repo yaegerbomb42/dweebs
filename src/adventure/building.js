@@ -85,6 +85,27 @@ export const BLUEPRINTS = [
     cost: { wood: 3, stone: 3 },
     desc: 'Barricade that lobs plush toy balls at invading critters.',
   },
+  {
+    id: 'tradepost',
+    name: 'Trading Post',
+    icon: '🏪',
+    cost: { wood: 6, stone: 2 },
+    desc: 'A merchant stall. Traveling caravans stop here to trade goods for gold.',
+  },
+  {
+    id: 'bakery',
+    name: 'Berry Bakery',
+    icon: '🥧',
+    cost: { wood: 4, stone: 4 },
+    desc: 'Bakes 3 berries into a pie worth 1 gold every 25 seconds.',
+  },
+  {
+    id: 'garden',
+    name: 'Berry Garden',
+    icon: '🌱',
+    cost: { wood: 2, berries: 4 },
+    desc: 'A fenced garden plot that sprouts 3 fresh berry bushes.',
+  },
 ];
 
 // Every handcrafted landmark is also a placeable blueprint. The toolbar can grow without the
@@ -244,6 +265,9 @@ export class BuildingManager {
   confirmPlacement(colony, world) {
     if (!this.activeBlueprint || !this.isValidPlacement) return null;
     const bp = this.activeBlueprint;
+    // Remember the world so destroyStructure() can unregister the structure's
+    // hooks (ziplines, spring pads) when it is demolished.
+    if (world) this._world = world;
 
     // Locked blueprints need a town-tier milestone or a ruin-vault chest first.
     if (colony && typeof colony.isBlueprintUnlocked === 'function' && !colony.isBlueprintUnlocked(bp.id)) {
@@ -286,8 +310,9 @@ export class BuildingManager {
   /** Place a structure without charging costs (save restore). */
   placeSaved(data, world, colony = null) {
     if (!data || !data.id) return null;
+    if (world) this._world = world;
     const pos = new THREE.Vector3(data.x || 0, data.y || 0, data.z || 0);
-    const structure = this._instantiateStructure(data.id, pos, world);
+    const structure = this._instantiateStructure(data.id, pos, world, true);
     if (data.stored && structure.stored) {
       structure.stored = { ...structure.stored, ...data.stored };
       if (typeof structure._refreshFill === 'function') structure._refreshFill();
@@ -309,6 +334,20 @@ export class BuildingManager {
     const idx = this.placedStructures.indexOf(structure);
     if (idx === -1) return false;
     this.placedStructures.splice(idx, 1);
+    // Unregister the structure's world hooks so a demolished springboard
+    // doesn't bounce Dweebs off thin air and a demolished tower doesn't
+    // leave a ghost zipline wire behind.
+    const w = this._world;
+    if (w) {
+      if (structure.zipline && Array.isArray(w.ziplines)) {
+        const zi = w.ziplines.indexOf(structure.zipline);
+        if (zi !== -1) w.ziplines.splice(zi, 1);
+      }
+      if (structure.springPad && Array.isArray(w.springPads)) {
+        const pi = w.springPads.indexOf(structure.springPad);
+        if (pi !== -1) w.springPads.splice(pi, 1);
+      }
+    }
     if (structure.toy) structure.toy.dispose?.();
     if (structure.group && this.scene) this.scene.remove(structure.group);
     if (structure.projectiles) {
@@ -404,13 +443,39 @@ export class BuildingManager {
       barrel.rotation.x = Math.PI / 3;
       barrel.position.set(0, 2.4, 0.4);
       group.add(barrel);
+    } else if (id === 'tradepost') {
+      const stall = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.1, 2.0), ghostMat);
+      stall.position.y = 0.55;
+      group.add(stall);
+      const awning = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.15, 2.6), ghostMat);
+      awning.position.y = 2.6;
+      awning.rotation.x = -0.15;
+      group.add(awning);
+    } else if (id === 'bakery') {
+      const hut = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 2.1, 2.6, 10), ghostMat);
+      hut.position.y = 1.3;
+      group.add(hut);
+      const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.6, 6), ghostMat);
+      chimney.position.set(0.9, 3.4, 0);
+      group.add(chimney);
+    } else if (id === 'garden') {
+      const plot = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.2, 5.0), ghostMat);
+      plot.position.y = 0.1;
+      group.add(plot);
+      for (const [fx, fz] of [[-2.5, -2.5], [2.5, -2.5], [-2.5, 2.5], [2.5, 2.5]]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 5), ghostMat);
+        post.position.set(fx, 0.6, fz);
+        group.add(post);
+      }
     }
 
     noOutline(group);
     return group;
   }
 
-  _instantiateStructure(id, pos, world) {
+  _instantiateStructure(id, pos, world, fromSave = false) {
+    // Remember the world for destroyStructure() hook cleanup (any entry path).
+    if (world) this._world = world;
     // Handcrafted toy-set landmarks are built by the ToyBuildings engine.
     const structureDef = getStructureDef(id);
     if (structureDef) {
@@ -453,13 +518,15 @@ export class BuildingManager {
 
       // Register with world springpads so any Dweeb stepping on it bounces high!
       if (world && world.springPads) {
-        world.springPads.push({
+        const padEntry = {
           x: pos.x, y: pos.y, z: pos.z,
           radius: 1.6,
           boostVelocity: 18.0,
           mesh: pad,
           rebound: 0,
-        });
+        };
+        world.springPads.push(padEntry);
+        result.springPad = padEntry; // destroyStructure() unregisters this
       }
 
       if (this.physicsWorld) {
@@ -562,14 +629,16 @@ export class BuildingManager {
       group.add(ring);
 
       if (world && world.springPads) {
-        world.springPads.push({
+        const padEntry = {
           x: pos.x, y: pos.y, z: pos.z,
           radius: 2.0,
           boostVelocity: 22.0,
           mesh: pad,
           rebound: 0,
           launchesItems: true,
-        });
+        };
+        world.springPads.push(padEntry);
+        result.springPad = padEntry; // destroyStructure() unregisters this
       }
 
       if (this.physicsWorld) {
@@ -795,10 +864,12 @@ export class BuildingManager {
       result.gatherTimer = 0;
       result.gatheredTotal = 0;
       result.update = (dt, ctx) => {
-        if (result.blades) result.blades.rotation.z += dt * 1.5;
         const { world, colony } = ctx || {};
+        // Wind spins the blades twice as fast — and doubles the gather rate.
+        const windy = !!(world && world.weather === 'wind');
+        if (result.blades) result.blades.rotation.z += dt * (windy ? 3.0 : 1.5);
         if (!world || !world.berryBushes) return;
-        result.gatherTimer += dt;
+        result.gatherTimer += dt * (windy ? 2 : 1);
         if (result.gatherTimer < 4) return;
         result.gatherTimer = 0;
         let took = 0;
@@ -1003,11 +1074,143 @@ export class BuildingManager {
         const c = this.physicsWorld.createStaticBox(pos.x, pos.y + 1.0, pos.z, 1.7, 1.0, 0.45, 'wood');
         result.colliders.push(c);
       }
+    } else if (id === 'tradepost') {
+      // ── Trading Post: a striped merchant stall. Its presence is what
+      // summons the traveling caravan (see Meadowlands._updateMerchant).
+      const postMat = toonMat({ color: 0x78350f, flatShading: true });
+      for (const [px, pz] of [[-1.6, -0.9], [1.6, -0.9], [-1.6, 0.9], [1.6, 0.9]]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 2.6, 6), postMat);
+        post.position.set(px, 1.3, pz);
+        group.add(post);
+      }
+      const awning = new THREE.Mesh(
+        new THREE.BoxGeometry(4.2, 0.18, 2.8),
+        toonMat({ color: 0xef4444, flatShading: true })
+      );
+      awning.position.y = 2.7;
+      awning.rotation.x = -0.12;
+      group.add(awning);
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(4.2, 0.19, 0.7),
+        toonMat({ color: 0xfef3c7, flatShading: true })
+      );
+      stripe.position.set(0, 2.7, -0.7);
+      stripe.rotation.x = -0.12;
+      group.add(stripe);
+      const counter = new THREE.Mesh(
+        new THREE.BoxGeometry(3.2, 1.0, 1.2),
+        toonMat({ color: 0xb45309, flatShading: true })
+      );
+      counter.position.y = 0.5;
+      group.add(counter);
+      for (let i = 0; i < 3; i++) {
+        const crate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.7, 0.7),
+          toonMat({ color: 0xd97706, flatShading: true })
+        );
+        crate.position.set(-1.1 + i * 1.1, 1.35, 0);
+        crate.rotation.y = i * 0.4;
+        group.add(crate);
+      }
+      const sign = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, 0.7, 0.1),
+        toonMat({ color: PALETTE.yellow, flatShading: true })
+      );
+      sign.position.set(0, 2.1, 1.15);
+      group.add(sign);
+
+      if (this.physicsWorld) {
+        const c = this.physicsWorld.createStaticBox(pos.x, pos.y + 0.5, pos.z, 1.6, 0.5, 0.6, 'wood');
+        result.colliders.push(c);
+      }
+    } else if (id === 'bakery') {
+      // ── Berry Bakery: turns 3 berries into 1 gold every 25 seconds.
+      const hut = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.9, 2.1, 2.6, 10),
+        toonMat({ color: 0xfde68a, flatShading: true })
+      );
+      hut.position.y = 1.3;
+      group.add(hut);
+      const roof = new THREE.Mesh(
+        new THREE.ConeGeometry(2.3, 1.4, 10),
+        toonMat({ color: PALETTE.red, flatShading: true })
+      );
+      roof.position.y = 3.3;
+      group.add(roof);
+      const chimney = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.35, 1.8, 6),
+        toonMat({ color: 0x78716c, flatShading: true })
+      );
+      chimney.position.set(0.9, 3.6, 0);
+      group.add(chimney);
+      // A golden pie on a stick out front — the universal sign of bakery.
+      const piePole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.06, 1.6, 5),
+        toonMat({ color: 0x78350f, flatShading: true })
+      );
+      piePole.position.set(2.4, 0.8, 0);
+      group.add(piePole);
+      const pie = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.55, 0.45, 0.25, 8),
+        toonMat({ color: 0xf59e0b, flatShading: true })
+      );
+      pie.position.set(2.4, 1.7, 0);
+      group.add(pie);
+
+      result.bakeTimer = 0;
+      result.bakes = 0;
+      result.update = (dt, ctx) => {
+        const { colony } = ctx || {};
+        if (!colony) return;
+        result.bakeTimer += dt;
+        if (result.bakeTimer < 25) return;
+        result.bakeTimer = 0;
+        if ((colony.resources.berries || 0) >= 3) {
+          colony.resources.berries -= 3;
+          colony.addResource('gold', 1, []);
+          result.bakes += 1;
+        }
+      };
+
+      if (this.physicsWorld) {
+        const c = this.physicsWorld.createFixedCylinder(pos.x, pos.y + 1.3, pos.z, 2.0, 1.3, 'wood');
+        result.colliders.push(c);
+      }
+    } else if (id === 'garden') {
+      // ── Berry Garden: a fenced plot that sprouts 3 fresh berry bushes.
+      // Bushes are planted on first placement only — restoring from a save
+      // must NOT plant another 3 every load (fromSave guard).
+      const soil = new THREE.Mesh(
+        new THREE.BoxGeometry(5.0, 0.25, 5.0),
+        toonMat({ color: 0x65a30d, flatShading: true })
+      );
+      soil.position.y = 0.12;
+      group.add(soil);
+      const fenceMat = toonMat({ color: 0x92400e, flatShading: true });
+      for (const [fx, fz, w, d] of [
+        [0, -2.5, 5.2, 0.15], [0, 2.5, 5.2, 0.15],
+        [-2.5, 0, 0.15, 5.2], [2.5, 0, 0.15, 5.2],
+      ]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, d), fenceMat);
+        rail.position.set(fx, 0.75, fz);
+        group.add(rail);
+      }
+      for (const [fx, fz] of [[-2.5, -2.5], [2.5, -2.5], [-2.5, 2.5], [2.5, 2.5]]) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.1, 5), fenceMat);
+        post.position.set(fx, 0.55, fz);
+        group.add(post);
+      }
+      if (!fromSave && world && typeof world._createBerryBush === 'function') {
+        const gy = world._getHeight ? world._getHeight(pos.x, pos.z) : pos.y;
+        world._createBerryBush(pos.x - 1.4, gy, pos.z);
+        world._createBerryBush(pos.x + 1.4, gy, pos.z + 0.8);
+        world._createBerryBush(pos.x, gy, pos.z - 1.5);
+      }
     }
 
     // Torchlights flank the buildings so the village glows at night.
     if (world && typeof world.addTorchlight === 'function' &&
-      ['tent', 'silo', 'ziptower', 'berrymill', 'firepit'].includes(id)) {
+      ['tent', 'silo', 'ziptower', 'berrymill', 'firepit', 'tradepost', 'bakery'].includes(id)) {
       world.addTorchlight(pos.x + 2.4, pos.y, pos.z + 1.2);
       world.addTorchlight(pos.x - 2.4, pos.y, pos.z - 1.2);
     }
