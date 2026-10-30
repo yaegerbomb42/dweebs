@@ -221,12 +221,22 @@ export function buildScreens() {
           </div>
         </section>
 
-        <!-- DAILY CHALLENGE: one per calendar day, wired into the arcade -->
-        <section class="hub-daily" id="hub-daily" aria-label="Daily challenge">
+        <!-- DAILY CONTRACT: one per calendar day, with progress, streak, rewards -->
+        <section class="hub-daily" id="hub-daily" aria-label="Daily contract">
           <div class="hub-daily-copy">
-            <span class="hub-daily-kicker">🎯 DAILY CHALLENGE</span>
+            <span class="hub-daily-kicker">🎯 DAILY CONTRACT</span>
             <h3 class="hub-daily-title" id="daily-title">…</h3>
             <p class="hub-daily-desc" id="daily-desc">…</p>
+            <div class="hub-daily-progress-wrap hidden" id="daily-progress-wrap">
+              <div class="hub-daily-progress-track">
+                <div class="hub-daily-progress-bar" id="daily-progress-bar"></div>
+              </div>
+              <span class="hub-daily-progress-text" id="daily-progress-text">0 / 1</span>
+            </div>
+            <div class="hub-daily-meta">
+              <span class="hub-daily-streak hidden" id="daily-streak"></span>
+              <span class="hub-daily-coins hidden" id="daily-total-coins"></span>
+            </div>
           </div>
           <button class="btn big yellow hub-daily-cta" id="app-btn-daily" data-launch data-target="">TAKE THE CHALLENGE</button>
         </section>

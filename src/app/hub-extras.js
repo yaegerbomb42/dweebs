@@ -14,6 +14,7 @@
 
 import { loadSettings } from './settings.js';
 import { CHARACTER_ROSTER } from '../player/characterList.js';
+import { getDaily, claim, getTotalCoins, todayKey, contractFor } from './daily.js';
 
 // ─── loading tips ────────────────────────────────────────────────────────────
 // Shown by src/app/loading.js while the bar is under 100%. Real mechanics,
@@ -178,17 +179,90 @@ export function applyProfile(root, settings = loadSettings()) {
   node.append(d, t);
 }
 
-/** Fill the daily-challenge card; the CTA's data-target is what boot.js clicks. */
-export function applyDaily(root, challenge = pickDaily()) {
-  if (!root?.querySelector) return challenge;
-  setText(root, '#daily-title', `${challenge.icon} ${challenge.title}`);
-  setText(root, '#daily-desc', challenge.desc);
+/** Fill the daily-contract card with progress, streak, claim button, and coins. */
+export function applyDaily(root, opts = {}) {
+  if (!root?.querySelector) return null;
+
+  // Get today's contract state
+  const daily = getDaily();
+  const { contract, progress, completed, claimed, streak } = daily;
+  const target = contract.target;
+
+  // Title with icon
+  setText(root, '#daily-title', `${contract.icon || '🎯'} ${contract.title}`);
+
+  // Description
+  setText(root, '#daily-desc', contract.desc || '');
+
+  // Progress bar
+  const progressWrap = root.querySelector('#daily-progress-wrap');
+  const progressBar = root.querySelector('#daily-progress-bar');
+  const progressText = root.querySelector('#daily-progress-text');
+  if (progressWrap && progressBar && progressText) {
+    const pct = target > 0 ? Math.min(100, Math.round((progress / target) * 100)) : 0;
+    progressBar.style.width = `${pct}%`;
+    progressText.textContent = `${progress} / ${target}`;
+    progressWrap.classList.toggle('hidden', false);
+  }
+
+  // Streak flames
+  const streakEl = root.querySelector('#daily-streak');
+  if (streakEl) {
+    if (streak > 0) {
+      streakEl.textContent = `🔥 x${streak}`;
+      streakEl.classList.remove('hidden');
+    } else {
+      streakEl.classList.add('hidden');
+    }
+  }
+
+  // Total coins
+  const totalCoins = getTotalCoins();
+  const coinsEl = root.querySelector('#daily-total-coins');
+  if (coinsEl) {
+    coinsEl.textContent = `💰 ${totalCoins}`;
+    coinsEl.classList.remove('hidden');
+  }
+
+  // CTA button — keep data-target for boot.js click handling
   const btn = root.querySelector('#app-btn-daily');
   if (btn) {
-    btn.dataset.target = challenge.target;
-    btn.setAttribute('aria-label', `Daily challenge: ${challenge.title}. ${challenge.desc}`);
+    const LAUNCH = { brawl: 'app-btn-brawl', derby: 'app-btn-derby', walldrop: 'app-btn-walldrop', build_arena: 'app-btn-builder' };
+    // boot.js presses this game button; empty while the reward is waiting to be claimed
+    btn.dataset.target = completed && !claimed ? '' : (LAUNCH[contract.mode] || 'app-btn-brawl');
+    btn.setAttribute('aria-label', `Daily contract: ${contract.title}. ${contract.desc || ''}`);
+
+    // Replace button content based on state
+    if (completed && !claimed) {
+      btn.textContent = 'CLAIM';
+      btn.disabled = false;
+      btn.classList.add('hub-daily-claim');
+      btn.classList.remove('hub-daily-cta');
+      // Attach claim handler (once)
+      if (!btn._claimBound) {
+        btn._claimBound = true;
+        btn.addEventListener('click', () => {
+          const cur = getDaily();
+          if (!cur.completed || cur.claimed) return;
+          claim();
+          // Re-render to show claimed state
+          applyDaily(root, opts);
+        });
+      }
+    } else if (claimed) {
+      btn.textContent = '✓ CLAIMED · PLAY AGAIN';
+      btn.disabled = false;
+      btn.classList.add('hub-daily-claimed');
+      btn.classList.remove('hub-daily-cta', 'hub-daily-claim');
+    } else {
+      btn.textContent = 'TAKE THE CHALLENGE';
+      btn.classList.add('hub-daily-cta');
+      btn.classList.remove('hub-daily-claim', 'hub-daily-claimed');
+      btn.disabled = false;
+    }
   }
-  return challenge;
+
+  return daily;
 }
 
 // ─── featured-dweeb spotlight ────────────────────────────────────────────────

@@ -759,7 +759,7 @@
   color: #475569;
 }
 
-/* ─── Daily challenge: one card, one CTA, straight into the arcade ────────── */
+/* ─── Daily contract: one card with progress, streak, rewards ───────────────── */
 .hub-daily {
   width: 100%;
   display: flex;
@@ -792,6 +792,68 @@
 }
 .hub-daily-desc { font-weight: 700; font-size: 14.5px; color: #f3e9c8; max-width: 52ch; }
 .hub-daily-cta { flex: none; font-size: 20px; padding: 10px 30px; }
+
+/* Progress bar */
+.hub-daily-progress-wrap {
+  width: 100%;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hub-daily-progress-track {
+  height: 10px;
+  background: rgba(0, 0, 0, .5);
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.hub-daily-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ffd23f, #ff9a3c);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+.hub-daily-progress-text {
+  font-family: var(--display);
+  font-size: 12px;
+  color: var(--yellow);
+  text-align: right;
+  letter-spacing: 0.5px;
+}
+
+/* Meta row: streak + coins */
+.hub-daily-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 8px;
+  font-family: var(--display);
+  font-size: 14px;
+}
+.hub-daily-streak { color: #ff6b35; text-shadow: 0 2px 0 rgba(0,0,0,.3); }
+.hub-daily-coins { color: #ffd23f; }
+
+/* Claim / Claimed button states */
+.hub-daily-claim {
+  background: linear-gradient(180deg, #5ee06a, #3cc455) !important;
+  border-color: #2a8a3a !important;
+  color: #fff !important;
+  animation: pulseGlow 1.5s ease-in-out infinite;
+}
+.hub-daily-claimed {
+  background: #4a4a5a !important;
+  border-color: var(--ink) !important;
+  color: #888 !important;
+  cursor: not-allowed;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(94, 224, 106, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(94, 224, 106, 0); }
+}
 
 /* ─── What's new: the hub's patch notes ───────────────────────────────────── */
 .hub-news {
