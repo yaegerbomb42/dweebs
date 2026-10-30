@@ -53,7 +53,7 @@ describe('warfare balance (real equal-cost duels)', () => {
       const beats = others.filter(b => wins(a, b) >= 4);
       expect(beats.length, `${a} beats nothing`).toBeGreaterThan(0);
     }
-  });
+  }, 30000); // 7 recruitables = 42+ full duels; slow CI runners need more than the 5s default
   it('counters hold at a bigger budget too', () => {
     expect(wins('shield', 'rocket', 500)).toBeGreaterThanOrEqual(3);
     expect(wins('kami', 'shield', 500)).toBeGreaterThanOrEqual(4);
