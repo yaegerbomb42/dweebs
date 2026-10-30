@@ -12,7 +12,7 @@ import { toonMat, noOutline } from '../render/Toon.js';
 export const BODY_SHAPES = ['blob', 'cube', 'spiky', 'star', 'chonk', 'capsule', 'pyramid', 'donut'];
 export const APPENDAGES = ['none', 'horns', 'antennae', 'bunny_ears', 'boxing_gloves', 'plungers', 'spikes', 'tail',
   'dragon_wings', 'anvil_tail', 'magnet_eyes', 'spring_stompers',
-  'jetpack', 'wings', 'ram_plates', 'shock_gloves', 'satellite'];
+  'jetpack', 'wings', 'ram_plates', 'shock_gloves', 'satellite', 'bouncy_belly'];
 export const FEET_TYPES = ['pegs', 'coils', 'stompers', 'treads', 'jet_skates'];
 export const BROW_STYLES = ['angry', 'derpy', 'confident', 'crazy', 'sleepy', 'none'];
 export const MOUTH_STYLES = ['grin', 'teeth', 'open', 'frown', 'fangs'];
@@ -118,6 +118,15 @@ export const APPENDAGE_GAMEPLAY = {
     bounceMinFall: 4,
     bounceReturn: 0.45,
     bounceMax: 9,
+  },
+  bouncy_belly: {
+    label: 'Bouncy Belly',
+    desc: 'Compresses on hard landings, boings you up and knocks nearby rivals away.',
+    bounceMinFall: 5,
+    bounceReturn: 0.55,
+    bounceMax: 10,
+    bellyRadius: 3.4,
+    bellyKnock: 6,
   },
   // Merge: wave-2 appendages get descriptors (cosmetic in the arena like the
   // legacy set; their gameplay value flows through APPENDAGE_EFFECTS stats).
@@ -358,6 +367,7 @@ export const APPENDAGE_EFFECTS = {
   ram_plates: { armor: 0.25, speed: -0.1 },
   shock_gloves: { mass: 0.15, speed: 0.05 },
   satellite: { speed: 0.15, armor: -0.05 },
+  bouncy_belly: { armor: 0.1, speed: -0.05 },   // padded belly soaks hits, a little extra heft
 };
 
 /** Additive stat deltas per foot type. */
@@ -1007,6 +1017,23 @@ export function buildCustomDweebModel(config = {}) {
       appGroup.userData.fx = { ...(appGroup.userData.fx || {}), springs: [sprL, sprR] };
       break;
     }
+    case 'bouncy_belly': {
+      // A big inflatable belly sphere on the torso with a darker seam.
+      const bellyGeo = new THREE.SphereGeometry(0.38 * Math.max(sx, sz), 16, 12);
+      const bellyMesh = new THREE.Mesh(bellyGeo, accentMat);
+      bellyMesh.position.set(0, bodyTopY - 0.12 * sy, 0.28 * sz);
+      bellyMesh.scale.set(1, 0.85, 1.15); // slightly squashed sphere
+      appGroup.add(bellyMesh);
+      // Darker seam ring around the equator
+      const seamGeo = new THREE.TorusGeometry(0.38 * Math.max(sx, sz) * 1.02, 0.018, 8, 32);
+      const seamMesh = new THREE.Mesh(seamGeo, darkMat);
+      seamMesh.position.set(0, bodyTopY - 0.12 * sy, 0.28 * sz);
+      seamMesh.rotation.x = Math.PI / 2;
+      appGroup.add(seamMesh);
+      // Store for squash animation
+      appGroup.userData.fx = { ...(appGroup.userData.fx || {}), belly: bellyMesh, bellySeam: seamMesh };
+      break;
+    }
     case 'jetpack': {
       // Twin thruster tanks strapped to the back, with little flame cones.
       const tankGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.42, 8);
@@ -1245,6 +1272,7 @@ export function freshAppendageState() {
     slamDone: false,     // anvil_tail: slam triggered, re-arms when airborne
     magnetPulse: 0,      // magnet_eyes: visual pulse oscillator
     springSquash: 0,     // spring_stompers: landing compression 0..1 (decays)
+    bellySquash: 0,      // bouncy_belly: landing compression 0..1 (decays)
   };
 }
 
@@ -1363,6 +1391,35 @@ export function updateAppendageGameplay(dweeb, dt, ctx = {}) {
       st.springSquash = Math.max(0, st.springSquash - dt * 4);
       break;
     }
+    case 'bouncy_belly': {
+      if (landed && fallSpeed > P.bounceMinFall && typeof dweeb.body.setLinvel === 'function') {
+        const bounce = Math.min(fallSpeed * P.bounceReturn, P.bounceMax);
+        dweeb.body.setLinvel({ x: v.x, y: bounce, z: v.z }, true);
+        st.bellySquash = Math.min(1, fallSpeed / 12);
+        // Knock nearby rivals away (crowd-control)
+        const pos = typeof dweeb.getPosition === 'function' ? dweeb.getPosition() : { x: 0, y: 0, z: 0 };
+        for (const r of ctx.rivals || []) {
+          if (!r || r === dweeb || r.active === false || r.eliminated) continue;
+          if (typeof r.getPosition !== 'function') continue;
+          const rp = r.getPosition();
+          const dx = rp.x - pos.x;
+          const dz = rp.z - pos.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist > P.bellyRadius || dist < 0.3) continue;
+          // Small hitstun
+          r.hitstun = Math.max(r.hitstun || 0, 0.35);
+          // Outward knockback
+          if (r.body && typeof r.body.linvel === 'function' && typeof r.body.setLinvel === 'function') {
+            const rv = r.body.linvel();
+            const inv = 1 / (dist || 1);
+            const knock = P.bellyKnock * (1 - dist / P.bellyRadius);
+            r.body.setLinvel({ x: rv.x + dx * inv * knock, y: Math.max(rv.y, 2.5), z: rv.z + dz * inv * knock }, true);
+          }
+        }
+      }
+      st.bellySquash = Math.max(0, st.bellySquash - dt * 5);
+      break;
+    }
     default:
       break;
   }
@@ -1399,6 +1456,19 @@ function animateAppendageFx(model, gp, time) {
     const squash = 1 - st.springSquash * 0.45;
     fx.springs[0].scale.set(1, squash, 1);
     fx.springs[1].scale.set(1, squash, 1);
+  }
+  if (fx.belly && fx.bellySeam) {
+    // Squash vertically, stretch horizontally (volume-preserving-ish)
+    const squash = 1 - st.bellySquash * 0.55;
+    const stretch = 1 + st.bellySquash * 0.35;
+    fx.belly.scale.set(stretch, squash, stretch);
+    fx.bellySeam.scale.set(stretch, 1, stretch);
+    // Jiggle while it springs back out (offset from the build-time rest height, never accumulated)
+    fx.belly.userData.restY ??= fx.belly.position.y;
+    fx.bellySeam.userData.restY ??= fx.bellySeam.position.y;
+    const jiggle = st.bellySquash > 0 ? Math.sin(time * 40) * 0.02 * st.bellySquash : 0;
+    fx.belly.position.y = fx.belly.userData.restY + jiggle;
+    fx.bellySeam.position.y = fx.bellySeam.userData.restY + jiggle;
   }
 }
 
