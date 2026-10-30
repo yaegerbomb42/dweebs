@@ -763,6 +763,7 @@ function clearDweebs() {
   trainingLab = null;
   controller?.destroy();
   controller = null;
+  combat?.clearGooZones?.();
   for (const d of dweebs) d.destroy();
   dweebs = [];
   bots = [];

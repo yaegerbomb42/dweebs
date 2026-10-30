@@ -88,9 +88,11 @@ export class CombatSystem {
     this.fx = fx;
     this.time = 0;
     this.dweebs = [];
+    this.gooZones = [];
   }
 
   setDweebs(dweebs) {
+    this.clearGooZones();
     this.dweebs = dweebs;
   }
 
@@ -111,6 +113,7 @@ export class CombatSystem {
     d.isCharging = false;
     d.charging = 0;
     if (!d.canAct) return;
+    if (d.stuckTimer > 0) d.mashGoo?.(0.4);
 
     // Shooter weapon (melonCannon): lob an exploding melon instead of swinging
     if (d.held?.kind === 'object' && d.held.ref?.def?.isShooter) {
@@ -1562,6 +1565,7 @@ export class CombatSystem {
   // ═══ World effects ═══
 
   explode(pos, attacker, source = null) {
+    const slime = !!source?.def?.slimeBomb;
     this.onExplode?.(pos, attacker, source);
     if (source) {
       source.broken = true;
@@ -1576,7 +1580,7 @@ export class CombatSystem {
       const k = 1 - dist / 5 * 0.6;
       _dir.normalize();
       _dir.y = Math.max(_dir.y, 0.5);
-      const launch = t.receiveHit({ dir: _dir, ...A.explosion(k), attacker, time: this.time });
+      const launch = t.receiveHit({ dir: _dir, ...A.explosion(slime ? k * 0.3 : k), attacker, time: this.time }); // slime: a wet pop, the goo is the threat
       if (launch > 0) {
         this.fx.hit(t, attacker, launch, 'boom');
         // Blasts light oily Dweebs (INFERNO) and dry out wet ones a little
@@ -1594,6 +1598,7 @@ export class CombatSystem {
       this.physics.applyTorqueImpulse(obj.body, { x: (Math.random() - 0.5) * m, y: (Math.random() - 0.5) * m, z: (Math.random() - 0.5) * m });
     }
     this.fx.explosion(pos);
+    if (slime) this._spawnGooZones(pos, source);
   }
 
   // ═══ Chain reactions & fire ═══
@@ -1712,8 +1717,9 @@ export class CombatSystem {
     }
   }
 
-  breakObject(obj, by = null) {
+  breakObject(obj, by = null, hit = null) {
     const pos = obj.getPosition();
+    const slime = !!obj.def.slimeBomb;
     if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
     if (by) this.addStyle(by, 5);
     const color = obj.def.color ?? 0xc4a06a;
@@ -1741,6 +1747,7 @@ export class CombatSystem {
       }
     }
     this.fx.break(pos, obj);
+    if (slime) this._spawnGooZones(pos, obj);
 
     // Piñata Loot Burst: spill candies if this object has spill metadata
     if (obj.def?.spill) {
@@ -1781,76 +1788,219 @@ export class CombatSystem {
     }
   }
 
-  /**
-   * Shatter a prop. `hit` (optional): { dir, speed } of the blow. Chunk count and size come from
-   * the prop's mass and bulk, chunks carry the prop's momentum and blow out along the hit, and a
-   * big enough smash shoves nearby loose props, so breaking things is a physical event.
-   */
-  breakObject(obj, by = null, hit = null) {
-    const pos = obj.getPosition();
-    if (obj.def.status) this.status?.addZone(obj.def.status, pos, by ?? obj.thrownBy ?? null);
-    if (by) this.addStyle(by, 5);
-    const color = obj.def.color ?? 0xc4a06a;
-    const mass = obj.def.mass ?? 1;
-    const dims = obj.def.dims || {};
-    const bulk = Math.max(dims.hx ?? 0, dims.hy ?? 0, dims.hz ?? 0, dims.radius ?? 0, dims.halfHeight ?? 0, 0.3);
-    const vel = obj.body?.linvel?.() ?? { x: 0, y: 0, z: 0 };
-    const speed = hit?.speed ?? Math.hypot(vel.x, vel.y, vel.z);
-    let dir = hit?.dir;
-    if (!dir) { const l = Math.hypot(vel.x, vel.z) || 1; dir = { x: vel.x / l, y: 0, z: vel.z / l }; }
-    const count = Math.round(Math.min(16, Math.max(6, 5 + mass * 2.5 + bulk * 4)));
-    obj.broken = true;
-    this.arena.removeObject(obj);
-    this.arena.spawnDebris(pos, color, count, obj.def.material, obj.def.breakColors,
-      { vel, dir, power: Math.min(18, speed), size: Math.min(1.8, Math.max(0.8, bulk / 0.35)) });
-    // Shockwave: heavy smashes kick nearby loose props.
-    const shove = Math.min(6, mass * 0.8 + speed * 0.15);
-    if (shove > 1.2) {
-      for (const o of this.arena.objects) {
-        if (o === obj || o.isDebris || o.broken || o.isGrabbed || !o.body) continue;
-        const op = o.getPosition(), dx = op.x - pos.x, dz = op.z - pos.z, dd = Math.hypot(dx, dz);
-        if (dd > 2.8 || dd < 1e-3) continue;
-        const k = shove * (1 - dd / 2.8) * Math.min(1, (o.def?.mass ?? 1));
-        this.physics.applyImpulse(o.body, { x: dx / dd * k, y: k * 0.5, z: dz / dd * k });
+  // ═══ Sticky slime goo ═══
+
+  /** Raycast down to find the floor for a goo splat. Returns null over the void. */
+  _gooGroundPoint(pos) {
+    if (!pos || !this.physics) return null;
+    try {
+      const hit = this.physics.raycast(
+        { x: pos.x, y: pos.y + 0.5, z: pos.z },
+        { x: 0, y: -1, z: 0 },
+        60,
+        null,
+      );
+      if (hit?.point) return { x: hit.point.x, y: hit.point.y, z: hit.point.z };
+    } catch { /* no physics world / temporary body — fall through */ }
+    const arena = this.arena;
+    if (arena?.isOverGround?.(pos.x, pos.z, 0.2)) return { x: pos.x, y: 0, z: pos.z };
+    return null;
+  }
+
+  /** A slime bomb bursts into 1–3 sticky ground zones (deterministic spread from its id). */
+  _spawnGooZones(pos, source = null) {
+    if (!pos || !this.arena?.scene) return;
+    const def = source?.def || {};
+    const baseR = Number(def.gooRadius) || 2.1;
+    const baseLife = Number(def.gooLife) || 6;
+    const seed = Math.abs(source?.physicsId ?? Math.floor((pos.x * 131 + pos.z * 71) * 100)) | 0;
+    const count = 1 + (seed % 3);
+    const spread = baseR * 0.55;
+    const ground = this._gooGroundPoint(pos);
+    for (let i = 0; i < count; i++) {
+      let x = pos.x, z = pos.z;
+      if (i > 0) {
+        const a = seed * 0.73 + i * 2.1;
+        const r = spread * (0.55 + ((seed >> (i * 2)) % 5) / 8);
+        x += Math.cos(a) * r;
+        z += Math.sin(a) * r;
+      }
+      const g = i === 0 ? ground : this._gooGroundPoint({ x, y: pos.y + 1, z });
+      if (!g) continue;
+      const radius = i === 0 ? baseR : baseR * (0.55 + ((seed >> (i + 2)) % 4) * 0.1);
+      const zone = {
+        x: g.x, y: g.y, z: g.z,
+        radius, life: baseLife, maxLife: baseLife, age: 0,
+        group: null, bubbles: [], opacities: [],
+      };
+      this._createGooZone(zone);
+      this.gooZones.push(zone);
+    }
+  }
+
+  /** Build the glossy splat, rim and bubbling blobs for one goo zone. */
+  _createGooZone(zone) {
+    const scene = this.arena?.scene;
+    if (!scene || !zone) return;
+    try {
+      const group = new THREE.Group();
+      group.position.set(zone.x, zone.y, zone.z);
+
+      const puddleMat = new THREE.MeshStandardMaterial({
+        color: 0x5ee06a, emissive: 0x1d6b2d, emissiveIntensity: 0.35,
+        roughness: 0.18, metalness: 0.08, transparent: true, opacity: 0.86, depthWrite: false,
+      });
+      const puddle = new THREE.Mesh(new THREE.CircleGeometry(zone.radius, 30), puddleMat);
+      puddle.rotation.x = -Math.PI / 2;
+      puddle.position.y = 0.035;
+      puddle.renderOrder = 2;
+      group.add(puddle);
+
+      const rimMat = new THREE.MeshBasicMaterial({ color: 0x9dffb0, transparent: true, opacity: 0.45, depthWrite: false });
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(zone.radius * 0.92, 0.045, 6, 28), rimMat);
+      rim.rotation.x = -Math.PI / 2;
+      rim.position.y = 0.05;
+      rim.renderOrder = 2;
+      group.add(rim);
+
+      const bubbleMat = new THREE.MeshStandardMaterial({
+        color: 0x9dffb0, emissive: 0x2fa34f, emissiveIntensity: 0.25,
+        roughness: 0.12, metalness: 0.05, transparent: true, opacity: 0.72, depthWrite: false,
+      });
+      const bubbleGeo = new THREE.SphereGeometry(1, 8, 6);
+      const n = 4 + (Math.abs(Math.floor(zone.x * 37 + zone.z * 19)) % 4);
+      for (let i = 0; i < n; i++) {
+        const a = i * 2.39996 + zone.x;
+        const rr = zone.radius * (0.15 + ((i * 37) % 60) / 130);
+        const b = new THREE.Mesh(bubbleGeo, bubbleMat);
+        b.position.set(Math.cos(a) * rr, 0.06, Math.sin(a) * rr);
+        const base = zone.radius * (0.05 + ((i * 13) % 5) / 50);
+        b.scale.set(base, base * 0.55, base);
+        b.renderOrder = 3;
+        group.add(b);
+        zone.bubbles.push({ mesh: b, base, phase: i * 1.7 });
+      }
+
+      zone.opacities = [
+        { mat: puddleMat, base: 0.86 },
+        { mat: rimMat, base: 0.45 },
+        { mat: bubbleMat, base: 0.72 },
+      ];
+      zone.group = group;
+      zone.puddle = puddle;
+      zone.rim = rim;
+      scene.add(group);
+    } catch { /* visuals are optional: never let a bad mesh crash the frame */ }
+  }
+
+  _disposeGooZone(zone) {
+    if (!zone) return;
+    if (zone.group && this.arena?.scene) {
+      this.arena.scene.remove(zone.group);
+      const geos = new Set(), mats = new Set();
+      zone.group.traverse(o => {
+        if (o.geometry) geos.add(o.geometry);
+        if (o.material) mats.add(o.material);
+      });
+      for (const g of geos) g.dispose?.();
+      for (const m of mats) m.dispose?.();
+    }
+    zone.group = null;
+    zone.bubbles = [];
+    zone.opacities = [];
+  }
+
+  clearGooZones() {
+    for (const z of this.gooZones || []) this._disposeGooZone(z);
+    this.gooZones = [];
+  }
+
+  /** Per-frame goo: age puddles, pin Dweebs, drag and gently pull nearby props. */
+  _updateGoo(dt) {
+    if (dt <= 0) return;
+    const zones = (this.gooZones ||= []);
+
+    for (const d of this.dweebs) {
+      if (!d) continue;
+      if (d.gooImmune > 0) d.gooImmune = Math.max(0, d.gooImmune - dt);
+      if (d.stuckTimer > 0) {
+        d.stuckTimer = Math.max(0, d.stuckTimer - dt);
+        if (d.stuckTimer <= 0) {
+          d.stuckMash = 0;
+          d.gooImmune = Math.max(d.gooImmune || 0, 1.1);
+        }
       }
     }
-    this.fx.break(pos, obj);
 
-    // Piñata Loot Burst: spill candies if this object has spill metadata
-    if (obj.def?.spill) {
-      const { key, count = 6 } = obj.def.spill;
-      const candyDef = getObjectDef(key);
-      if (candyDef) {
-        for (let i = 0; i < count; i++) {
-          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
-          const radius = 0.4 + Math.random() * 0.3;
-          const x = pos.x + Math.cos(angle) * radius;
-          const z = pos.z + Math.sin(angle) * radius;
-          const y = pos.y + 0.5 + Math.random() * 0.5;
-          const candy = this.arena.spawnItem(key, { x, y, z });
-          if (candy && candy.body) {
-            const speed = 4 + Math.random() * 3;
-            candy.body.setLinvel({
-              x: Math.cos(angle) * speed * 0.7,
-              y: 3 + Math.random() * 4,
-              z: Math.sin(angle) * speed * 0.7,
-            }, true);
-            candy.body.setAngvel({
-              x: (Math.random() - 0.5) * 8,
-              y: (Math.random() - 0.5) * 8,
-              z: (Math.random() - 0.5) * 8,
-            }, true);
-            candy.candyLife = 12; // uneaten candy melts away
-            candy.candyGrace = 0.5; // can't be eaten mid-burst
-          }
+    if (!zones.length) return;
+    for (let i = zones.length - 1; i >= 0; i--) {
+      const zone = zones[i];
+      if (!zone) { zones.splice(i, 1); continue; }
+      zone.life -= dt;
+      zone.age += dt;
+
+      if (zone.group) {
+        const fade = zone.life < 0.7 ? Math.max(0, zone.life / 0.7) : 1;
+        for (const o of zone.opacities) o.mat.opacity = o.base * fade;
+        if (zone.puddle) zone.puddle.scale.setScalar(1 + Math.sin(zone.age * 2.4) * 0.03);
+        for (const b of zone.bubbles) {
+          const s = b.base * (1 + Math.sin(zone.age * 4 + b.phase) * 0.18);
+          b.mesh.scale.set(s, s * 0.55, s);
         }
-        if (Math.random() < 0.15) {
-          this.arena.spawnPowerUp(null);
+      }
+
+      if (zone.life <= 0) {
+        this._disposeGooZone(zone);
+        zones.splice(i, 1);
+        continue;
+      }
+
+      // Props in the puddle get dragged down and pulled toward the centre.
+      if (this.arena?.getObjectsNear) {
+        for (const { obj } of this.arena.getObjectsNear(zone, zone.radius + 0.35)) {
+          if (!obj?.body || obj.broken) continue;
+          const op = obj.getPosition?.();
+          if (!op || op.y - zone.y > 1.8 || op.y - zone.y < -1.5) continue;
+          const dx = zone.x - op.x, dz = zone.z - op.z;
+          const dist = Math.hypot(dx, dz) || 1;
+          const k = Math.exp(-5 * dt);
+          const pull = 1.4 * dt * Math.min(1, dist / (zone.radius || 1));
+          try {
+            const v = obj.body.linvel();
+            obj.body.setLinvel({ x: v.x * k + (dx / dist) * pull, y: v.y * k, z: v.z * k + (dz / dist) * pull }, true);
+            const av = obj.body.angvel?.();
+            if (av) {
+              const ak = Math.exp(-4 * dt);
+              obj.body.setAngvel({ x: av.x * ak, y: av.y * ak, z: av.z * ak }, true);
+            }
+          } catch { /* body may have been removed this frame */ }
         }
-        // Juicy feedback
-        this.fx._toyWord?.('SWEET!', pos, 0xffd23f, 'big');
-        this.fx.cam?.shake?.(0.25);
-        this.arena.excite?.(0.3);
+      }
+
+      for (const d of this.dweebs) {
+        if (!d?.active || d.grabbedBy || !d.body) continue;
+        const p = d.getPosition();
+        if (Math.hypot(p.x - zone.x, p.z - zone.z) > zone.radius) continue;
+        if (p.y - zone.y > 2 || p.y - zone.y < -1.6) continue;
+
+        if (d.stuckTimer <= 0 && (d.gooImmune || 0) <= 0) {
+          d.stuckTimer = 2.6;
+          d.stuckMash = 0;
+          d.landSquash = Math.max(d.landSquash || 0, 0.3);
+        }
+
+        if (d.stuckTimer > 0) {
+          try {
+            const v = d.body.linvel();
+            const k = Math.exp(-8 * dt);
+            d.body.setLinvel({ x: v.x * k, y: v.y * Math.exp(-2 * dt), z: v.z * k }, true);
+            const av = d.body.angvel?.();
+            if (av) {
+              const ak = Math.exp(-10 * dt);
+              d.body.setAngvel({ x: av.x * ak, y: av.y * ak, z: av.z * ak }, true);
+            }
+          } catch { /* body can be disabled during respawn */ }
+        }
       }
     }
   }
@@ -1941,6 +2091,7 @@ export class CombatSystem {
       this._updateStyle(d, dt);
     }
 
+    this._updateGoo(dt);
     this._updateFuses(dt);
     this._updateBurning(dt);
     this._updateProjectiles(dt);

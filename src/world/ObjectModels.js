@@ -976,6 +976,27 @@ const BUILDERS = {
     k.root.add(flame);
   },
 
+  slimeBomb(k) {
+    const goo = 0x5ee06a, dark = 0x2fa34f, gloss = 0x9dffb0;
+    k.add(Ico(0.3, 2), goo, { s: [1, 0.96, 1] });
+    // Glossy highlights and a few goo blobs running down the sides.
+    k.add(Ico(0.08, 1), gloss, { p: [-0.12, 0.17, 0.19], s: [1, 0.55, 0.7] });
+    k.add(Ico(0.045, 1), gloss, { p: [0.13, 0.05, 0.24], s: [1, 0.6, 0.7] });
+    k.add(Ico(0.075, 1), dark, { p: [0.21, -0.16, 0.1], s: [0.7, 1.5, 0.7] });
+    k.add(Ico(0.06, 1), dark, { p: [-0.19, -0.2, -0.08], s: [0.75, 1.4, 0.75] });
+    k.add(Ico(0.035, 1), goo, { p: [0.23, -0.26, 0.12] });
+    // Fuse cap and spark.
+    k.add(Cyl(0.095, 0.12, 0.05, 10), dark, { p: [0, 0.29, 0] });
+    k.add(Cyl(0.022, 0.03, 0.16, 6), INK, { p: [0, 0.39, 0] });
+    const spark = new THREE.Mesh(Ico(0.055, 1), toonMat({ color: 0xffd23f, emissive: 0xff9a3c, emissiveIntensity: 1 }));
+    spark.position.set(0, 0.49, 0);
+    spark.userData.flicker = true;
+    noOutline(spark);
+    k.root.add(spark);
+    k.eye([-0.1, 0.06, 0.26], [-0.25, 0.14, 1], 0.055);
+    k.eye([0.1, 0.06, 0.26], [0.25, 0.14, 1], 0.055);
+  },
+
   cake(k) {
     const pink = 0xffb3d9;
     k.add(Cyl(0.28, 0.28, 0.16, 16), pink, { p: [0, -0.07, 0] });

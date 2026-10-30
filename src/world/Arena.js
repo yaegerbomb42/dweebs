@@ -70,6 +70,7 @@ export const DROP_ITEMS = [
   { key: 'pogoStick', w: 3 },
   // rare: the KO makers
   { key: 'giantHammer', w: 1.5 }, { key: 'toyRocket', w: 1.5 }, { key: 'explosiveBarrel', w: 1.5 }, { key: 'anvil', w: 1 },
+  { key: 'slimeBomb', w: 2 },
   // gadget weapons: uncommon, capped by the live-item guard rather than RARE
   { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'extinguisher', w: 2 },
   { key: 'freezeRay', w: 2 }, { key: 'magnet', w: 2 }, { key: 'leafBlower', w: 2 },
@@ -86,6 +87,7 @@ const RARE = {
   anvil: { max: 1, cd: 45 },
   toyRocket: { max: 1, cd: 30 },
   explosiveBarrel: { max: 2, cd: 25 },
+  slimeBomb: { max: 2, cd: 15 },
 };
 // Pinball bumpers sit between spawn points, clear of the wrecking-cube swing lines (x = ±5.5)
 const BUMPERS = [0, 1, 2, 3].map(i => {

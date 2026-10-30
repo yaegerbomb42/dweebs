@@ -496,6 +496,17 @@ export const OBJECT_DEFS = {
     breakable: true, breakForce: 1000, damage: 2.5, color: 0xfff8ee,
     explosive: true, explosionForce: 16, explosionRadius: 5, rocket: true,
   },
+  slimeBomb: {
+    name: 'Sticky Slime Bomb',
+    shape: 'sphere', dims: { radius: 0.3 },
+    visualScale: [0.6, 0.6, 0.6],
+    material: 'rubber', mass: 1.3, grabbable: true, throwable: true,
+    breakable: true, breakForce: 900, damage: 1.6, color: 0x5ee06a,
+    explosive: true, explosionForce: 12, explosionRadius: 3.6,
+    slimeBomb: true, gooRadius: 2.1, gooLife: 6,
+    breakWord: 'SPLOOP!', splat: 0x5ee06a,
+    breakColors: [0x5ee06a, 0x2fa34f, 0x9dffb0, 0x1d6b2d],
+  },
   cake: {
     name: 'Party Cake',
     shape: 'cylinder', dims: { halfHeight: 0.15, radius: 0.28 },

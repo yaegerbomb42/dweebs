@@ -87,6 +87,9 @@ export class Dweeb {
     this.parryTimer = 0;        // active counter window
     this.parryCd = 0;
     this.freezeTimer = 0;       // frozen solid: no acting, no drifting
+    this.stuckTimer = 0;        // pinned by slime goo (mash jump/attack to escape)
+    this.stuckMash = 0;         // 0..1 escape meter while stuck
+    this.gooImmune = 0;         // brief grace after escaping a goo puddle
     this.magnetTimer = 0;       // gem magnet pull
     this.slamActive = false;    // ground slam waiting to land
     this.dropkickTimer = 0;
@@ -330,7 +333,24 @@ export class Dweeb {
   requestJump() {
     this.jumpRequested = true;
     this.jumpBuffer = 0.14;
+    if (this.stuckTimer > 0) this.mashGoo(0.3);
     if (this.ragdolling || this.hitstun > 0) this.requestTech();
+  }
+
+  /** Slime mashing: jump/attack inputs chew through the stuck timer. */
+  mashGoo(amount = 0.3) {
+    if (this.stuckTimer <= 0) return false;
+    this.stuckMash = Math.min(1, (this.stuckMash || 0) + amount);
+    this.stuckTimer = Math.max(0, this.stuckTimer - amount * 1.5);
+    if (this.stuckTimer <= 0 || this.stuckMash >= 1) {
+      this.stuckTimer = 0;
+      this.stuckMash = 0;
+      this.gooImmune = 1.2;
+      this.landSquash = Math.max(this.landSquash || 0, 0.28);
+      this.onGooEscape?.(this);
+      return true;
+    }
+    return false;
   }
 
   /** Down + jump on a floating platform: a short buffered drop-through instead of a jump. */
@@ -493,6 +513,7 @@ export class Dweeb {
         }
       }
 
+      const stuck = this.stuckTimer > 0;
       let speed = MV.speed * this.stats.move * (this.grounded ? this.slide : 1) * (this.statusMove ?? 1);
       if (this.zoomTimer > 0) speed *= 1.5;
       if (this.sugarTimer > 0) speed *= BALANCE.powerups.sugar.speed;
@@ -501,6 +522,7 @@ export class Dweeb {
       if (this.held?.kind === 'dweeb') speed *= 0.72;
       else if (this.held) speed *= (this.carryMul ?? 1) * (this.grabSettle > 0 ? 0.5 : 1);
       if (this.charging > 0) speed *= 0.35;
+      if (stuck) speed *= 0.18; // slime pins you: steering barely fights back
       if (this.hoverRiding) speed *= 2.2; // hoverboard: much faster top speed
 
       const tx = this.moveInput.x * speed;
@@ -540,11 +562,11 @@ export class Dweeb {
         vz = approach(vz, tz, accel);
       }
 
+      const jumpMul = stuck ? 0.45 : 1; // slime saps your jump until you mash free
       const lift = this.held?.kind === 'object' && this.held.ref.def.floaty ? this.held.ref.def.floaty.liftHop : 1;
       if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
-        vy = MV.jumpVel * this.stats.jump * this.jumpScale * (this.gumTimer > 0 ? this.gumDef.jump : 1);
-        vy = MV.jumpVel * this.stats.jump * this.jumpScale * lift;
-        vy = MV.jumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
+        vy = MV.jumpVel * this.stats.jump * this.jumpScale * jumpMul *
+          (this.gumTimer > 0 ? this.gumDef.jump : 1) * lift * (this.statusJump ?? 1);
         this.jumpsLeft = 1;
         this.coyote = 0;
         this.jumpBuffer = 0;
@@ -552,9 +574,8 @@ export class Dweeb {
         this.landSquash = -0.35;
         this.onJump?.(this, false);
       } else if (this.jumpRequested && this.jumpsLeft > 0 && !this.grounded && !this.specialFall) {
-        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * (this.gumTimer > 0 ? this.gumDef.jump : 1);
-        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * lift;
-        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * (this.statusJump ?? 1);
+        vy = MV.doubleJumpVel * this.stats.jump * this.jumpScale * jumpMul *
+          (this.gumTimer > 0 ? this.gumDef.jump : 1) * lift * (this.statusJump ?? 1);
         this.jumpsLeft = 0;
         this.jumpBuffer = 0;
         this.jumpRising = true;
@@ -1209,6 +1230,9 @@ export class Dweeb {
     this.airTime = 0;
     this.parryTimer = 0;
     this.freezeTimer = 0;
+    this.stuckTimer = 0;
+    this.stuckMash = 0;
+    this.gooImmune = 0;
     this.gumTimer = 0;
     this.magnetTimer = 0;
     this.slamActive = false;
@@ -1269,6 +1293,9 @@ export class Dweeb {
     this.parryTimer = 0;
     this.parryCd = 0;
     this.freezeTimer = 0;
+    this.stuckTimer = 0;
+    this.stuckMash = 0;
+    this.gooImmune = 0;
     this.gumTimer = 0;
     this.magnetTimer = 0;
     this.slamActive = false;
