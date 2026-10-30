@@ -255,6 +255,31 @@ async function init() {
     audio.playWhoosh(0, 1);
     cam.shake(0.16);
   };
+  // Wave-2 stage hazards (world/StageHazards.js): FX + feed lines for the offline stages.
+  arena.onLightningWarn = (x, z) => {
+    audio.playWarning();
+    if (player?.active) {
+      const p = player.getPosition();
+      if (Math.hypot(p.x - x, p.z - z) < BALANCE.arena.lightningRadius + 0.6) hud.popup('MOVE!', p, 'small', 0xbfe9ff);
+    }
+  };
+  arena.onLightning = (x, z, hits) => {
+    fx.lightningStrike(x, z);
+    arena.excite(0.9);
+    for (const d of hits) hud.popup('ZAP!', d.getPosition(), 'big', 0xbfe9ff);
+    if (hits.length) hud.feed(`<b>⚡ STORM SPIRE</b> · zapped ${hits.map(d => Hud.nameTag(d)).join(', ')}`, 'sd');
+  };
+  arena.onMagnetWarn = () => {
+    hud.feed('<b>🧲 MAGNET CORE</b> · powering up — grab something!', 'sd');
+    audio.playWarning();
+  };
+  arena.onMagnet = active => {
+    fx.magnetPulseFx(active);
+    if (active) hud.announce('MAGNET!', 'danger', 1.0);
+  };
+  arena.onQuicksand = d => {
+    if (d.isPlayer) hud.popup('STUCK!', d.getPosition(), 'small', 0xd9a441);
+  };
   arena.onObjectSplash = (obj, pos) => {
     if (obj.def) fx.splash(pos, false);
     else fx.splash(pos, true); // falling stage tile

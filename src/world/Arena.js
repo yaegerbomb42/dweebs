@@ -14,6 +14,7 @@ import { InteractiveObject } from './InteractiveObject.js';
 import { toonMat, noOutline, PALETTE } from '../render/Toon.js';
 import { createModel } from './ObjectModels.js';
 import { OBJECT_DEFS } from './ObjectRegistry.js';
+import { StageHazards } from './StageHazards.js';
 import { BALANCE } from '../game/Balance.js';
 import { CollisionGroups } from '../physics/PhysicsWorld.js';
 import { DEFAULT_ARENA, arenaById } from '../game/Arenas.js';
@@ -227,6 +228,8 @@ export class Arena {
   }
 
   _clearTheme() {
+    this.stageHazards?.dispose();
+    this.stageHazards = null;
     if (!this.themeGroup) return;
     this.scene.remove(this.themeGroup);
     this.themeGroup.traverse(o => {
@@ -253,6 +256,7 @@ export class Arena {
     else if (def.id === 'moon') this._themeMoon(g);
     else if (def.id === 'gale') this._themeGale(g);
     else if (def.id === 'megastadium') this._themeMegaStadium(g);
+    this.stageHazards = StageHazards.wants(def) ? new StageHazards(this, def, g) : null;
   }
 
   _themeIceberg(g) {
@@ -678,6 +682,7 @@ export class Arena {
   _resetArenaHazards() {
     this.claw?.reset();
     const A = BALANCE.arena;
+    this.stageHazards?.reset();
     this.physicsWorld.setGravityScale?.(this.gravity);
     this.windTimer = A.windFirst;
     this.gustLeft = 0;
@@ -1942,6 +1947,7 @@ export class Arena {
         this.claw.update(dt);
       }
     }
+    this.stageHazards?.update(dt, this.hazardsActive);
     this._updatePlatforms();
 
     for (let i = this.objects.length - 1; i >= 0; i--) {
