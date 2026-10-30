@@ -175,6 +175,9 @@ function wireTitle({ nodes, router, toast }) {
   nodes.title.querySelector('#app-btn-brawl')?.addEventListener('click', () => {
     launchGameMode('brawl', 'stadium');
   });
+  nodes.title.querySelector('#app-btn-training')?.addEventListener('click', () => {
+    launchGameMode('training', 'stadium');
+  });
 
   nodes.title.querySelector('#app-btn-dynasty')?.addEventListener('click', () => {
     launchGameMode('adventure', 'meadowlands');
