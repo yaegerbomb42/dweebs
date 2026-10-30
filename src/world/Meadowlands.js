@@ -40,6 +40,8 @@ export const TRADE_OFFERS = [
   { give: { stone: 5 }, get: { gold: 2 }, text: '5 🪨 → 2 🪙' },
 ];
 
+import { River } from './River.js';
+
 export class Meadowlands {
   constructor(physicsWorld, scene, options = {}) {
     this.physicsWorld = physicsWorld;
@@ -99,6 +101,7 @@ export class Meadowlands {
     this.beetleTimer = 20;    // seconds until the first friendly beetle wanders in
 
     this._buildWorld();
+    this.river = new River(this);
     this._createToyTown();
   }
 
@@ -1805,6 +1808,7 @@ export class Meadowlands {
     this._updateWeather(dt, colony);
     this._updateBushRegrowth(dt, colony);
     this._updateCritters(dt, dweebs, colony);
+    this.river?.update(dt, dweebs, colony);
     this._updateMerchant(dt, colony);
 
     // Flicker Campfire Light (brighter after dark)
@@ -1948,6 +1952,8 @@ export class Meadowlands {
   }
 
   dispose() {
+    this.river?.dispose();
+    this.river = null;
     this.toyTown?.dispose();
     this.toyTown = null;
     this.scene.remove(this.group);
