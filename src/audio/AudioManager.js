@@ -22,6 +22,8 @@ export class AudioManager {
     this.enabled = true;
     this.volume = 0.6;
     this.musicEnabled = true;
+    this.sfxVolume = 1;
+    this.musicVolume = 0.6;
     this._initialized = false;
     this._budgetStart = 0;
     this._budget = 0;
@@ -46,6 +48,7 @@ export class AudioManager {
       this.compressor.connect(this.masterGain);
 
       this.sfxBus = ctx.createGain();
+      this.sfxBus.gain.value = this.sfxVolume;
       this.sfxBus.connect(this.compressor);
 
       this.reverb = ctx.createConvolver();
@@ -62,7 +65,7 @@ export class AudioManager {
       this.ambBus.connect(this.compressor);
 
       this.musicGain = ctx.createGain();
-      this.musicGain.gain.value = this.musicEnabled ? 0.15 : 0;
+      this.musicGain.gain.value = this.musicEnabled ? this.musicVolume * 0.15 : 0;
       this.musicGain.connect(this.masterGain);
 
       // Shared noise buffers (read from random offsets instead of allocating per sound)
@@ -91,8 +94,169 @@ export class AudioManager {
     this.setVolume(this.volume);
   }
 
+  /** Set SFX bus gain (0..1). Called from settings. */
+  setSfxVolume(v) {
+    this.sfxVolume = clamp(v, 0, 1);
+    if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(this.sfxVolume, this.ctx.currentTime, 0.02);
+  }
+
+  /** Set music bus gain (0..1). Called from settings. */
+  setMusicVolume(v) {
+    this.musicVolume = clamp(v, 0, 1);
+    if (this.musicGain) this.musicGain.gain.setTargetAtTime(this.musicEnabled ? this.musicVolume * 0.15 : 0, this.ctx.currentTime, 0.02);
+  }
+
   get _ok() {
     return this._initialized && this.enabled && this.ctx.state === 'running';
+  }
+
+  /** Adventure scene mood: persistent ambience bed with crickets (night), rain, danger pulse.
+   *  Call with same values to no-op. Call with {} or no args to silence all layers. */
+  setSceneMood({ night = false, rain = false, danger = 0 } = {}) {
+    if (!this._initialized) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const ramp = 1.5;
+
+    // Initialize ambience container on first call
+    if (!this._sceneMood) {
+      this._sceneMood = {
+        night: false, rain: false, danger: 0,
+        crickets: null, rainLayer: null, dangerLayer: null,
+        nextCricketTime: 0,
+      };
+    }
+    const m = this._sceneMood;
+
+    // Night crickets layer
+    if (night !== m.night) {
+      m.night = night;
+      if (night) {
+        // Create a gain node for cricket chirps
+        const cricketGain = ctx.createGain();
+        cricketGain.gain.value = 0;
+        cricketGain.connect(this.ambBus);
+        m.crickets = { gain: cricketGain, nextTime: t + rand(0.4, 1.2) };
+        // Ramp up
+        cricketGain.gain.setTargetAtTime(0.18, t, ramp);
+      } else if (m.crickets) {
+        // Ramp down and clean up
+        m.crickets.gain.gain.setTargetAtTime(0, t, ramp);
+        m.crickets = null;
+      }
+    }
+
+    // Rain layer (looping filtered brown noise)
+    if (rain !== m.rain) {
+      m.rain = rain;
+      if (rain) {
+        const src = this._loop(this.brown);
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 1200;
+        bp.Q.value = 1.8;
+        const rainGain = ctx.createGain();
+        rainGain.gain.value = 0;
+        src.connect(bp).connect(rainGain).connect(this.ambBus);
+        m.rainLayer = { src, bp, gain: rainGain };
+        rainGain.gain.setTargetAtTime(0.12, t, ramp);
+      } else if (m.rainLayer) {
+        m.rainLayer.gain.gain.setTargetAtTime(0, t, ramp);
+        m.rainLayer.src.stop(t + ramp + 0.05);
+        m.rainLayer = null;
+      }
+    }
+
+    // Danger layer: low 55Hz pulse at ~1.6Hz, gain = 0.15 * danger
+    if (danger !== m.danger) {
+      m.danger = danger;
+      if (danger > 0) {
+        const dangerGain = ctx.createGain();
+        dangerGain.gain.value = 0;
+        dangerGain.connect(this.ambBus);
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = 55;
+        const lfo = ctx.createOscillator();
+        lfo.type = 'square';
+        lfo.frequency.value = 1.6;
+        const lfoAmt = ctx.createGain();
+        lfoAmt.gain.value = 0.15 * danger;
+        lfo.connect(lfoAmt).connect(dangerGain.gain);
+        osc.connect(dangerGain);
+        osc.start(t);
+        lfo.start(t);
+        m.dangerLayer = { osc, lfo, gain: dangerGain, lfoAmt };
+        dangerGain.gain.setTargetAtTime(0.15 * danger, t, ramp);
+      } else if (m.dangerLayer) {
+        m.dangerLayer.gain.gain.setTargetAtTime(0, t, ramp);
+        m.dangerLayer.osc.stop(t + ramp + 0.05);
+        m.dangerLayer.lfo.stop(t + ramp + 0.05);
+        m.dangerLayer = null;
+      }
+    } else if (m.dangerLayer && danger > 0) {
+      // Update gain if danger level changed but layer exists
+      m.dangerLayer.lfoAmt.gain.setTargetAtTime(0.15 * danger, t, 0.3);
+      m.dangerLayer.gain.gain.setTargetAtTime(0.15 * danger, t, 0.3);
+    }
+
+    // Schedule cricket chirps from updateLoops (no setInterval)
+    // We'll emit chirps in updateLoops when m.crickets exists
+  }
+
+  /** Long brown-noise rumble 2.5s lowpass 180Hz with a sharper crack at the start. */
+  playThunder() {
+    if (!this._ok) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const out = this._out(0, 0.3);
+
+    // Initial sharp crack: high-pass filtered white noise, very short
+    this._noiseBurst(out, t, 0.08, 0.5, { type: 'highpass', freq: 3000, Q: 2 });
+
+    // Main rumble: brown noise, lowpass 180Hz, 2.5s with slow fade
+    this._noiseBurst(out, t, 2.5, 0.7, { type: 'lowpass', freq: 180, endFreq: 60, Q: 1.2, attack: 0.15, src: this.brown });
+
+    // Sub-bass thump under the rumble
+    this._toneAt(out, t, 40, 2.2, 0.35, 'sine', 28);
+  }
+
+  /** Bright 4-note rising arpeggio (C6 E6 G6 C7 triangle) with sparkle. */
+  playDiscovery() {
+    if (!this._ok) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const out = this._out(0, 0.25);
+    const notes = [1046.5, 1318.5, 1568, 2093]; // C6 E6 G6 C7
+    notes.forEach((f, i) => {
+      const dt = i * 0.09;
+      this._toneAt(out, t + dt, f, 0.28, 0.16, 'triangle');
+      this._toneAt(out, t + dt, f * 2, 0.18, 0.05, 'sine'); // sparkle harmonic
+    });
+    // Sparkle noise burst
+    this._noiseBurst(out, t, 0.6, 0.08, { type: 'highpass', freq: 4000, endFreq: 8000, Q: 1.5 });
+  }
+
+  /** Short fanfare (5 notes, square+triangle, ~1.2s). */
+  playQuestComplete() {
+    if (!this._ok) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const out = this._out(0, 0.2);
+    // Fanfare: C5 G5 E6 G6 C7 (bold rising major)
+    const notes = [
+      { f: 523.25, d: 0.18, dt: 0.00 },
+      { f: 784, d: 0.18, dt: 0.16 },
+      { f: 1318.5, d: 0.18, dt: 0.32 },
+      { f: 1568, d: 0.18, dt: 0.48 },
+      { f: 2093, d: 0.5, dt: 0.68 },
+    ];
+    notes.forEach(n => {
+      this._toneAt(out, t + n.dt, n.f, n.d, 0.14, 'square');
+      this._toneAt(out, t + n.dt, n.f, n.d, 0.08, 'triangle');
+    });
+    // Final shimmer
+    this._noiseBurst(out, t + 1.0, 0.3, 0.06, { type: 'highpass', freq: 5000, Q: 1.2 });
   }
 
   /** Cap how many sound events start per 50 ms so pile-ups never turn to mush. */
@@ -234,6 +398,19 @@ export class AudioManager {
     this._amb.rf.frequency.setTargetAtTime(140 + r * 360, t, 0.1);
     this.crowdLevel += (clamp(excitement, 0, 1.5) - this.crowdLevel) * Math.min(1, dt * 3);
     this._amb.crowdGain.gain.setTargetAtTime(0.045 + this.crowdLevel * 0.14, t, 0.15);
+
+    // Cricket chirps: periodic short high sine chirps 4-5 kHz in pairs, random every 0.4-1.2s
+    if (this._sceneMood && this._sceneMood.crickets) {
+      const m = this._sceneMood;
+      if (t >= m.crickets.nextTime) {
+        const out = this._out(rand(-0.8, 0.8), 0.15);
+        // Chirp pair: two quick sine chirps
+        const baseFreq = rand(4000, 5000);
+        this._toneAt(out, t, baseFreq, 0.06, 0.12, 'sine');
+        this._toneAt(out, t + 0.09, baseFreq * 1.02, 0.05, 0.09, 'sine');
+        m.crickets.nextTime = t + rand(0.4, 1.2);
+      }
+    }
   }
 
   /** Charge-up hum: level 0..1 (0 stops it). Rises in pitch and wobbles faster as it fills. */
@@ -364,9 +541,20 @@ export class AudioManager {
   }
 
   /** Gadget cast: freeze ray / magnet fire, plus a sad little whiff when it misses. */
+  /** Leaf blower: a buzzy two-stroke motor rev under a breathy hiss. */
+  playBlower(pan = 0) {
+    if (!this._ok) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.2);
+    this._toneAt(out, t, 70, 0.28, 0.16, 'sawtooth', 130);
+    this._toneAt(out, t + 0.02, 140, 0.24, 0.07, 'square', 220);
+    this._noiseBurst(out, t, 0.3, 0.22, { type: 'bandpass', freq: 1400, endFreq: 2600 });
+  }
+
   playGadget(kind, pan = 0, hit = true) {
     if (kind === 'freezeRay') this.playFreeze(pan, false);
     else if (kind === 'magnet') this.playMagnet(pan);
+    else if (kind === 'leafBlower') this.playBlower(pan);
     if (!hit) this.playWhoosh(pan, 0.3);
   }
 
@@ -465,11 +653,11 @@ export class AudioManager {
     this._noiseBurst(out, t, 0.5, 0.2, { type: 'bandpass', freq: 800, endFreq: 3000, Q: 1.5, attack: 0.15 });
   }
 
-  playBubblePop(pan = 0) {
+  playBubblePop(pan = 0, pitch = 1) {
     if (!this._ok) return;
     const t = this.ctx.currentTime;
     const out = this._out(pan, 0.25);
-    this._toneAt(out, t, 380, 0.09, 0.4, 'sine', 1600);
+    this._toneAt(out, t, 380 * pitch, 0.09, 0.4, 'sine', 1600 * pitch);
     this._noiseBurst(out, t, 0.03, 0.3, { type: 'highpass', freq: 3000 });
   }
 
@@ -726,6 +914,74 @@ export class AudioManager {
     this.heartbeat = rate;
   }
 
+  // ═══ Crowd reaction stings ═══
+
+  /** GASP — short filtered inhale plus a rising "ooh". For near-KO, first grab, huge launch. */
+  playCrowdGasp(pan = 0) {
+    if (!this._ok || !this._spend(2)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.25);
+    // Sharp inhale (filtered noise, rising pitch)
+    this._noiseBurst(out, t, 0.18, 0.35, { type: 'bandpass', freq: 800, endFreq: 2200, Q: 3, attack: 0.005 });
+    // Rising "ooh" vowel formants
+    this._toneAt(out, t, 440, 0.25, 0.18, 'sine', 880);
+    this._toneAt(out, t + 0.02, 520, 0.3, 0.14, 'triangle', 1040);
+    this._toneAt(out, t + 0.04, 660, 0.25, 0.1, 'sine', 1320);
+    this.duck(0.4, 0.8);
+  }
+
+  /** AWW — descending pitch bend. For whiffed throw, self-KO, early exit. */
+  playCrowdAww(pan = 0) {
+    if (!this._ok || !this._spend(2)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.2);
+    // Descending "aww" — two formants sliding down
+    this._toneAt(out, t, 520, 0.35, 0.2, 'sine', 260);
+    this._toneAt(out, t + 0.04, 440, 0.3, 0.15, 'triangle', 220);
+    // Soft breath tail
+    this._noiseBurst(out, t + 0.1, 0.25, 0.12, { type: 'lowpass', freq: 800, endFreq: 200, Q: 2 });
+    this.duck(0.5, 0.6);
+  }
+
+  /** CHANT — three syllables on a fixed pitch: "DWE-EB! DWE-EB! DWE-EB!" */
+  playCrowdChant(pan = 0) {
+    if (!this._ok || !this._spend(3)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan * 0.5, 0.35);
+    const base = 220; // A3
+    // Syllable 1: "DWE"
+    this._toneAt(out, t, base, 0.12, 0.18, 'square', 0, this._shaper());
+    this._toneAt(out, t, base * 2, 0.08, 0.08, 'sine');
+    this._noiseBurst(out, t, 0.06, 0.15, { type: 'bandpass', freq: 1800, Q: 2 });
+    // Syllable 2: "EB"
+    this._toneAt(out, t + 0.18, base, 0.12, 0.18, 'square', 0, this._shaper());
+    this._toneAt(out, t + 0.18, base * 2, 0.08, 0.08, 'sine');
+    this._noiseBurst(out, t + 0.18, 0.06, 0.15, { type: 'bandpass', freq: 1800, Q: 2 });
+    // Syllable 3: "DWE" (longer, with a little fall)
+    this._toneAt(out, t + 0.36, base, 0.18, 0.22, 'triangle', base * 0.7);
+    this._toneAt(out, t + 0.36, base * 2, 0.12, 0.1, 'sine', base);
+    this._noiseBurst(out, t + 0.36, 0.08, 0.18, { type: 'bandpass', freq: 2000, Q: 1.5 });
+    // Crowd tail: a brief cheer swell
+    this.playCheer(0.4);
+    this.duck(0.25, 1.2);
+  }
+
+  /** LAUGH — three short filtered noise bursts. For comedy KO, bonk, whiff at high damage. */
+  playCrowdLaugh(pan = 0) {
+    if (!this._ok || !this._spend(2)) return;
+    const t = this.ctx.currentTime;
+    const out = this._out(pan, 0.2);
+    // Three "ha" bursts — bandpass noise with vowel-ish formants
+    for (let i = 0; i < 3; i++) {
+      const dt = i * 0.14;
+      const f = 600 + i * 200;
+      this._noiseBurst(out, t + dt, 0.08, 0.25, { type: 'bandpass', freq: f, Q: 2.5 });
+      this._noiseBurst(out, t + dt, 0.06, 0.15, { type: 'bandpass', freq: f * 2.2, Q: 2 });
+      this._toneAt(out, t + dt, f * 0.8, 0.07, 0.08, 'triangle');
+    }
+    this.duck(0.5, 0.5);
+  }
+
   /** Tiny click when the throw arc locks onto a rival */
   playAimLock() {
     if (!this._ok) return;
@@ -839,16 +1095,17 @@ export class AudioManager {
 
   setMusicEnabled(on) {
     this.musicEnabled = on;
-    if (this.musicGain) this.musicGain.gain.setTargetAtTime(on ? 0.15 : 0, this.ctx.currentTime, 0.05);
+    if (this.musicGain) this.musicGain.gain.setTargetAtTime(on ? this.musicVolume * 0.15 : 0, this.ctx.currentTime, 0.05);
   }
 
   /** Briefly lower the music so a big moment cuts through */
   duck(amount = 0.4, duration = 1) {
     if (!this._initialized || !this.musicEnabled) return;
     const g = this.musicGain.gain, t = this.ctx.currentTime;
+    const base = this.musicVolume * 0.15;
     g.cancelScheduledValues(t);
-    g.setTargetAtTime(0.15 * amount, t, 0.03);
-    g.setTargetAtTime(0.15, t + duration, 0.4);
+    g.setTargetAtTime(base * amount, t, 0.03);
+    g.setTargetAtTime(base, t + duration, 0.4);
   }
 
   _scheduleMusic() {

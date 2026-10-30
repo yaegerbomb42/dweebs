@@ -31,6 +31,7 @@ export class Particles {
     this.parts = [];
     for (let i = 0; i < MAX; i++) this.parts.push({ life: 0 });
     this.cursor = 0;
+    this.budget = 1; // 0..1 multiplier for particle counts
 
     this.rings = [];
     const ringGeo = new THREE.RingGeometry(0.8, 1, 32);
@@ -47,12 +48,18 @@ export class Particles {
     this.ringCursor = 0;
   }
 
+  /** Scale particle spawn counts (0..1). Called by quality governor. */
+  setBudget(f) {
+    this.budget = Math.max(0, Math.min(1, f));
+  }
+
   emit(pos, opts = {}) {
     const {
       count = 10, color = 0xffffff, colors = null, speed = 4, up = 2, size = 0.18,
       life = 0.7, gravity = -12, spread = 1, drag = 1.5, grow = -1,
     } = opts;
-    for (let n = 0; n < count; n++) {
+    const actualCount = Math.max(1, Math.round(count * this.budget));
+    for (let n = 0; n < actualCount; n++) {
       const idx = this.cursor;
       const p = this.parts[idx];
       this.cursor = (this.cursor + 1) % MAX;
