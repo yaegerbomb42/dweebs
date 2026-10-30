@@ -116,6 +116,24 @@ export const BALANCE = {
     max: 0.18,
   },
 
+  // Signature idle quirks: a small per-type tell while a Dweeb stands still between fights.
+  // Purely cosmetic, so these only control timing and how far each rig part moves.
+  idle: {
+    minWait: 6,
+    maxWait: 10,
+    minDuration: 0.8,
+    maxDuration: 1.5,
+    speedThreshold: 0.2,
+    armAmp: 0.55,
+    legAmp: 0.35,
+    bodyAmp: 0.09,
+    rigAmp: 0.06,
+    bobAmp: 0.035,
+    wiggleAmp: 0.18,
+    tentacleAmp: 0.08,
+    eyeAmp: 0.18,
+    moodHold: 0.3,
+  },
   slip: {
     radius: 0.7,           // metres a grounded Dweeb must step inside a peel
     cooldown: 1.6,         // per-Dweeb grace so a pile of peels cannot stun-lock
