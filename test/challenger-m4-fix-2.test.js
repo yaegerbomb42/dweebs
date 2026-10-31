@@ -80,7 +80,7 @@ describe('Adversarial Stress Test 1: High-Frequency Preset Switching & Scene Gra
 
   it('survives 300 rapid random preset applications and mutations without scene graph leaks', () => {
     const presetKeys = Object.keys(ARCHETYPE_PRESETS);
-    expect(presetKeys.length).toBe(4);
+    expect(presetKeys.length).toBe(7);
 
     for (let i = 0; i < 300; i++) {
       if (i % 2 === 0) {

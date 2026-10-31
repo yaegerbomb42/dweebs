@@ -633,6 +633,56 @@ function hideSpectatorOverlay() {
   if (overlay) overlay.classList.add('hidden');
 }
 
+/** Update live health bars on the spectator overlay from dweeb damage %. */
+function updateSpectatorHealth() {
+  const p1Fill = $('sdo-p1-hp-fill');
+  const p1Val = $('sdo-p1-hp-value');
+  const p2Fill = $('sdo-p2-hp-fill');
+  const p2Val = $('sdo-p2-hp-value');
+
+  const p1 = spectateTarget || player;
+  const p2 = dweebs.find(d => d !== p1 && d.active && !d.eliminated);
+
+  function setHp(elFill, elVal, dweeb) {
+    if (!elFill || !elVal || !dweeb) return;
+    const hp = Math.max(0, Math.min(100, 100 - (dweeb.percent || 0)));
+    elFill.style.width = `${hp}%`;
+    elVal.textContent = `${hp}%`;
+    if (hp < 30) {
+      elFill.classList.add('damage');
+      elFill.style.background = 'linear-gradient(90deg, #ff4d5e, #ff6b7d)';
+    } else if (hp < 60) {
+      elFill.classList.add('damage');
+      elFill.style.background = 'linear-gradient(90deg, #ffd23f, #fbbf24)';
+    } else {
+      elFill.classList.remove('damage');
+      elFill.style.background = 'linear-gradient(90deg, #5ee06a, #ffd23f)';
+    }
+  }
+
+  setHp(p1Fill, p1Val, p1);
+  setHp(p2Fill, p2Val, p2);
+}
+
+/** Add an entry to the autonomous combat fight feed. */
+function addFightFeedEntry(attackerName, victimName, action, side = 'p1') {
+  const feed = $('sdo-fight-feed');
+  if (!feed) return;
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', { hour12: false }).slice(0, 5);
+  const entry = document.createElement('div');
+  entry.className = `sdo-feed-entry ${side}`;
+  entry.innerHTML = `
+    <span class="sdo-feed-time">${timeStr}</span>
+    <span class="sdo-feed-action">${attackerName}</span>
+    <span>${action}</span>
+    <span>${victimName}</span>
+  `;
+  feed.prepend(entry);
+  // Keep only the last 8 entries
+  while (feed.children.length > 8) feed.removeChild(feed.lastChild);
+}
+
 function generateOpponentConfig(playerConfig, oppType = 'random') {
   if (oppType === 'mirror') {
     return {
@@ -1102,6 +1152,12 @@ const matchEvents = {
     if (d.eliminated && !d.isPlayer) hud.popup('OUT!', pos, 'big', d.color);
     // Kill-cam lite: lean toward where they went when the player was part of it
     if (d.isPlayer || credited?.isPlayer) cam.killCam(pos, BALANCE.juice.killCam);
+
+    // Spectator fight feed: record the KO
+    if (!$('spectator-duel-overlay')?.classList.contains('hidden') && credited) {
+      const side = credited === player || credited.isPlayer ? 'p1' : 'p2';
+      addFightFeedEntry(Hud.nameTag(credited), Hud.nameTag(d), 'K.O.ed', side);
+    }
   },
   onFlail(d, pos) {
     fx.flail(d, pos);
@@ -1401,6 +1457,10 @@ function loop() {
       updateFocus(rawDt);
       updateNearMiss();
       followCamera();
+      // Spectator overlay: live health bars during autonomous duels
+      if (!$('spectator-duel-overlay')?.classList.contains('hidden')) {
+        updateSpectatorHealth();
+      }
     }
   } else {
     // Menu: slow orbit around the stage

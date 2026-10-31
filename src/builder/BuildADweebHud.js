@@ -278,6 +278,9 @@ export class BuildADweebHud {
         </div>
         <div class="bd-presets-row" id="bd-presets-row">
           <button class="bd-preset-btn" data-preset="titan_chonk" title="Titan Chonk">🦏 TITAN CHONK</button>
+          <button class="bd-preset-btn" data-preset="hyper_flea" title="Hyper Flea">Hyper Flea</button>
+          <button class="bd-preset-btn" data-preset="toy_sniper" title="Toy Sniper">Toy Sniper</button>
+          <button class="bd-preset-btn" data-preset="brawler_king" title="Brawler King">Brawler King</button>
           <button class="bd-preset-btn" data-preset="speed_gremlin" title="Speed Gremlin">⚡ SPEED GREMLIN</button>
           <button class="bd-preset-btn" data-preset="sniper_bean" title="Sniper Bean">🎯 SNIPER BEAN</button>
           <button class="bd-preset-btn" data-preset="pugilist_champ" title="Pugilist Champ">🥊 PUGILIST CHAMP</button>

@@ -8,8 +8,8 @@ import * as THREE from 'three';
 import { toonMat, noOutline } from '../render/Toon.js';
 
 export const BODY_SHAPES = ['blob', 'cube', 'spiky', 'star', 'chonk', 'capsule'];
-export const APPENDAGES = ['none', 'horns', 'antennae', 'bunny_ears', 'boxing_gloves', 'plungers', 'spikes', 'tail',
-  'dragon_wings', 'anvil_tail', 'magnet_eyes', 'spring_stompers'];
+export const APPENDAGES = ['none', 'horns', 'antennae', 'bunny_ears', 'boxing_gloves', 'oversized_boxing_gloves', 'plungers', 'spikes', 'golden_spikes', 'tail',
+  'dragon_wings', 'anvil_tail', 'magnet_eyes', 'spring_stompers', 'crown', 'viking_helmet', 'sunglasses', 'monocle', 'rocket_booster', 'propeller_hat'];
 export const FEET_TYPES = ['pegs', 'coils', 'stompers'];
 export const BROW_STYLES = ['angry', 'derpy', 'confident', 'none'];
 export const MOUTH_STYLES = ['grin', 'teeth', 'open'];
@@ -85,8 +85,16 @@ export const APPENDAGE_GAMEPLAY = {
   antennae:      { label: 'Antennae', desc: 'Cosmetic.' },
   bunny_ears:    { label: 'Bunny Ears', desc: 'Cosmetic.' },
   boxing_gloves: { label: 'Boxing Gloves', desc: 'Cosmetic.' },
+  oversized_boxing_gloves: { label: 'Oversized Boxing Gloves', desc: 'Cosmetic — huge punchy mitts.' },
   plungers:      { label: 'Plungers', desc: 'Cosmetic.' },
   spikes:        { label: 'Spikes', desc: 'Cosmetic.' },
+  golden_spikes: { label: 'Golden Spikes', desc: 'Cosmetic — shiny golden spikes.' },
+  crown: { label: 'Toy Crown', desc: 'Cosmetic — royal toy crown.' },
+  viking_helmet: { label: 'Viking Helmet', desc: 'Cosmetic — horned viking helm.' },
+  sunglasses: { label: 'Thug Life Sunglasses', desc: 'Cosmetic — cool shades.' },
+  monocle: { label: 'Monocle', desc: 'Cosmetic — fancy monocle.' },
+  rocket_booster: { label: 'Rocket Booster', desc: 'Cosmetic — back-mounted rocket.' },
+  propeller_hat: { label: 'Propeller Hat', desc: 'Cosmetic — spinning propeller cap.' },
   tail:          { label: 'Tail', desc: 'Cosmetic.' },
   dragon_wings: {
     label: 'Dragon Wings',
@@ -199,6 +207,87 @@ export const ARCHETYPE_PRESETS = {
     width: 0.85,
     height: 1.35,
     depth: 0.85,
+  },
+  hyper_flea: {
+    name: 'Hyper Flea',
+    shape: 'spiky',
+    appendage: 'antennae',
+    appendages: 'antennae',
+    feet: 'coils',
+    brow: 'derpy',
+    brows: 'derpy',
+    mouth: 'grin',
+    mass: 1.6,
+    speed: 1.5,
+    armor: 0.7,
+    jump: 1.4,
+    stats: { mass: 1.6, speed: 1.5, armor: 0.7, jump: 1.4 },
+    DNA: { confidence: 0.3, aimAccuracy: 0.55, scavenge: 0.4, agility: 0.98 },
+    dna: { confidence: 0.3, aimAccuracy: 0.55, scavenge: 0.4, agility: 0.98 },
+    badge: 'Hyper Flea',
+    primaryColor: '#00f5d4',
+    accentColor: '#ff006e',
+    eyeColor: '#14101c',
+    eyeCount: 4,
+    eyeSize: 0.7,
+    eyeSpacing: 0.9,
+    width: 0.75,
+    height: 0.75,
+    depth: 0.75,
+  },
+  toy_sniper: {
+    name: 'Toy Sniper',
+    shape: 'capsule',
+    appendage: 'magnet_eyes',
+    appendages: 'magnet_eyes',
+    feet: 'pegs',
+    brow: 'confident',
+    brows: 'confident',
+    mouth: 'open',
+    mass: 2.2,
+    speed: 1.0,
+    armor: 0.9,
+    jump: 1.0,
+    stats: { mass: 2.2, speed: 1.0, armor: 0.9, jump: 1.0 },
+    DNA: { confidence: 0.45, aimAccuracy: 0.98, scavenge: 0.95, agility: 0.6 },
+    dna: { confidence: 0.45, aimAccuracy: 0.98, scavenge: 0.95, agility: 0.6 },
+    badge: 'Toy Sniper',
+    primaryColor: '#3a86ff',
+    accentColor: '#ffd23f',
+    eyeColor: '#14101c',
+    eyeCount: 1,
+    eyeSize: 1.5,
+    eyeSpacing: 1.0,
+    width: 0.8,
+    height: 1.3,
+    depth: 0.8,
+  },
+  brawler_king: {
+    name: 'Brawler King',
+    shape: 'blob',
+    appendage: 'boxing_gloves',
+    appendages: 'boxing_gloves',
+    feet: 'stompers',
+    brow: 'angry',
+    brows: 'angry',
+    mouth: 'teeth',
+    mass: 4.0,
+    speed: 1.05,
+    armor: 1.3,
+    jump: 0.95,
+    stats: { mass: 4.0, speed: 1.05, armor: 1.3, jump: 0.95 },
+    DNA: { confidence: 0.92, aimAccuracy: 0.6, scavenge: 0.3, agility: 0.75 },
+    dna: { confidence: 0.92, aimAccuracy: 0.6, scavenge: 0.3, agility: 0.75 },
+    badge: 'Brawler King',
+    primaryColor: '#ff4d5e',
+    accentColor: '#ffd23f',
+    eyeColor: '#14101c',
+    eyeCount: 2,
+    eyeSize: 1.0,
+    eyeSpacing: 1.0,
+    width: 1.15,
+    height: 1.0,
+    depth: 1.15,
   },
   pugilist_champ: {
     name: 'Pugilist Champ',
@@ -591,12 +680,100 @@ export function buildCustomDweebModel(config = {}) {
       appGroup.userData.fx = { ...(appGroup.userData.fx || {}), springs: [sprL, sprR] };
       break;
     }
+    case 'crown': {
+      const crownBase = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.06, 6, 16), accentMat);
+      crownBase.rotation.x = Math.PI / 2;
+      crownBase.position.set(0, topY + 0.12, 0);
+      const jew = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), bodyMat);
+      jew.position.set(0, topY + 0.22, 0);
+      appGroup.add(crownBase, jew);
+      break;
+    }
+    case 'viking_helmet': {
+      const helm = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), darkMat);
+      helm.scale.set(1.05, 0.7, 1.05);
+      helm.position.set(0, topY + 0.05, 0);
+      const hornGeo = new THREE.ConeGeometry(0.08, 0.34, 8);
+      const hL = new THREE.Mesh(hornGeo, accentMat);
+      hL.position.set(-0.3, topY + 0.18, 0.05);
+      hL.rotation.z = 0.6;
+      const hR = new THREE.Mesh(hornGeo, accentMat);
+      hR.position.set(0.3, topY + 0.18, 0.05);
+      hR.rotation.z = -0.6;
+      appGroup.add(helm, hL, hR);
+      break;
+    }
+    case 'sunglasses': {
+      const frameGeo = new THREE.BoxGeometry(0.5, 0.12, 0.08);
+      const frame = new THREE.Mesh(frameGeo, darkMat);
+      frame.position.set(0, bodyTopY + 0.12, frontZ + 0.06);
+      const lensL = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.1), darkMat);
+      lensL.position.set(-0.16, bodyTopY + 0.12, frontZ + 0.1);
+      const lensR = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.1), darkMat);
+      lensR.position.set(0.16, bodyTopY + 0.12, frontZ + 0.1);
+      appGroup.add(frame, lensL, lensR);
+      break;
+    }
+    case 'monocle': {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 6, 12), accentMat);
+      ring.position.set(0.16, bodyTopY + 0.08, frontZ + 0.12);
+      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.24, 4), accentMat);
+      chain.position.set(0.16, bodyTopY - 0.06, frontZ + 0.05);
+      chain.rotation.x = 0.4;
+      appGroup.add(ring, chain);
+      break;
+    }
+    case 'rocket_booster': {
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.4, 8), darkMat);
+      body.rotation.x = Math.PI / 2;
+      body.position.set(0, topY - 0.05, -0.35);
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.2, 8), accentMat);
+      nose.rotation.x = -Math.PI / 2;
+      nose.position.set(0, topY - 0.05, -0.6);
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.18, 8), toonMat({ color: 0xff7a00, flatShading: true }));
+      flame.rotation.x = Math.PI / 2;
+      flame.position.set(0, topY - 0.05, -0.12);
+      appGroup.add(body, nose, flame);
+      break;
+    }
+    case 'propeller_hat': {
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.18, 10), accentMat);
+      cap.position.set(0, topY + 0.12, 0);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.12, 6), darkMat);
+      hub.position.set(0, topY + 0.26, 0);
+      const bladeGeo = new THREE.BoxGeometry(0.5, 0.02, 0.08);
+      const b1 = new THREE.Mesh(bladeGeo, darkMat);
+      b1.position.set(0, topY + 0.32, 0);
+      const b2 = new THREE.Mesh(bladeGeo, darkMat);
+      b2.position.set(0, topY + 0.32, 0);
+      b2.rotation.y = Math.PI / 2;
+      appGroup.add(cap, hub, b1, b2);
+      break;
+    }
+    case 'oversized_boxing_gloves': {
+      const gGeo = new THREE.SphereGeometry(0.3, 12, 10);
+      const gL = new THREE.Mesh(gGeo, accentMat);
+      gL.position.set(-0.55 * sx, bodyTopY, 0.22);
+      const gR = new THREE.Mesh(gGeo, accentMat);
+      gR.position.set(0.55 * sx, bodyTopY, 0.22);
+      appGroup.add(gL, gR);
+      break;
+    }
+    case 'golden_spikes': {
+      const gMat = toonMat({ color: 0xffd23f, flatShading: true });
+      for (let i = 0; i < 9; i++) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.3, 6), gMat);
+        const ang = (i / 9) * Math.PI * 2;
+        spike.position.set(Math.cos(ang) * 0.44 * sx, bodyTopY + Math.sin(ang) * 0.24, -0.12);
+        spike.rotation.z = -ang + Math.PI / 2;
+        appGroup.add(spike);
+      }
+      break;
+    }
     case 'none':
     default:
       break;
   }
-
-  // 6. Feet & Limbs
   const feetGroup = new THREE.Group();
   feetGroup.name = 'Feet';
   root.add(feetGroup);
