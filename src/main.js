@@ -21,6 +21,7 @@ import { CombatSystem, DEFAULT_LOFT } from './combat/CombatSystem.js';
 import { Bot } from './ai/Bot.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { Match, Phase } from './game/Match.js';
+import { scoreDeath, receiptLine, spectacle } from './game/Darwin.js';
 import { EmoteSystem } from './game/Emotes.js';
 import { DeathCinema } from './game/DeathCinema.js';
 import { GAME_MODES, DEFAULT_MODE } from './game/GameModes.js';
@@ -1859,6 +1860,10 @@ function startRound() {
     d.jumpScale = arena.gravity < 1 ? 0.72 + arena.gravity * 0.28 : 1;
     d.respawn(p, 0);
     d.held = null;
+    // Per-round Darwin bookkeeping: how many times they already came back from a KO
+    // ("CAME BACK FOR MORE") and the receipt for their last death.
+    d._rebounds = 0;
+    d.lastDarwin = null;
     d.yaw = currentEscapeSandbox ? Math.PI : Math.atan2(-p.x, -p.z);
     // Arena floor feel: the Iceberg's traction lives on the stage, not the Dweeb.
     d.traction = arena.traction;
@@ -1943,6 +1948,9 @@ const matchEvents = {
   },
   onKO(d, credited, kind, pos) {
     emotes?.onKO(d, credited);
+    // Derby bookkeeping: snapshot what the death *was* before knockOut() clears the Dweeb.
+    d._lastAirTime = d.airTime || 0;
+    d._heldAtKO = d.held ? d.held.kind : null;
     const sd = match.suddenDeath;
     fx.ko(d, credited, kind, pos, sd);
     // Record KO for build_arena telemetry
@@ -1996,27 +2004,7 @@ const matchEvents = {
     }
     // --- Derby mode: Darwin award ---
     if (currentMode === 'derby') {
-      const vertSpeed = Math.abs(d.koSpeedY || 0);
-      let points = 100; // base
-      const bonuses = [];
-      if (kind === 'splash') { points += 75; bonuses.push({ label: 'BELLY FLOP', value: 75 }); }
-      if (pos.y > 6) { points += 100; bonuses.push({ label: 'SKY DIVE', value: 100 }); }
-      if (!credited) { points += 80; bonuses.push({ label: 'SELF-OWN', value: 80 }); }
-      const vertBonus = Math.min(150, Math.round(vertSpeed * 4));
-      if (vertBonus > 0) { points += vertBonus; bonuses.push({ label: 'METEOR', value: vertBonus }); }
-      if (sd) { points += 100; bonuses.push({ label: 'SUDDEN DEATH', value: 100 }); }
-      // Label from biggest bonus
-      let label = 'DARWIN';
-      if (bonuses.length) {
-        bonuses.sort((a, b) => b.value - a.value);
-        label = bonuses[0].label;
-      }
-      match.awardDarwin(d, points, label);
-      // Feedback
-      hud.feed(`<b style="color:#ffd23f">DARWIN +${points}</b> ${Hud.nameTag(d)} · ${label}`, 'ko');
-      hud.popup('DARWIN +' + points, pos, 'big', 0xffd23f);
-      particles.confetti(pos, 30);
-      arena.excite?.(0.4);
+      scoreDerbyDeath(d, credited, kind, pos);
     }
   },
   onDarwinAward(d, points, label) {
@@ -2365,12 +2353,22 @@ function updateDarwinBoard() {
   // Sort dweebs by darwin points descending
   const ranked = [...dweebs].sort((a, b) => (b.darwin || 0) - (a.darwin || 0));
   el.innerHTML = '<div style="font-size:11px;letter-spacing:1px;margin-bottom:4px;color:#8a6a9a">DARWIN</div>' +
-    ranked.map((d, i) => `
-      <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-top:${i>0?'1px dashed #d8c8b8':''}">
-        <span style="color:${hex(d.color)}">${i+1}. ${d.isPlayer ? 'YOU' : d.name}</span>
-        <span style="color:#1b1030;background:#ffd23f;border-radius:6px;padding:0 6px">${d.darwin || 0}</span>
-      </div>
-    `).join('');
+    ranked.map((d, i) => {
+      // The last death of this round, so the board explains *why* someone is winning.
+      const last = d.lastDarwin?.round === match.round ? d.lastDarwin : null;
+      const why = last
+        ? `<div style="font-size:10px;line-height:1.25;color:#6b5a7a;margin:0 0 1px 2px">${last.label} +${last.total}${
+          last.beats?.length ? ` <span style="opacity:.75">(${last.beats.slice(0, 2).map(b => b.label.toLowerCase()).join(', ')})</span>` : ''
+        }</div>`
+        : '';
+      return `
+      <div style="padding:2px 0;border-top:${i > 0 ? '1px dashed #d8c8b8' : ''}">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <span style="color:${hex(d.color)}">${i + 1}. ${d.isPlayer ? 'YOU' : d.name}</span>
+          <span style="color:#1b1030;background:#ffd23f;border-radius:6px;padding:0 6px">${d.darwin || 0}</span>
+        </div>${why}
+      </div>`;
+    }).join('');
   el.style.display = 'block';
 }
 
@@ -2380,6 +2378,50 @@ function hideDarwinBoard() {
 
 function removeDarwinBoard() {
   if (darwinBoardEl) { darwinBoardEl.remove(); darwinBoardEl = null; }
+}
+
+/**
+ * Derby mode: score a death, say how it scored, and put the receipt on the board.
+ * All the judgement lives in game/Darwin.js; this only gathers the facts and shows them,
+ * because a Darwin award the player cannot read is just a number going up.
+ */
+function scoreDerbyDeath(d, credited, kind, pos) {
+  const t = match.time;
+  // How many hits landed on them in the chain that finished them (ComboDirector keeps the
+  // chain for a KO victim until registerKO clears it; this runs before that).
+  const chainHits = comboDirector?.chains?.get(d)?.hits ?? 0;
+  const scored = scoreDeath({
+    kind,
+    sudden: match.suddenDeath,
+    credited: !!credited,
+    height: pos.y,
+    fallSpeed: d.koSpeedY || 0,
+    airTime: d._lastAirTime ?? d.maxAir ?? 0,
+    held: d._heldAtKO ?? null,
+    chainHits,
+    rebounds: d._rebounds ?? 0,
+    revenge: !!credited && credited.koedBy === d && t - (credited.koedAt ?? -99) < 8,
+  });
+
+  const { total, label, beats } = scored;
+  match.awardDarwin(d, total, label);
+
+  // The receipt: headline on the popup, the ticket items underneath in the feed.
+  hud.popup(`DARWIN +${total}`, pos, 'big', 0xffd23f);
+  hud.popup(label, { x: pos.x, y: pos.y + 1.4, z: pos.z }, 'small', 0xffd23f);
+  const items = receiptLine(scored);
+  hud.feed(`<b style="color:#ffd23f">DARWIN +${total}</b> ${Hud.nameTag(d)}${items ? ` <span style="opacity:.85">· ${items}</span>` : ''}`, 'ko');
+
+  // React to the size of the death, not to death existing: a boring edge-walk gets a puff,
+  // a flaming meteor with a pupil in hand gets the confetti cannon.
+  const heat = spectacle(scored);
+  particles.confetti(pos, 12 + Math.round(heat * 60));
+  arena.excite?.(0.2 + heat * 0.8);
+  if (heat > 0.35) audio.playCheer?.(0.3 + heat * 0.5);
+
+  // Remember so the board can show the last death this round (and the number that made it).
+  d.lastDarwin = { total, label, beats, round: match.round };
+  updateDarwinBoard();
 }
 
 function podium(list, stat, extra = null) {

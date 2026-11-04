@@ -79,3 +79,42 @@ export function waveThreat(n) {
   }
   return { count: comp.length, hp, dps, boss: isBossWave(n) };
 }
+
+/**
+ * After-action report for the wave that just ended: what it cost, what survived, and how
+ * rough the next one looks compared to this one. Pure and deterministic so the HUD can
+ * render it and tests can pin it.
+ *
+ * @param {object} o
+ * @param {Array}  [o.units]    live units ({team, type, veteran}) at the moment the wave cleared
+ * @param {number} [o.lost]     casualties this wave (st.stats.blue.lost delta)
+ * @param {number} [o.converted]dweebs kidnapped and turned this wave
+ * @param {number} [o.wave]     the wave that just cleared
+ * @param {number} [o.reward]   coins earned for clearing it
+ * @returns {{ wave:number, lost:number, converted:number, alive:number, veterans:number,
+ *             composition:Object<string,number>, next:number, trend:'calmer'|'same'|'darker', reward:number }}
+ */
+export function afterAction({ units = [], lost = 0, converted = 0, wave = 1, reward = 0 } = {}) {
+  const composition = {};
+  let alive = 0, veterans = 0;
+  for (const u of units) {
+    if (!u || u.team !== 'blue' || !u.alive) continue;
+    if (u.type === 'decoy') continue;
+    alive++;
+    composition[u.type] = (composition[u.type] || 0) + 1;
+    if (u.veteran) veterans++;
+  }
+  const had = alive + lost;
+  const next = wave + 1;
+  const trend = threatTrend(wave, next);
+  return { wave, lost, converted, alive, had, veterans, composition, next, trend, reward };
+}
+
+/** Is the next wave harder, much harder, or (rarely) a breather? Boss waves count as worse. */
+export function threatTrend(from, to) {
+  if (!(to > from)) return 'same';
+  if (isBossWave(to)) return 'darker';
+  const a = waveThreat(from), b = waveThreat(to);
+  const ratio = (b.hp + b.dps * 20) / Math.max(1, a.hp + a.dps * 20);
+  return ratio >= 1.35 ? 'darker' : ratio <= 1.06 ? 'calmer' : 'same';
+}

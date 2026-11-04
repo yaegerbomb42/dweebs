@@ -12,7 +12,7 @@ import { Rng, hashString } from './rng.js';
 import { stats, otherTeam, bounty, RECRUITABLE } from './warfareUnits.js';
 import { computeDamage, splashFalloff, knockback, COVER_RADIUS } from './warfareDamage.js';
 import { pickTarget, shouldRetreat, flankGoal, REJOIN_AT } from './warfareAI.js';
-import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward, DIFFICULTY } from './warfareWaves.js';
+import { FINAL_WAVE, isBossWave, waveComposition, waveScaling, waveReward, afterAction, DIFFICULTY } from './warfareWaves.js';
 /* AI personality keys live here so the sim (lockstep, seeded) can draw them while the
  * behaviour definitions stay in src/warfare/WarfareCommander.js (which imports this way). */
 export const AI_PERSONALITIES = Object.freeze(['tactician', 'brawler', 'turtle', 'trickster']);
@@ -672,6 +672,7 @@ function kill(st, u, attTeam, kx, kz, attId = 0) {
   const bossDeath = u.type === 'boss';
   if (!u.decoy) {
     st.stats[u.team].lost++;           // a popped balloon is not a casualty
+    if (u.team === 'blue') st._waveLoss = (st._waveLoss || 0) + 1;
     const loss = bossDeath ? MORALE_BOSS_LOSS : u.type === 'brute' ? 0.09 : 0.05;
     setMorale(st, u.team, moraleOf(st, u.team) - loss, 'death');
   }
@@ -1009,6 +1010,7 @@ function updateUnit(st, u, enemies) {
         u.carrying = 0;
         st.stats[u.team].converted++;
         st.stats[from].lost++;
+        if (from === 'blue') { st._waveConverted = (st._waveConverted || 0) + 1; st._waveLoss = (st._waveLoss || 0) + 1; }
         st.events.push({ type: 'convert', id: v.id, team: u.team, from, unit: v.type, x: v.x, z: v.z });
       }
       return;
@@ -1130,6 +1132,7 @@ function updateUnit(st, u, enemies) {
         t.kx -= dirOf(u.team) * -6;
         st.stats[u.team].converted++;
         st.stats[from].lost++;
+        if (from === 'blue') { st._waveConverted = (st._waveConverted || 0) + 1; st._waveLoss = (st._waveLoss || 0) + 1; }
         st.events.push({ type: 'convert', id: t.id, team: u.team, from, unit: t.type, x: t.x, z: t.z, flip: true });
         u.cd = s.cooldown;
         return;
@@ -1347,7 +1350,17 @@ function updatePhase(st) {
   st.stats.blue.coinsEarned += reward;
   st.stats.wavesCleared = st.wave;
   for (const u of st.units) if (u.alive && u.team === 'blue') u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.25);
-  st.events.push({ type: 'waveClear', wave: st.wave, reward });
+  // The after-action report rides along on the event: what the wave cost, and what is left
+  // standing to spend the reward on. Computed before the prep phase so it describes the
+  // army the player is about to shop with, not the one they started the wave with.
+  const report = afterAction({
+    units: st.units, lost: st._waveLoss ?? 0, converted: st._waveConverted ?? 0,
+    wave: st.wave, reward,
+  });
+  st.lastReport = report;
+  st._waveLoss = 0;
+  st._waveConverted = 0;
+  st.events.push({ type: 'waveClear', wave: st.wave, reward, report });
   const finalWave = st.finalWave || FINAL_WAVE;
   if (st.wave >= finalWave) { end(st, 'blue'); return; }
   st.phase = 'prep';
