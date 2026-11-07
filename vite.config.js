@@ -28,7 +28,11 @@ export default defineConfig({
   publicDir: 'public',
   server: {
     port: 3000,
-    open: true
+    open: true,
+    host: '0.0.0.0',
+    // Preview host + LAN aliases; Vite blocks unknown Host headers by default, which would
+    // break the proxied preview this repo is developed behind.
+    allowedHosts: ['.e2b.app', '.arena.ai', 'localhost', '127.0.0.1'],
   },
   build: {
     outDir: 'dist',

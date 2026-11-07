@@ -244,6 +244,9 @@ export class Match {
     const wasLastStock = d.stocks <= 1;
     d.stocks--;
     d.falls++;
+    // They lost a stock, so the next KO ends this life. A Dweeb who keeps coming back is
+    // worth Darwin points for nerve alone (see game/Darwin.js "CAME BACK FOR MORE").
+    d._rebounds = (d._rebounds || 0) + 1;
     d.totalFalls = (d.totalFalls || 0) + 1;
     if (d.stocks <= 0) d.eliminate();
     else d.knockOut(RESPAWN_DELAY);

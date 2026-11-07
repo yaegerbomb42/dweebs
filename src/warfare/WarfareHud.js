@@ -63,6 +63,10 @@ const CSS = `
 .wf-prep button{font-size:20px}
 .wf-prep .t{font-family:'Lilita One',sans-serif;font-size:20px;text-shadow:0 2px 0 #1b1030;margin-bottom:6px}
 .wf-prep-comp{font-size:15px;font-weight:800;text-shadow:0 2px 0 #1b1030;margin-bottom:8px;letter-spacing:1px}
+.wf-prep-report{font-size:13px;font-weight:700;line-height:1.3;text-shadow:0 2px 0 #1b1030;margin:-4px 0 8px;opacity:.95}
+.wf-prep-report b{color:#ffd23f}
+.wf-prep-report .darker{color:#ff8a5a}
+.wf-prep-report .calmer{color:#5ee06a}
 .wf-cards{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:10px}
 .wf-card{pointer-events:auto;cursor:pointer;width:128px;background:rgba(27,16,48,.85);border:3px solid #fff8ee;border-radius:16px;padding:8px;text-align:center;transition:transform .08s}
 .wf-card:hover{transform:translateY(-4px)}
@@ -120,6 +124,24 @@ export function wavePreview(n) {
   for (const [t, c] of counts) parts.push(`${ICON_ALL[t] || '❓'}×${c}`);
   if (isBossWave(n)) parts.push('<b style="color:#ffd23f">BOSS</b>');
   return `next: ${parts.join(' ')}`;
+}
+
+/**
+ * The after-action line for the prep card. Pure — unit-testable.
+ * "Last wave cost you 3 · 5 left (2 veterans) · next one looks darker".
+ */
+export function reportLine(rep) {
+  if (!rep) return '';
+  const bits = [];
+  if (rep.lost > 0) bits.push(`last wave cost <b>${rep.lost}</b>${rep.converted ? ` <i>(${rep.converted} turned)</i>` : ''}`);
+  else bits.push('last wave cost <b>nobody</b>');
+  const army = `${rep.alive} left${rep.veterans ? ` · ${rep.veterans} veteran${rep.veterans === 1 ? '' : 's'}` : ''}`;
+  bits.push(army);
+  const next = rep.trend === 'darker' ? '<span class="darker">the next one looks darker</span>'
+    : rep.trend === 'calmer' ? '<span class="calmer">a breather is coming</span>'
+    : 'more of the same coming';
+  bits.push(next);
+  return bits.join(' · ');
 }
 
 /** localStorage key for the best defense wave; normal keeps the original key. */
@@ -193,6 +215,7 @@ export class WarfareHud {
         <div class="wf-prep" data-f="prep">
           <div class="t" data-f="prepText"></div>
           <div class="wf-prep-comp" data-f="prepComp"></div>
+          <div class="wf-prep-report" data-f="prepReport"></div>
           <button data-a="startWave">START WAVE (SPACE)</button>
         </div>
         <div class="wf-powers" style="position:absolute; bottom:118px; left:50%; transform:translateX(-50%); display:flex; gap:8px; flex-wrap:wrap; justify-content:center; max-width:98vw; pointer-events:auto;">
@@ -443,6 +466,10 @@ export class WarfareHud {
         this.f('prepText').textContent = st.wave === 0 ? `Plant your rally flag and recruit. First wave in ${s}s` : `Wave ${st.wave + 1}${isBossWave(st.wave + 1) ? ' (BOSS!)' : ''} in ${s}s`;
       });
       set('prepComp', st.wave + 1, w => { this.f('prepComp').innerHTML = wavePreview(w); });
+      // After-action: what the last wave cost, next to what the next one will bring.
+      const rep = st.lastReport;
+      set('prepReport', rep ? `${rep.wave}|${rep.lost}|${rep.alive}|${rep.veterans}|${rep.converted}|${rep.trend}` : '',
+        () => { this.f('prepReport').innerHTML = rep ? reportLine(rep) : ''; });
     }
     if (this.bannerT > 0) {
       this.bannerT -= dt;
