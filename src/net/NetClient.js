@@ -343,6 +343,18 @@ export class NetClient {
         this.setStatus('joined');
         return;
       case 'room':
+        // A rematch starts a new tick timeline. Do not reject its snapshots as
+        // stale or replay input history from the previous match.
+        if (this.roomState?.phase === 'playing' && m.phase === 'lobby') {
+          this.serverTick = 0;
+          this.tick = 0;
+          this.joined = false;
+          this.snapBuffer = [];
+          this.serverEntities = new Map();
+          this.history.map.clear();
+          this.smoother.reset();
+          this.acc = 0;
+        }
         this.roomState = m;
         this.onRoom(m);
         this._confirmReady(m);
@@ -375,26 +387,20 @@ export class NetClient {
   }
 
   onSnapshot(m) {
-    // Spectators don't predict: they render the authoritative feed as-is. The
-    // interpolation buffer still smooths the 30 Hz snapshots for them.
-    if (this.spectating) {
-      if (m.tick <= this.serverTick && this.snapBuffer.length) return;
-      if (m.full || this.snapBuffer.length === 0) this.serverEntities = new Map();
-      for (const e of m.entities) this.serverEntities.set(e.id, e);
-      this.snapBuffer.push({ tick: m.tick, entities: m.entities.map(toMeters) });
-      if (this.snapBuffer.length > SNAP_BUFFER) this.snapBuffer.shift();
-      this.serverTick = Math.max(this.serverTick, m.tick);
-      return;
-    }
-    // Jitter can reorder packets. Reconciling an older snapshot after a newer one
-    // rewinds the sim and shows up as a rubber-band, so stale snapshots are dropped.
-    if (m.tick <= this.serverTick && this.joined) return;
-    const full = m.full || this.snapBuffer.length === 0;
-    if (full) this.serverEntities = new Map();
+    // Lobby snapshots share tick zero, but may contain updated seats or rules.
+    // Replace the previous entry at that tick instead of discarding the update.
+    const sameTick = this.snapBuffer.length > 0 && m.tick === this.serverTick;
+    if (m.tick < this.serverTick || (sameTick && this.roomState?.phase !== 'lobby')) return;
+    if (m.full || this.snapBuffer.length === 0) this.serverEntities = new Map();
     for (const e of m.entities) this.serverEntities.set(e.id, e);
-    this.snapBuffer.push({ tick: m.tick, entities: m.entities.map(toMeters) });
+    // Each interpolation frame must be a complete world, not just the entities
+    // changed in this packet. Otherwise stationary players vanish on empty deltas.
+    const snapshot = { tick: m.tick, entities: [...this.serverEntities.values()].map(toMeters) };
+    if (sameTick) this.snapBuffer[this.snapBuffer.length - 1] = snapshot;
+    else this.snapBuffer.push(snapshot);
     if (this.snapBuffer.length > SNAP_BUFFER) this.snapBuffer.shift();
-    this.serverTick = Math.max(this.serverTick, m.tick);
+    this.serverTick = m.tick;
+    if (this.spectating) return;
     // The very first snapshot is a join, not a correction: the local sim was
     // initialised from our own defaults, so its dweeb can be metres from the server's.
     // Adopting the authoritative state outright is right here — smoothing a spawn would
