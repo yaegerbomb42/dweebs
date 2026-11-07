@@ -323,7 +323,7 @@ describe('online features: rematch, spectators, history', () => {
       a.setReady(true); b.setReady(true);
       await waitFor(() => phase === 'playing', 20000, 'playing');
       await waitFor(() => s.status === 'spectating', 10000, 'spectating');
-      await waitFor(() => specSnaps > 5, 10000, 'spectator snapshots');
+      await waitFor(() => specSnaps > 5 && s.renderEntities().length > 0, 10000, 'renderable spectator snapshots');
       expect(s.slot).toBe(-1);
       expect(specRoom).not.toBeNull();
       expect(specRoom.phase).toBe('playing');
