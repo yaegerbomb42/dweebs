@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unified — The agent framework for real work</title>
+  <meta name="description" content="Unified is the orchestration layer for AI agents. One runtime, many minds — planning, research, code, and critique in a single coherent system." />
+  <meta name="theme-color" content="#000000" />
+  <meta property="og:title" content="Unified — The agent framework for real work" />
+  <meta property="og:description" content="One runtime. Many minds. A single coherent system for AI agents." />
+  <link rel="preload" href="fonts/geist-var.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="fonts/geist-mono-var.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="src/styles/base.css" />
+  <link rel="stylesheet" href="src/styles/hero.css" />
+  <link rel="stylesheet" href="src/styles/sections.css" />
+  <link rel="stylesheet" href="src/styles/cta.css" />
+  <noscript>
+    <style>
+      /* Without JS the page should still read beautifully. */
+      body[data-loading='true'] { overflow: auto; height: auto; }
+      .boot, .cursor, .particles { display: none !important; }
+      [data-reveal], [data-stagger] > * { opacity: 1 !important; transform: none !important; filter: none !important; }
+      .marquee__track { transform: none !important; }
+      .terminal__body::after { content: '$ unified run --mesh plan.yaml'; color: #00f0ff; }
+    </style>
+  </noscript>
+</head>
+<body data-loading="true">
+
+  <!-- Ambient layers -->
+  <div class="grain" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+  <canvas class="particles" id="particles" aria-hidden="true"></canvas>
+  <div class="cursor" id="cursor" aria-hidden="true">
+    <div class="cursor__ring" data-cursor-ring></div>
+    <div class="cursor__dot" data-cursor-dot></div>
+  </div>
+
+  <!-- Boot sequence -->
+  <div class="boot" id="boot" aria-hidden="true">
+    <div class="boot__inner">
+      <div class="boot__label mono">UNIFIED / RUNTIME</div>
+      <div class="boot__bar"><span id="bootBar"></span></div>
+      <div class="boot__count mono"><span id="bootCount">00</span></div>
+    </div>
+  </div>
+
+  <a class="skip mono" href="#main">Skip to content</a>
+
+  <header class="nav" data-nav>
+    <div class="nav__inner">
+      <a class="brand" href="#" data-magnetic>
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1">
+            <circle cx="12" cy="4.4" r="1.9" />
+            <circle cx="4.6" cy="17" r="1.9" />
+            <circle cx="19.4" cy="17" r="1.9" />
+            <circle cx="12" cy="12" r="1.6" class="brand__core" />
+            <path d="M12 6.3v4.1M7.9 15.6l2.9-2.1M16.1 15.6l-2.9-2.1" />
+          </svg>
+        </span>
+        <span class="brand__word">Unified</span>
+      </a>
+
+      <nav class="nav__links" aria-label="Primary">
+        <a href="#mesh" data-magnetic><span>Mesh</span></a>
+        <a href="#capabilities" data-magnetic><span>Capabilities</span></a>
+        <a href="#features" data-magnetic><span>Runtime</span></a>
+      </nav>
+
+      <div class="nav__actions">
+        <a class="nav__login mono" href="#cta" data-magnetic>Sign in</a>
+        <a class="btn btn--primary btn--sm" href="#cta" data-magnetic>
+          <span class="btn__label">Request access</span>
+          <span class="btn__glow" aria-hidden="true"></span>
+        </a>
+      </div>
+    </div>
+    <div class="nav__hairline" aria-hidden="true"></div>
+  </header>
+
+  <main id="main">
+
+    <!-- ══════════════ HERO ══════════════ -->
+    <section class="hero" id="top">
+      <div class="hero__ambient" aria-hidden="true">
+        <div class="blob blob--a" data-blob></div>
+        <div class="blob blob--b" data-blob></div>
+        <div class="blob blob--c" data-blob></div>
+        <div class="hero__grid"></div>
+        <div class="hero__halo"></div>
+      </div>
+
+      <!-- drifting agent cards -->
+      <div class="orbit" aria-hidden="true">
+        <article class="agent agent--researcher" data-agent data-depth="0.22">
+          <div class="agent__sheen"></div>
+          <header class="agent__head">
+            <span class="agent__dot"></span>
+            <span class="mono agent__tag">RESEARCHER</span>
+            <span class="agent__live mono">live</span>
+          </header>
+          <p class="agent__body">Reading 14 sources…</p>
+          <div class="agent__lines"><i></i><i></i><i></i></div>
+        </article>
+
+        <article class="agent agent--coder" data-agent data-depth="0.34">
+          <div class="agent__sheen"></div>
+          <header class="agent__head">
+            <span class="agent__dot"></span>
+            <span class="mono agent__tag">CODER</span>
+            <span class="agent__live mono">live</span>
+          </header>
+          <p class="agent__body mono agent__code"><span class="k">await</span> mesh.run(task)</p>
+          <div class="agent__meter"><span style="--v:0.78"></span></div>
+        </article>
+
+        <article class="agent agent--planner" data-agent data-depth="0.16">
+          <div class="agent__sheen"></div>
+          <header class="agent__head">
+            <span class="agent__dot"></span>
+            <span class="mono agent__tag">PLANNER</span>
+            <span class="agent__live mono">live</span>
+          </header>
+          <p class="agent__body">7 steps · 3 parallel</p>
+          <div class="agent__nodes"><i></i><i></i><i></i><i></i></div>
+        </article>
+
+        <article class="agent agent--critic" data-agent data-depth="0.42">
+          <div class="agent__sheen"></div>
+          <header class="agent__head">
+            <span class="agent__dot"></span>
+            <span class="mono agent__tag">CRITIC</span>
+            <span class="agent__live mono">review</span>
+          </header>
+          <p class="agent__body">Confidence 0.94</p>
+          <div class="agent__meter"><span style="--v:0.94"></span></div>
+        </article>
+
+        <article class="agent agent--memory" data-agent data-depth="0.28">
+          <div class="agent__sheen"></div>
+          <header class="agent__head">
+            <span class="agent__dot"></span>
+            <span class="mono agent__tag">MEMORY</span>
+            <span class="agent__live mono">sync</span>
+          </header>
+          <p class="agent__body">2,481 embeddings</p>
+          <div class="agent__lines"><i></i><i></i><i></i></div>
+        </article>
+      </div>
+
+      <div class="hero__content" data-hero>
+        <div class="hero__eyebrow" data-reveal>
+          <span class="pill">
+            <span class="pill__pulse" aria-hidden="true"></span>
+            <span class="mono">v4.0 — multi-agent runtime</span>
+          </span>
+        </div>
+
+        <h1 class="wordmark" aria-label="Unified">
+          <span class="wordmark__stage" data-wordmark>
+            <span class="wordmark__layer wordmark__layer--back" aria-hidden="true">Unified</span>
+            <span class="wordmark__layer wordmark__layer--mid" aria-hidden="true">Unified</span>
+            <span class="wordmark__layer wordmark__layer--front" data-mark>Unified</span>
+          </span>
+        </h1>
+
+        <p class="hero__sub" data-reveal>
+          One runtime. Many minds. Unified orchestrates planning, research, code and critique
+          into a single coherent intelligence — observable, deterministic, yours.
+        </p>
+
+        <div class="hero__actions" data-reveal>
+          <a class="btn btn--primary" href="#cta" data-magnetic>
+            <span class="btn__label">Start building</span>
+            <span class="btn__arrow" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/></svg>
+            </span>
+            <span class="btn__glow" aria-hidden="true"></span>
+          </a>
+          <a class="btn btn--ghost" href="#mesh" data-magnetic>
+            <span class="btn__label">Explore the mesh</span>
+          </a>
+        </div>
+
+        <div class="hero__meta mono" data-reveal>
+          <span><i class="dot dot--live"></i> 11 agents online</span>
+          <span class="hero__meta-sep"></span>
+          <span>p50 latency 38ms</span>
+          <span class="hero__meta-sep"></span>
+          <span>open protocol</span>
+        </div>
+      </div>
+
+      <div class="hero__edge" aria-hidden="true">
+        <div class="hero__scroll mono">
+          <span>Scroll</span>
+          <span class="hero__scroll-line"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ MARQUEE ══════════════ -->
+    <section class="marquee-section" id="capabilities" aria-label="Capabilities">
+      <div class="marquee-section__fade" aria-hidden="true"></div>
+
+      <div class="marquee" data-marquee data-speed="48">
+        <div class="marquee__track">
+          <!-- duplicated by JS for a seamless loop -->
+          <ul class="marquee__row" data-row>
+            <li>Tool calling</li><li class="sep" aria-hidden="true">/</li>
+            <li>Streaming</li><li class="sep" aria-hidden="true">/</li>
+            <li>Vector memory</li><li class="sep" aria-hidden="true">/</li>
+            <li>Deterministic replay</li><li class="sep" aria-hidden="true">/</li>
+            <li>Sandboxed execution</li><li class="sep" aria-hidden="true">/</li>
+            <li>Human in the loop</li><li class="sep" aria-hidden="true">/</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="marquee marquee--alt" data-marquee data-speed="64" data-dir="-1">
+        <div class="marquee__track">
+          <ul class="marquee__row" data-row>
+            <li>Type-safe graphs</li><li class="sep" aria-hidden="true">·</li>
+            <li>Cost budgets</li><li class="sep" aria-hidden="true">·</li>
+            <li>Trace everything</li><li class="sep" aria-hidden="true">·</li>
+            <li>Self-healing retries</li><li class="sep" aria-hidden="true">·</li>
+            <li>Multi-model routing</li><li class="sep" aria-hidden="true">·</li>
+            <li>Zero-trust tools</li><li class="sep" aria-hidden="true">·</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="marquee-section__fade marquee-section__fade--r" aria-hidden="true"></div>
+    </section>
+
+    <!-- ══════════════ MESH ══════════════ -->
+    <section class="mesh-section" id="mesh">
+      <div class="section__inner">
+        <header class="section__head">
+          <p class="kicker mono" data-reveal><span class="kicker__num">01</span> The mesh</p>
+          <h2 class="h2" data-split>Agents that think together,<br />not in parallel silos.</h2>
+          <p class="lede" data-reveal>
+            Every node is a specialist. The mesh is the conversation between them — a shared
+            graph of intent that reconfigures as work moves through it.
+          </p>
+        </header>
+      </div>
+
+      <div class="mesh-wrap">
+        <canvas id="meshCanvas" class="mesh-canvas"></canvas>
+        <div class="mesh-hud" aria-hidden="true">
+          <div class="mesh-hud__corner mesh-hud__corner--tl mono">MESH / 011 NODES</div>
+          <div class="mesh-hud__corner mesh-hud__corner--br mono"><span data-mesh-status>RECONFIGURING</span> · <span data-mesh-ticks>0000</span></div>
+        </div>
+        <div class="mesh-tip mono" id="meshTip" aria-hidden="true">hover a node</div>
+      </div>
+
+      <div class="mesh-legend section__inner" data-stagger>
+        <div class="legend-item"><span class="legend-item__bar"></span><span class="mono">Intent graph</span><p>Plans are data, not prompts. Inspect and rewind any decision.</p></div>
+        <div class="legend-item"><span class="legend-item__bar"></span><span class="mono">Shared context</span><p>One memory substrate, scoped per agent, encrypted end to end.</p></div>
+        <div class="legend-item"><span class="legend-item__bar"></span><span class="mono">Adaptive routing</span><p>Latency, cost and confidence decide which mind answers.</p></div>
+      </div>
+    </section>
+
+    <!-- ══════════════ FEATURES ══════════════ -->
+    <section class="features" id="features">
+      <div class="section__inner">
+        <header class="section__head section__head--left">
+          <p class="kicker mono" data-reveal><span class="kicker__num">02</span> The runtime</p>
+          <h2 class="h2" data-split>Built like infrastructure.<br />Feels like intent.</h2>
+        </header>
+
+        <div class="grid" data-stagger>
+          <article class="card" data-tilt>
+            <div class="card__glow" aria-hidden="true"></div>
+            <div class="card__icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1">
+                <circle cx="14" cy="14" r="4.2"/><circle cx="14" cy="14" r="9"/><path d="M14 1.6v3M14 23.4v3M1.6 14h3M23.4 14h3"/>
+              </svg>
+            </div>
+            <h3>Composable graphs</h3>
+            <p>Define agents as typed nodes with explicit edges. Branch, merge and replay the whole run without a rewrite.</p>
+            <span class="card__index mono">01</span>
+          </article>
+
+          <article class="card" data-tilt>
+            <div class="card__glow" aria-hidden="true"></div>
+            <div class="card__icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1">
+                <rect x="4" y="4" width="20" height="20" rx="4"/><path d="M9 14h10M14 9v10"/>
+              </svg>
+            </div>
+            <h3>Deterministic core</h3>
+            <p>Same input, same graph, same trace. Seed the runtime and diff two runs byte for byte.</p>
+            <span class="card__index mono">02</span>
+          </article>
+
+          <article class="card" data-tilt>
+            <div class="card__glow" aria-hidden="true"></div>
+            <div class="card__icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1">
+                <path d="M6 21V9l8-4 8 4v12"/><path d="M10.5 21v-6h7v6"/>
+              </svg>
+            </div>
+            <h3>Sandboxed tools</h3>
+            <p>Every tool call runs in a zero-trust envelope with scoped credentials, hard timeouts and full audit.</p>
+            <span class="card__index mono">03</span>
+          </article>
+
+          <article class="card" data-tilt>
+            <div class="card__glow" aria-hidden="true"></div>
+            <div class="card__icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1">
+                <path d="M3 19l6-7 5 4 5-8 6 5"/><circle cx="9" cy="12" r="1.6"/><circle cx="19" cy="8" r="1.6"/>
+              </svg>
+            </div>
+            <h3>Live observability</h3>
+            <p>Token, latency and cost telemetry streamed per node. See the shape of a run while it happens.</p>
+            <span class="card__index mono">04</span>
+          </article>
+
+          <article class="card" data-tilt>
+            <div class="card__glow" aria-hidden="true"></div>
+            <div class="card__icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1">
+                <circle cx="9" cy="10" r="3.4"/><circle cx="19" cy="10" r="3.4"/><path d="M2.8 22c.8-3.4 3.3-5.4 6.2-5.4s5.4 2 6.2 5.4M14 22c.8-3.4 3.3-5.4 6.2-5.4s5.4 2 6.2 5.4" transform="translate(-1.2 0)"/>
+              </svg>
+            </div>
+            <h3>Human handoff</h3>
+            <p>Pause any node for approval, then resume from the exact frame. Escalation is a first-class edge.</p>
+            <span class="card__index mono">05</span>
+          </article>
+
+          <article class="card" data-tilt>
+            <div class="card__glow" aria-hidden="true"></div>
+            <div class="card__icon" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.1">
+                <path d="M14 3v22M3 14h22"/><circle cx="14" cy="14" r="9.5"/>
+              </svg>
+            </div>
+            <h3>Model agnostic</h3>
+            <p>Route across providers with one interface. Swap models per node — semantics stay identical.</p>
+            <span class="card__index mono">06</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ PROTOCOL BAND (parallax depth) ══════════════ -->
+    <section class="band" aria-label="Protocol">
+      <div class="band__layer band__layer--far" data-parallax="0.18" aria-hidden="true"></div>
+      <div class="band__layer band__layer--near" data-parallax="0.42" aria-hidden="true"></div>
+      <div class="section__inner band__content">
+        <blockquote class="quote" data-scroll-words>
+          “The first agent framework that behaves like a compiler — inspectable, reproducible, and boring in the best way.”
+        </blockquote>
+        <footer class="quote__by mono" data-reveal>The Systems Review · 2026</footer>
+      </div>
+    </section>
+
+    <!-- ══════════════ CTA / TERMINAL ══════════════ -->
+    <section class="cta" id="cta">
+      <div class="cta__aura" aria-hidden="true"></div>
+      <div class="section__inner">
+        <div class="cta__grid">
+          <div class="cta__copy">
+            <p class="kicker mono" data-reveal><span class="kicker__num">03</span> Access</p>
+            <h2 class="h2 h2--xl" data-split>The next hundred agents<br />start with one runtime.</h2>
+            <p class="lede" data-reveal>
+              Private beta is open to teams shipping agents in production. Bring a workflow —
+              we'll bring the mesh.
+            </p>
+            <form class="cta__form" data-reveal data-form>
+              <label class="sr mono" for="email">Work email</label>
+              <input id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" required />
+              <button class="btn btn--primary" type="submit" data-magnetic>
+                <span class="btn__label">Request access</span>
+                <span class="btn__arrow" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 8h11M9 3.5 13.5 8 9 12.5"/></svg>
+                </span>
+              </button>
+            </form>
+            <p class="cta__note mono" data-reveal data-form-note>No spam. Rollouts every Tuesday.</p>
+          </div>
+
+          <div class="terminal" data-tilt data-terminal>
+            <div class="terminal__bar">
+              <span class="terminal__light"></span>
+              <span class="terminal__light"></span>
+              <span class="terminal__light"></span>
+              <span class="mono terminal__title">unified — zsh</span>
+            </div>
+            <div class="terminal__body mono" id="termBody" aria-hidden="true"></div>
+            <div class="terminal__sheen" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="section__inner footer__inner">
+      <div class="footer__brand">
+        <span class="brand__word">Unified</span>
+        <p class="mono footer__tag">One runtime. Many minds.</p>
+      </div>
+      <nav class="footer__cols" aria-label="Footer">
+        <div><h4 class="mono">Product</h4><a href="#mesh">Mesh</a><a href="#features">Runtime</a><a href="#capabilities">Capabilities</a></div>
+        <div><h4 class="mono">Developers</h4><a href="#cta">Docs</a><a href="#cta">API</a><a href="#cta">Changelog</a></div>
+        <div><h4 class="mono">Company</h4><a href="#top">Manifesto</a><a href="#cta">Careers</a><a href="#cta">Contact</a></div>
+      </nav>
+    </div>
+    <div class="section__inner footer__base mono">
+      <span>© 2026 Unified Systems</span>
+      <span class="footer__status"><i class="dot dot--live"></i> All systems nominal</span>
+      <span>Built for agents that ship</span>
+    </div>
+  </footer>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
