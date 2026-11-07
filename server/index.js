@@ -21,6 +21,7 @@ import { SimAdapter } from '../src/sim/simAdapter.js';
 import { addNetSimulation, parseNetFlags } from '../src/net/lagSim.js';
 import { WarfareLobby, TURN_MS as WARFARE_TURN_MS } from './warfare.js';
 import { recordMatch, recentMatches } from './history.js';
+import { wireEntities } from './snapshot.js';
 
 const TICK_MS = 1000 / SIM_HZ;
 const SNAP_EVERY = SIM_HZ / NET.snapshotHz;   // sim ticks per snapshot
@@ -111,7 +112,11 @@ class Room {
    */
   _buildSim() {
     this.simSeatsKey = this.seats().join(',');
-    if (!this.useRealSim) { this.sim = new MockSim({ players: MAX_PLAYERS, seats: this.seats() }); return; }
+    if (!this.useRealSim) {
+      this.sim = new MockSim({ players: MAX_PLAYERS, seats: this.seats() });
+      this.simPrepared = true;
+      return;
+    }
     const seed = (Date.now() % 2147483647) || 1;
     this.simReady = SimAdapter.create({
       players: MAX_PLAYERS, seed, humans: this.humanSlots(), seats: this.seats(),
@@ -380,27 +385,8 @@ class Room {
    * Items go out every ITEM_EVERY snapshots (a rolling box interpolates fine), and
    * unchanged entities are dropped by the delta pass on top of that.
    */
-  wireEntities(forSlot = -1) {
-    const out = [];
-    const withItems = this.tick % ITEM_EVERY === 0;
-    for (const e of this.sim.list()) {
-      const isDweeb = e.kind === 'dweeb';
-      if (!isDweeb && !withItems) continue;
-      // SimAdapter entities carry _cm:true (pre-quantized cm ints); MockSim are metre floats.
-      const cm = e._cm ? v => v : v => Math.round(v * 100);
-      const own = isDweeb && e.slot === forSlot;
-      out.push({
-        id: e.id,
-        x: cm(e.x), y: cm(e.y), z: cm(e.z),
-        q: e.q ?? (Math.round((e.yaw / (Math.PI * 2)) * 255) & 255),
-        flags: e.flags ?? ((isDweeb ? 1 : 0) | (e.slot >= 0 ? 2 : 0) | (own ? 8 : 0)),
-        state: e.state & 255,
-        vx: own ? Math.round(e.vx * 100) : 0,
-        vy: own ? Math.round(e.vy * 100) : 0,
-        vz: own ? Math.round(e.vz * 100) : 0,
-      });
-    }
-    return out;
+  wireEntities(forSlot = -1, full = false) {
+    return wireEntities(this.sim.list(), forSlot, full || this.tick % ITEM_EVERY === 0);
   }
 
   /** T18: keyframe checksum log (round start/end, KOs hook in via stepSim event scan). */
@@ -462,8 +448,9 @@ class Room {
       if (!sock || sock.readyState !== 1) return;
       // Spectators (slot -1) get the world with nobody's velocity: they don't have
       // a dweeb, and per-receiver velocity is a bandwidth cost with no viewer.
-      const all = this.wireEntities(slot);
+      const all = this.wireEntities(slot, full);
       const entities = full ? all : deltaEntities(baseline, all);
+      if (full) baseline.clear();
       for (const e of entities) baseline.set(e.id, e);
       sock.send((codec || this.codec).encode({
         t: 'snapshot', tick: this.tick, ack, full, serverTime: Date.now(), entities,
